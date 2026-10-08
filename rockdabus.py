@@ -331,7 +331,7 @@ def _flow_mix(sess, t, ctx):
     style_nice = style.replace("-", " ")
     params = {"genre": slots["genre"], "style": style}
     sess["pending"] = "after_mix"
-    reply = (f"DJ Rill on the decks! 🎧 Blendin' a {style_nice} "
+    reply = (f"Rokdabus Prhyme on the decks! 🎧 Blendin' a {style_nice} "
              f"{slots['genre']} mix — give me a sec…")
     return {"reply": reply, "quick_replies": [],
             "action": {"type": "mix", "params": params}}
@@ -488,3 +488,149 @@ def chat(message, session, ctx):
                      "lyrics, cook DJ mixes, and drop freestyle prompts — "
                      "what you feelin'?",
             "quick_replies": _HOME_CHIPS, "action": None}
+
+
+# ------------------------------------------------------------------ LLM brain
+# Shared llama-server (same model Optimus uses) at 127.0.0.1:5002.
+# Rule-based intent detection runs FIRST (preserves the action system);
+# the LLM handles open conversation with Rockdabus personality.
+# Falls back to rule-based chat() if the model is unavailable.
+
+_LLAMA_URL = "http://127.0.0.1:5002/completion"
+_LLM_TIMEOUT = 60  # local model is ~1-2 tok/sec on phone hardware
+
+_ROCKDABUS_SYSTEM = """You are Rockdabus Prhyme, a hip-hop producer assistant inside the Prhyme music studio app. You talk like a studio homie — confident, warm, a little slang, never corporate. You know beats, lyrics, mixing, mastering, DJing.
+
+The app you live in can: make beats (many genres: Drill, Trap, HipHop, BoomBap, House, Techno, DnB, Phonk, Dubstep, Afrobeats, Reggaeton, Rock, and more), write lyrics, blend DJ mixes, drop freestyle prompts, master tracks, run a mobile DAW studio, convert audio, make videos, and manage sound kits.
+
+Daryl Jackson is the owner and main artist using this app.
+
+Keep replies SHORT (1-3 sentences usually). No bullet lists unless asked. Never claim to be ChatGPT, Muse, or any other AI — you are Rockdabus Prhyme. If someone asks you to do something the app can't do, say so straight and suggest what it CAN do."""
+
+
+def _llm_available():
+    """Quick check if the shared llama-server is responding."""
+    try:
+        import urllib.request as _u
+        req = _u.Request(_LLAMA_URL.replace("/completion", "/health"),
+                         method="GET")
+        with _u.urlopen(req, timeout=3) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def _llm_reply(message, session, ctx):
+    """Ask the shared local LLM. Returns reply string or None on failure."""
+    try:
+        import json as _json
+        import urllib.request as _urlreq
+
+        # Build context: recent conversation for continuity
+        history = session.get("history", [])
+        convo = ""
+        for turn in history[-6:]:  # last 3 exchanges
+            convo += f"User: {turn[0]}\nRockdabus: {turn[1]}\n"
+
+        genres = ", ".join((ctx or {}).get("genres", [])[:20])
+        prompt = (f"{_ROCKDABUS_SYSTEM}\n\n"
+                  f"Available beat genres: {genres}\n\n"
+                  f"{convo}User: {message}\nRockdabus:")
+
+        req = _urlreq.Request(
+            _LLAMA_URL,
+            data=_json.dumps({
+                "prompt": prompt,
+                "n_predict": 100,
+                "temperature": 0.8,
+                "cache_prompt": True,
+                "stop": ["User:", "\n\n\n"],
+            }).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with _urlreq.urlopen(req, timeout=_LLM_TIMEOUT) as resp:
+            result = _json.loads(resp.read().decode())
+        reply = (result.get("content") or "").strip()
+        # Clean up common artifacts
+        reply = reply.replace("Rockdabus:", "").strip()
+        if reply:
+            # Remember this exchange (cap history)
+            history.append((message, reply))
+            session["history"] = history[-10:]
+            return reply
+        return None
+    except Exception:
+        return None
+
+
+def chat_smart(message, session, ctx):
+    """LLM-enhanced entry point. Same signature/return as chat().
+
+    1. Rule-based intent detection first (actions, navigation, slot flows).
+    2. LLM for open conversation with Rockdabus personality.
+    3. Rule-based fallback if LLM unavailable.
+    """
+    t = (message or "").strip().lower()
+    session["turns"] = session.get("turns", 0) + 1
+
+    if not t:
+        return chat("", session, ctx)
+
+    # --- Priority 1: explicit action intents (rule-based, reliable) ---
+    intent = _detect_intent(t)
+    if intent:
+        _start(session, intent)
+        if intent == "beat":
+            return _flow_beat(session, t, ctx)
+        if intent == "lyrics":
+            return _flow_lyrics(session, t, ctx)
+        if intent == "mix":
+            return _flow_mix(session, t, ctx)
+        if intent == "freestyle":
+            return _flow_freestyle(session, t, ctx)
+
+    # --- Priority 2: navigation links (rule-based) ---
+    nav = _detect_nav(t)
+    if nav and ("open" in t or "take me" in t or "go to" in t
+                or "show me" in t or "where" in t or _is_greeting(t) is False
+                and len(t.split()) <= 3):
+        url, name, icon = nav
+        return {"reply": f"Got you — the {name} page is where that's at {icon}",
+                "quick_replies": [],
+                "action": {"type": "link", "url": url,
+                           "label": f"Open {name}"}}
+
+    # --- Priority 3: pending slot answers (multi-turn flows) ---
+    if session.get("pending") or session.get("intent"):
+        pending_resp = _handle_pending(session, t, ctx)
+        if pending_resp is not None:
+            return pending_resp
+
+    # --- Priority 4: quick rule-based responses (fast, no LLM needed) ---
+    if _is_cancel(t):
+        _start(session, None)
+        session["intent"] = None
+        return {"reply": "Aight, scrapped it. What next?",
+                "quick_replies": _HOME_CHIPS, "action": None}
+    if "thank" in t or t in ("thx", "appreciate it"):
+        return {"reply": "Anytime, family 🙏 Now let's make somethin' — "
+                         "beat or lyrics?",
+                "quick_replies": ["Make a beat", "Write lyrics"],
+                "action": None}
+    if re.search(r"\b(bye|peace|peace out|good ?night|cya|see ya|later)\b", t):
+        session["intent"] = None
+        session["pending"] = None
+        return {"reply": "Peace! Holler when you need heat ✌️🔥",
+                "quick_replies": [], "action": None}
+
+    # --- Priority 5: LLM for open conversation ---
+    llm_text = _llm_reply(message, session, ctx)
+    if llm_text:
+        return {"reply": llm_text,
+                "quick_replies": _HOME_CHIPS,
+                "action": None,
+                "source": "llm"}
+
+    # --- Priority 6: rule-based fallback (LLM unavailable) ---
+    return chat(message, session, ctx)

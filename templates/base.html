@@ -31,6 +31,7 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
       <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
     </div>
     <div class="brand-text">Prhyme™</div>
+    <span class="prhyming-flash topbar-prhyming">Prhyming</span>
   </div>
   <span id="liteBadge" class="lite-badge{% if not lite %} hidden{% endif %}" title="Lite Mode is on — heavy operations are scaled down for your phone">⚡ LITE</span>
   <span id="offlineBadge" class="offline-badge" title="Prhyme™ runs 100% on your phone — no internet needed">📴 Offline-ready</span>
@@ -163,7 +164,8 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 
 <!-- Cookie consent (GDPR/PIPEDA) -->
 <div id="cookieBanner" hidden
-     style="position:fixed;bottom:0;left:0;right:0;z-index:200;padding:14px 18px;background:rgba(10,10,18,.97);border-top:1px solid #2a2a3d;font-size:13px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+     style="position:fixed;bottom:0;left:0;right:0;z-index:200;padding:14px 18px;background:rgba(10,10,18,.97);border-top:1px solid #2a2a3d;font-size:13px;gap:12px;align-items:center;flex-wrap:wrap;"
+     class="cookie-banner">
   <span style="flex:1;min-width:200px;">🍪 We use cookies &amp; local storage to keep you signed in and remember your preferences. See our <a href="{{ url_for('billing.privacy') }}">Privacy Policy</a>.</span>
   <button class="btn small" onclick="acceptCookies()">Accept</button>
   <button class="btn small alt" onclick="declineCookies()">Essential only</button>
