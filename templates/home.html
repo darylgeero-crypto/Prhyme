@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block content %}
+<!-- Prhyme™ 3D intro: far box → zoom → record player → spin-up → Rockdabus transform -->
+<div id="prhymeIntro" class="prhyme-intro" role="dialog" aria-label="Welcome to Prhyme">
+  <div class="intro-3d-scene" aria-hidden="true">
+    <div class="intro-box3d" id="introBox3d">
+      <div class="box-face bf-front"><span class="box-logo">Prhyme™</span></div>
+      <div class="box-face bf-back"></div>
+      <div class="box-face bf-right"></div>
+      <div class="box-face bf-left"></div>
+      <div class="box-face bf-top"></div>
+      <div class="box-face bf-bottom"></div>
+      <div class="intro-turntable" id="introTurntable">
+        <div class="tt-body">
+          <div class="tt-vinyl"><div class="tt-label"></div><div class="tt-hole"></div></div>
+          <div class="tt-tonearm"></div>
+        </div>
+        <div class="tt-glow" id="introGlow"></div>
+      </div>
+    </div>
+  </div>
+  <div class="intro-flash" aria-hidden="true"></div>
+  <div class="intro-shockwave" aria-hidden="true"></div>
+  <img class="intro-mascot" id="introMascot" src="{{ url_for('static', filename='img/rockdabus.webp') }}" alt="Rockdabus Prhyme">
+  <div class="intro-title">Prhyme™</div>
+  <div class="intro-prhyming"><span class="prhyming-flash">Prhyming</span></div>
+  <button class="intro-skip" id="introSkip">Skip ▸</button>
+</div>
+
+<section class="hero home-bg">
+  <div class="home-bg-graphic" aria-hidden="true">
+    <img class="home-bg-mascot" src="{{ url_for('static', filename='img/rockdabus.webp') }}" alt="">
+    <div class="home-bg-vignette"></div>
+  </div>
+  <div class="hero-inner">
+    <div class="float-notes" aria-hidden="true">
+      <span>♪</span><span>♫</span><span>♩</span><span>♬</span><span>♪</span><span>♫</span>
+    </div>
+    <div class="hero-eq" aria-hidden="true">
+      {% for i in range(24) %}<span style="--d:{{ (i*37)%100/100 }}s"></span>{% endfor %}
+    </div>
+    <img class="hero-mascot" src="{{ url_for('static', filename='img/rockdabus.webp') }}" alt="Rockdabus Prhyme — the Prhyme™ mascot">
+    <h1 class="hero-title">Prhyme™</h1>
+    <div class="hero-prhyming"><span class="prhyming-flash">Prhyming</span></div>
+    <p class="hero-sub">Studio-grade beats, mixing &amp; mastering — in your pocket.</p>
+    <button id="liteHeroToggle" class="lite-hero{% if lite %} on{% endif %}" onclick="djrillLite.toggle()" title="Lite Mode keeps heavy operations phone-safe">
+      <span class="lite-hero-ico">⚡</span>
+      <span class="lite-hero-t">Lite Mode</span>
+      <span class="lite-hero-state" id="liteHeroState">{% if lite %}ON — phone-safe{% else %}OFF — full power{% endif %}</span>
+    </button>
+  </div>
+</section>
+
+<section class="cards overlay-cards">
+  <a class="card" href="{{ url_for('master_page') }}">
+    <div class="card-ico">◉</div>
+    <div class="card-t">Master a Track</div>
+    <div class="card-d">Upload your recording. Get a beat, voice-forward mix and a -14 LUFS master.</div>
+  </a>
+  <a class="card" href="{{ url_for('beats_page') }}">
+    <div class="card-ico">♫</div>
+    <div class="card-t">Make a Beat</div>
+    <div class="card-d">Synthesize an original beat at your tempo. Drill, trap, boom-bap &amp; more.</div>
+  </a>
+  <a class="card" href="{{ url_for('lyrics_page') }}">
+    <div class="card-ico">✎</div>
+    <div class="card-t">Draft Lyrics</div>
+    <div class="card-d">Seeded draft lyrics by theme &amp; mood. Always labeled as AI drafts.</div>
+  </a>
+  <a class="card" href="{{ url_for('convert_page') }}">
+    <div class="card-ico">⇄</div>
+    <div class="card-t">Convert Audio</div>
+    <div class="card-d">Any format in, WAV / MP3 / OGG / FLAC / M4A out.</div>
+  </a>
+  <a class="card" href="{{ url_for('tools_page') }}">
+    <div class="card-ico">🛠</div>
+    <div class="card-t">Audio Tools</div>
+    <div class="card-d">Trim, normalize, karaoke cut, ringtones, key detect.</div>
+  </a>
+  <a class="card" href="{{ url_for('samples_page') }}">
+    <div class="card-ico">🎛</div>
+    <div class="card-t">Samples</div>
+    <div class="card-d">Your sample library — upload, tag, preview.</div>
+  </a>
+  <a class="card" href="{{ url_for('presets_page') }}">
+    <div class="card-ico">🎚</div>
+    <div class="card-t">Presets</div>
+    <div class="card-d">Beat &amp; master presets plus the daily challenge.</div>
+  </a>
+  <a class="card" href="{{ url_for('video_page') }}">
+    <div class="card-ico">🎬</div>
+    <div class="card-t">Make a Video</div>
+    <div class="card-d">Lyric videos, selfie videos &amp; performance cuts from your tracks.</div>
+  </a>
+  <a class="card" href="{{ url_for('freestyle_page') }}">
+    <div class="card-ico">🎤</div>
+    <div class="card-t">Freestyle</div>
+    <div class="card-d">Karaoke lyric scroll, phrase sparks &amp; rhyme words on the beat.</div>
+  </a>
+  <a class="card" href="{{ url_for('dj_page') }}">
+    <div class="card-ico">🎧</div>
+    <div class="card-t">Live DJ</div>
+    <div class="card-d">Two decks, crossfader &amp; EQ — mix your beats live.</div>
+  </a>
+  <a class="card" href="{{ url_for('rockdabus_page') }}">
+    <div class="card-ico">🤖</div>
+    <div class="card-t">Rockdabus Prhyme</div>
+    <div class="card-d">Chat with your pocket producer — he makes beats &amp; writes lyrics with you.</div>
+  </a>
+  <a class="card" href="{{ url_for('tutorials_page') }}">
+    <div class="card-ico">🎬</div>
+    <div class="card-t">Tutorials</div>
+    <div class="card-d">Watch how every feature works — quick video-style guides.</div>
+  </a>
+  <a class="card" href="{{ url_for('help_page') }}">
+    <div class="card-ico">❓</div>
+    <div class="card-t">Help</div>
+    <div class="card-d">How every feature works, with quick links to try each one.</div>
+  </a>
+</section>
+
+<div class="wavediv" aria-hidden="true">
+  {% for i in range(18) %}<span style="--d:{{ (i*53)%100/100 }}s"></span>{% endfor %}
+</div>
+
+<section class="note">
+  <p>Your performance stays yours — the engine <strong>edits</strong> human recordings, it never synthesizes or replaces a voice.</p>
+</section>
+
+<a href="{{ url_for('rockdabus_page') }}" class="rb-fab" title="Chat with Rockdabus Prhyme" aria-label="Chat with Rockdabus Prhyme">
+  <img src="{{ url_for('static', filename='img/rockdabus.webp') }}" alt="Rockdabus Prhyme">
+</a>
+
+<script>
+(function(){
+  var intro = document.getElementById('prhymeIntro');
+  var skip = document.getElementById('introSkip');
+  if (!intro) return;
+  if (sessionStorage.getItem('prhyme_intro_seen')) { intro.remove(); return; }
+  function done(){ sessionStorage.setItem('prhyme_intro_seen','1'); intro.classList.add('intro-out'); setTimeout(function(){ intro.remove(); }, 400); document.dispatchEvent(new CustomEvent('prhyme:intro-done')); }
+  skip.addEventListener('click', function(e){ e.stopPropagation(); done(); });
+  intro.addEventListener('click', done);
+  setTimeout(done, 7000);
+})();
+</script>
+{% endblock %}

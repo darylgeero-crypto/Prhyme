@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico pulse">❓</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Help</h2></div>
+    <p class="plead">Short guides for everything Prhyme™ does. Tap a topic, then hit <strong>Try it →</strong> to jump straight in.</p>
+    <p><span class="prhyming-flash">Prhyming</span></p>
+    <p><button class="btn small" onclick="djrillTour.start()">🎓 Replay the guided tour</button>
+    <a class="btn small" href="{{ url_for('tutorials_page') }}" style="margin-left:8px">🎬 Watch tutorials</a>
+    <a class="btn small" href="{{ url_for('feedback_page') }}" style="margin-left:8px">💬 Report a problem / Suggest a feature</a></p>
+  </div>
+</div>
+
+<nav class="help-toc">
+  <a href="#beats">♫ Beats</a>
+  <a href="#master">◉ Mastering</a>
+  <a href="#lyrics">✎ Lyrics</a>
+  <a href="#video">🎬 Video</a>
+  <a href="#dj">🎧 DJ Mode</a>
+  <a href="#freestyle">🎤 Freestyle</a>
+  <a href="#studio">🎚 Studio</a>
+  <a href="#convert">⇄ Convert</a>
+  <a href="#tools">🛠 Tools</a>
+  <a href="#samples">🎛 Samples</a>
+  <a href="#presets">🎚 Presets</a>
+  <a href="#history">🕘 History</a>
+</nav>
+
+<section class="help-sec" id="beats">
+  <h3><span class="pico bounce">♫</span> Making Beats</h3>
+  <ol>
+    <li><b>Pick a genre</b> — Drill, Trap, BoomBap, Jersey Club, Afrobeats and more.</li>
+    <li><b>Or pick an artist</b> — the engine emulates their production style (drums, 808s, melodies). <em>Style only — never copies real beats.</em></li>
+    <li><b>Set BPM &amp; bars</b> — tempo and length (8 / 16 / 32 bars).</li>
+    <li><b>Pick a drum kit &amp; lead</b> — 6 built-in kits (Classic, Punchy, Boomy…) plus any custom kits you built, and 10 lead instruments from pluck to choir.</li>
+    <li><b>Generate</b> — renders in about a second. Hit play right on the page.</li>
+    <li><b>🕉 Healing mode</b> (optional) — Fibonacci-ratio melodies, 432/440 Hz tuning, and a drone bed that cycles solfeggio tones, the seven chakras, or planetary frequencies. Binaural beat bands (delta → gamma) for headphone listening, plus presets: Deep Healing, Energy Cleanse, Meditation, Chakra Journey, Deep Sleep. Wellness-vibe tones for relaxation and focus — no health claims.</li>
+  </ol>
+  <div class="help-tip">💡 Start with 16 bars at the artist's suggested BPM — the app fills it in automatically when you pick an artist. Upload your own WAV drums under <b>Soundkits</b> for a fully personal kit.</div>
+  <p><a class="help-try" href="{{ url_for('beats_page') }}">Try it →</a></p>
+</section>
+
+<section class="help-sec" id="master">
+  <h3><span class="pico pulse">◉</span> Mastering a Track</h3>
+  <ol>
+    <li><b>Upload your recording</b> — WAV, MP3 or M4A of your vocals.</li>
+    <li><b>Vocal polish</b> (on by default) — cleans noise, adds clarity, tames harshness. Never deletes or cuts words.</li>
+    <li><b>Timing fix</b> (on by default) — nudges slightly off-beat words onto the grid. Max ~50ms, keeps your natural feel.</li>
+    <li><b>Creative FX</b> (optional) — 📻 radio, 📺 TV, 💿 old vinyl, high/low-pass filters, 🔊 echo (can sync to your BPM). Tap a preset chip like Lo-Fi or Radio Hit, or dial it in yourself. Apply to the vocal or the full mix.</li>
+    <li><b>Get a beat + mix + master</b> — balanced mix, mastered to -14 LUFS / -1.0 dBTP.</li>
+  </ol>
+  <div class="help-tip">💡 If your take is already on beat, timing fix does nothing — it's a safety net, not an effect.</div>
+  <p><a class="help-try" href="{{ url_for('master_page') }}">Try it →</a></p>
+</section>
+
+<section class="help-sec" id="lyrics">
+  <h3><span class="pico wiggle">✎</span> Writing Lyrics</h3>
+  <ol>
+    <li><b>Pick a theme</b> — street, hustle, introspective, faith, love, victory, pain, party.</li>
+    <li><b>Pick an artist style</b> — flow, vocabulary and cadence in their lane. <em>Style emulation only.</em></li>
+    <li><b>Generate</b> — full song with verses, hook and bridge.</li>
+    <li><b>Send to Freestyle</b> — load it straight into the teleprompter.</li>
+  </ol>
+  <div class="help-tip">💡 Everything is labeled AI-GENERATED DRAFT — a starting point for <em>your</em> writing, not finished bars.</div>
+  <p><a class="help-try" href="{{ url_for('lyrics_page') }}">Try it →</a></p>
+</section>
+
+<section class="help-sec" id="video">
+  <h3><span class="pico bounce">🎬</span> Making Videos</h3>
+  <ol>
+    <li><b>Lyric video</b> — your track + animated lyrics on screen.</li>
+    <li><b>Selfie video</b> — your footage synced to your audio.</li>
+    <li><b>Performance cut</b> — edit-style cut of your clips to the track.</li>
+  </ol>
+  <div class="help-tip">💡 Your photos and footage only — nothing synthetic, no fake performer.</div>
+  <p><a class="help-try" href="{{ url_for('video_page') }}">Try it →</a></p>
+</section>
+
+<section class="help-sec" id="dj">
+  <h3><span class="pico spin">🎧</span> DJ Mode</h3>
+  <ol>
+    <li><b>Load tracks</b> — tap 📀 to pull from your generated beats, or <b>upload your own MP3s</b>.</li>
+    <li><b>Two decks</b> — play/pause, seek on the waveform, set cue points.</li>
+    <li><b>Mix live</b> — crossfader, tempo sliders, 3-band EQ per deck. Hit <b>SYNC</b> to match tempos.</li>
+    <li><b>Generate a Mix</b> — pick a genre or hit-era style (2000s Southern Trap, 2010s Drill, 2020s Melodic) and get a beatmatched continuous mix.</li>
+  </ol>
+  <div class="help-tip">💡 Filenames with BPM (like <em>…-140bpm-…</em>) auto-fill the deck tempo.</div>
+  <p><a class="help-try" href="{{ url_for('dj_page') }}">Try it →</a></p>
+</section>
+
+<section class="help-sec" id="freestyle">
+  <h3><span class="pico pulse">🎤</span> Freestyle Assister</h3>
+  <ol>
+    <li><b>Teleprompter</b> — lyrics highlight word-by-word on the beat. Set BPM, press play, ride it.</li>
+    <li><b>Full verse</b> — generate a draft verse on a theme, send it to the teleprompter.</li>
+    <li><b>Phrase sparks</b> — a short original phrase every 2 / 4 / 8 bars to spark your next line.</li>
+    <li><b>Rhyme word</b> — one rhyming word flashes on the bar to keep your flow going.</li>
+  </ol>
+  <div class="help-tip">💡 Pick a beat from the dropdown to freestyle over, or use the built-in click track.</div>
+  <p><a class="help-try" href="{{ url_for('freestyle_page') }}">Try it →</a></p>
+</section>
+
+<section class="help-sec" id="studio">
+  <h3><span class="pico wiggle">🎚</span> Studio (DAW)</h3>
+  <ol>
+    <li><b>Timeline</b> — stack your beats, vocals and samples on tracks.</li>
+    <li><b>Drag clips</b> to move them, drag edges to trim.</li>
+    <li><b>Mixer</b> — volume, mute/solo per track.</li>
+    <li><b>Mixdown</b> — bounce everything to one master file.</li>
+  </ol>
+  <p><a class="help-try" href="{{ url_for('studio_page') }}">Try it →</a></p>
+</section>
+
+<section class="help-sec" id="convert">
+  <h3><span class="pico spin">⇄</span> Converting Audio</h3>
+  <ol>
+    <li><b>Drop a file in</b> — WAV, MP3, M4A, OGG, FLAC, even video files.</li>
+    <li><b>Pick your output format</b> and convert.</li>
+  </ol>
+  <p><a class="help-try" href="{{ url_for('convert_page') }}">Try it →</a></p>
+</section>
+
+<section class="help-sec" id="tools">
+  <h3><span class="pico bounce">🛠</span> Audio Tools</h3>
+  <ul>
+    <li><b>Trim</b> — cut a section out of any audio file.</li>
+    <li><b>Normalize</b> — even out volume levels.</li>
+    <li><b>Karaoke cut</b> — reduce centered vocals for an instrumental feel.</li>
+    <li><b>Ringtone</b> — make a short clip.</li>
+    <li><b>Key detect</b> — find the musical key of a track.</li>
+  </ul>
+  <p><a class="help-try" href="{{ url_for('tools_page') }}">Try it →</a></p>
+</section>
+
+<section class="help-sec" id="samples">
+  <h3><span class="pico wiggle">🎛</span> Samples</h3>
+  <ol>
+    <li><b>Upload</b> your own sounds and one-shots.</li>
+    <li><b>Tag</b> them so you can find them later.</li>
+    <li><b>Preview</b> right in the browser before using.</li>
+  </ol>
+  <p><a class="help-try" href="{{ url_for('samples_page') }}">Try it →</a></p>
+</section>
+
+<section class="help-sec" id="presets">
+  <h3><span class="pico pulse">🎚</span> Presets</h3>
+  <ol>
+    <li><b>Beat presets</b> — one-tap starting points for the beat engine.</li>
+    <li><b>Master presets</b> — curated vocal + master chains.</li>
+    <li><b>Daily challenge</b> — a fresh prompt every day to keep you creating.</li>
+  </ol>
+  <p><a class="help-try" href="{{ url_for('presets_page') }}">Try it →</a></p>
+</section>
+
+<section class="help-sec" id="history">
+  <h3><span class="pico spin">🕘</span> History</h3>
+  <ol>
+    <li><b>Recent renders</b> — everything you've made, newest first.</li>
+    <li><b>Re-download</b> any of them anytime.</li>
+    <li><b>Bundle as ZIP</b> — grab them all at once.</li>
+  </ol>
+  <p><a class="help-try" href="{{ url_for('history_page') }}">Try it →</a></p>
+</section>
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico pulse">🚀</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Create your account</h2></div>
+    <p class="plead">
+      {% if founding_left > 0 %}
+      {{ founding_left }} founding spots left — sign up now and get Prhyme™ <strong>free for life</strong>.
+      {% else %}
+      Start your <strong>3-day free trial</strong> — full access, no card required.
+      {% endif %}
+    </p>
+  </div>
+</div>
+
+<div class="bill-form-card">
+  {% if error %}<div class="bill-note warn">{{ error }}</div>{% endif %}
+  <form method="post" action="{{ url_for('billing.signup_post') }}">
+    <label class="bill-label">Email
+      <input class="txt" type="email" name="email" required autocomplete="email"
+             placeholder="you@example.com">
+    </label>
+    <label class="bill-label">Password <span class="bill-hint">(min 8 characters)</span>
+      <input class="txt" type="password" name="password" required minlength="8"
+             autocomplete="new-password" placeholder="••••••••">
+    </label>
+    <label class="bill-label" style="font-weight:400;font-size:13px;">
+      <input type="checkbox" name="accept_terms" required style="width:auto;margin-right:8px;">
+      I accept the <a href="{{ url_for('billing.terms') }}" target="_blank">Terms of Service</a>
+      and <a href="{{ url_for('billing.privacy') }}" target="_blank">Privacy Policy</a>.
+    </label>
+    <label class="bill-label" style="font-weight:400;font-size:13px;">
+      <input type="checkbox" name="age_confirm" required style="width:auto;margin-right:8px;">
+      I confirm I am at least 13 years old.
+    </label>
+    <button class="btn" type="submit" style="width:100%;margin-top:12px">
+      {% if founding_left > 0 %}Claim founding access →{% else %}Start my free trial →{% endif %}
+    </button>
+  </form>
+  <p class="bill-alt">Already have an account? <a href="{{ url_for('billing.login') }}">Log in →</a></p>
+</div>
+{% endblock %}

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico pulse">🎚</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Presets</h2><a class="help-link" href="{{ url_for('help_page') }}#presets" aria-label="Help">?</a></div>
+    <p class="plead">One-tap starting points — curated beat and master chains.</p>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-h">Beat presets</div>
+  <div id="beatPresets"><div class="skel"></div></div>
+</div>
+
+<div class="panel">
+  <div class="panel-h">Master presets</div>
+  <div id="masterPresets"><div class="skel"></div></div>
+</div>
+
+<div class="panel">
+  <div class="panel-h">🎯 Daily beat challenge</div>
+  <div id="dailyBox"><div class="skel"></div></div>
+</div>
+
+<div id="jobBox" class="jobbox hidden">
+  <div class="jobmsg" id="jobMsg">Starting…</div>
+  <div class="pbar"><div class="pfill" id="jobFill"></div></div>
+  <div class="jobpct" id="jobPct">0%</div>
+  <div id="jobResult" class="result"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+(async function () {
+  try {
+    const r = await fetch("/api/presets");
+    const j = await r.json();
+    document.getElementById("beatPresets").innerHTML =
+      (j.presets.beats || []).map(p =>
+        '<div class="histitem"><div class="ht">' + escapeHtml(p.name) + "</div>" +
+        '<div class="hm">' + p.genre + " · " + p.bpm + " BPM</div>" +
+        '<div class="hd"><button class="btn small" onclick="runPreset(\'' +
+        escapeHtml(p.name) + '\')">♫ Render</button></div></div>').join("");
+    document.getElementById("masterPresets").innerHTML =
+      (j.presets.master || []).map(p =>
+        '<div class="histitem"><div class="ht">' + escapeHtml(p.name) + "</div>" +
+        '<div class="hm">Chain: ' + escapeHtml(p.chain) + "</div>" +
+        '<div class="hd"><a class="btn small" style="text-decoration:none" href="/master">Use in Master →</a></div></div>').join("");
+  } catch (e) {
+    document.getElementById("beatPresets").innerHTML = '<div class="err">Load failed</div>';
+  }
+  try {
+    const r = await fetch("/api/beats/daily");
+    const j = await r.json();
+    document.getElementById("dailyBox").innerHTML =
+      '<div class="ht" style="font-weight:800">' + escapeHtml(j.challenge) + "</div>" +
+      '<div class="hd" style="margin-top:8px"><button class="btn" onclick="runDaily(' +
+      j.seed + ",'" + j.genre + "'," + j.bpm + ')">🎯 Take the challenge</button></div>';
+  } catch (e) {
+    document.getElementById("dailyBox").innerHTML = '<div class="err">Unavailable</div>';
+  }
+})();
+async function runPreset(name) {
+  const box = document.getElementById("jobBox");
+  box.classList.remove("hidden");
+  document.getElementById("jobMsg").textContent = "Rendering preset…";
+  try {
+    const r = await fetch("/api/presets/beat", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ name }) });
+    const j = await r.json();
+    if (!j.ok) { toast("Failed: " + j.error); return; }
+    toast("Preset rendering — seed " + j.seed);
+    location.href = "/history";
+  } catch (e) { toast("Network error"); }
+}
+function runDaily(seed, genre, bpm) {
+  location.href = "/beats?seed=" + seed + "&genre=" + genre + "&bpm=" + bpm;
+}
+</script>
+{% endblock %}

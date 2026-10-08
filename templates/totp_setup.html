@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico pulse">🔐</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Set up two-factor authentication</h2></div>
+    <p class="plead">Scan the QR code with your authenticator app (Google Authenticator, Authy, 1Password).</p>
+  </div>
+</div>
+
+<div class="bill-form-card">
+  <div style="text-align:center;margin-bottom:16px;">
+    {{ qr_svg|safe }}
+  </div>
+  <p class="bill-hint" style="text-align:center;">Can't scan? Enter this secret manually:</p>
+  <p style="text-align:center;font-family:monospace;font-size:16px;letter-spacing:2px;word-break:break-all;">{{ secret }}</p>
+
+  <hr class="bill-hr">
+
+  <div class="bill-note warn">
+    <strong>⚠ Save your backup codes now.</strong> Each works once. If you lose your authenticator, these are the only way back in.
+  </div>
+  <div style="font-family:monospace;font-size:15px;line-height:2;text-align:center;margin:12px 0;">
+    {% for code in backup_codes %}{{ code }}<br>{% endfor %}
+  </div>
+
+  <hr class="bill-hr">
+
+  <label class="bill-label">Enter the 6-digit code from your app to confirm
+    <input class="txt" type="text" id="totpCode" autocomplete="one-time-code"
+           inputmode="numeric" pattern="[0-9]*" maxlength="6"
+           placeholder="123456" style="font-size:20px;letter-spacing:6px;text-align:center;">
+  </label>
+  <button class="btn big" onclick="verifySetup()">Enable 2FA →</button>
+  <div id="setupMsg" style="margin-top:12px;"></div>
+</div>
+
+<script>
+async function verifySetup() {
+  const code = document.getElementById('totpCode').value.trim();
+  const msg = document.getElementById('setupMsg');
+  if (!code) { msg.innerHTML = '<div class="bill-note warn">Enter the code.</div>'; return; }
+  const r = await fetch("{{ url_for('billing.api_totp_verify_setup') }}", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({code})
+  });
+  const j = await r.json();
+  if (j.ok) {
+    msg.innerHTML = '<div class="bill-note good">✅ ' + j.message + ' <a href="{{ url_for("billing.account") }}">Back to account →</a></div>';
+  } else {
+    msg.innerHTML = '<div class="bill-note warn">' + (j.error || "Failed.") + '</div>';
+  }
+}
+</script>
+{% endblock %}

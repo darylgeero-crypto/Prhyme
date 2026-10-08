@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico pulse">🔐</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Two-factor authentication</h2></div>
+    <p class="plead">Enter the 6-digit code from your authenticator app.</p>
+  </div>
+</div>
+
+<div class="bill-form-card">
+  {% if error %}<div class="bill-note warn">{{ error }}</div>{% endif %}
+  <form method="post" action="{{ url_for('billing.verify_2fa_post') }}{% if request.args.get('next') %}?next={{ request.args.get('next')|urlencode }}{% endif %}">
+    <label class="bill-label">Authenticator code
+      <input class="txt" type="text" name="code" required autocomplete="one-time-code"
+             inputmode="numeric" pattern="[0-9]*" maxlength="8"
+             placeholder="123456" autofocus
+             style="font-size:24px;letter-spacing:8px;text-align:center;">
+    </label>
+    <p class="bill-hint">Or enter one of your backup codes (XXXX-XXXX).</p>
+    <button type="submit" class="btn big">Verify →</button>
+  </form>
+  <p class="bill-alt"><a href="{{ url_for('billing.login') }}">← Back to login</a></p>
+</div>
+{% endblock %}

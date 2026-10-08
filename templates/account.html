@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico pulse">👤</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Your account</h2></div>
+    <p class="plead">{{ user.email }}</p>
+  </div>
+</div>
+
+{% if paid %}
+<div class="bill-note good">✅ Payment received — welcome to Prhyme™! Your access is now active.</div>
+{% endif %}
+
+<div class="bill-form-card">
+  {% if user.is_founding %}
+  <div class="bill-founder">🏆 Founding Member #{{ user.founding_number }} — lifetime access, forever free.</div>
+  {% endif %}
+
+  <div class="bill-status-row">
+    <span>Status</span>
+    <strong class="bill-plan-{{ plan_label }}">{{ detail }}</strong>
+  </div>
+
+  {% if plan_label == 'trial' %}
+  <div class="bill-status-row"><span>Trial ends in</span><strong>{{ trial_days_left }} day(s)</strong></div>
+  <p><a class="btn" href="{{ url_for('billing.pricing') }}">Upgrade now →</a></p>
+  {% elif plan_label == 'past_due' %}
+  <div class="bill-note warn">⚠ <strong>Payment failed.</strong> We couldn't charge your card. Please update your payment method — Stripe will retry automatically. Your access stays active during the retry period.</div>
+  <p><a class="btn" href="{{ url_for('billing.pricing') }}">Update payment →</a></p>
+  {% elif plan_label in ('trial_expired', 'expired', 'canceled', 'inactive') %}
+  <div class="bill-note warn">Your access is paused. Upgrade to keep creating.</div>
+  <p><a class="btn" href="{{ url_for('billing.pricing') }}">See plans →</a></p>
+  {% elif plan_label == 'monthly' and stripe_configured %}
+  <p><button class="btn small" onclick="billCancel()">Cancel subscription</button></p>
+  {% elif plan_label == 'platinum' and stripe_configured %}
+  <div class="bill-note good">👑 Platinum all-access — renews yearly. Cancel anytime; you keep access until the end of your year.</div>
+  <p><button class="btn small" onclick="billCancel()">Cancel Platinum</button></p>
+  {% endif %}
+
+  <hr class="bill-hr">
+
+  <div class="bill-status-row">
+    <span>🔐 Two-factor auth</span>
+    {% if totp_enabled %}
+    <strong class="bill-plan-lifetime">Enabled</strong>
+    {% else %}
+    <strong>Off</strong>
+    {% endif %}
+  </div>
+  {% if totp_enabled %}
+  <p>
+    <button class="btn small" onclick="regenBackupCodes()">New backup codes</button>
+    <button class="btn small alt" onclick="disable2FA()">Disable 2FA</button>
+  </p>
+  <div id="tfaMsg" style="margin-top:8px;"></div>
+  {% else %}
+  <p><a class="btn small" href="{{ url_for('billing.totp_setup_page') }}">Enable 2FA →</a></p>
+  {% endif %}
+
+  {% if security_log %}
+  <hr class="bill-hr">
+  <details>
+    <summary style="cursor:pointer;font-weight:700;">🛡 Recent security activity</summary>
+    <div style="font-size:12px;margin-top:8px;line-height:1.8;">
+      {% for e in security_log %}
+      <div>{{ e.event }} <span style="opacity:.6;">— {{ e.detail[:60] }}</span></div>
+      {% endfor %}
+    </div>
+  </details>
+  {% endif %}
+
+  <hr class="bill-hr">
+  <p>
+    <a class="btn small" href="{{ url_for('billing.receipts') }}">🧾 Receipts</a>
+    <a class="btn small" href="{{ url_for('billing.sessions_page') }}" style="margin-left:8px;">💻 Sessions</a>
+    <a class="btn small" href="{{ url_for('billing.logout') }}" style="margin-left:8px;">Log out</a>
+  </p>
+</div>
+
+<script>
+async function regenBackupCodes() {
+  if (!confirm("Generate new backup codes? Old ones stop working.")) return;
+  const r = await fetch("{{ url_for('billing.api_totp_backup_codes') }}", {method: "POST"});
+  const j = await r.json();
+  const msg = document.getElementById('tfaMsg');
+  if (j.ok) {
+    msg.innerHTML = '<div class="bill-note good"><strong>New backup codes (save now):</strong><br><span style="font-family:monospace;">' +
+      j.backup_codes.join('<br>') + '</span></div>';
+  } else {
+    msg.innerHTML = '<div class="bill-note warn">' + (j.error || "Failed.") + '</div>';
+  }
+}
+async function disable2FA() {
+  const pw = prompt("Enter your password to disable 2FA:");
+  if (!pw) return;
+  const r = await fetch("{{ url_for('billing.api_totp_disable') }}", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({password: pw})
+  });
+  const j = await r.json();
+  if (j.ok) location.reload();
+  else alert(j.error || "Failed.");
+}
+
+<script>
+async function billCancel() {
+  if (!confirm("Cancel your subscription? You'll keep access until the end of your billing period.")) return;
+  const r = await fetch("{{ url_for('billing.api_cancel') }}", {method: "POST"});
+  const j = await r.json();
+  if (j.ok) location.reload();
+  else alert(j.error || "Cancel failed.");
+}
+</script>
+{% endblock %}

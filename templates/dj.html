@@ -1,0 +1,673 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico spin">🎧</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Live DJ</h2><a class="help-link" href="{{ url_for('help_page') }}#dj" aria-label="Help">?</a></div>
+    <p class="plead">Two decks, crossfader, EQ — mix your own beats live.</p>
+  </div>
+</div>
+
+<div class="dj-lib">
+  <button class="btn small alt" id="libToggle">📀 Load a track</button>
+  <input type="file" id="fileA" accept="audio/*" style="display:none">
+  <input type="file" id="fileB" accept="audio/*" style="display:none">
+</div>
+
+<div class="dj-lib-panel" id="libPanel" style="display:none">
+  <div class="lib-row">
+    <input id="libSearch" class="txt" placeholder="Search your beats…" autocomplete="off">
+    <button class="btn small" id="libRefresh">↻</button>
+  </div>
+  <div id="libList" class="lib-list"><div class="lib-empty">Loading…</div></div>
+</div>
+
+<div class="dj-mix-panel">
+  <h3>🎛 Rockdabus Prhyme's Mix</h3>
+  <p class="dj-note"><strong>Let Rockdabus Prhyme take over</strong> — pick a genre and style, and he'll blend original beats into one continuous mix, beatmatched &amp; crossfaded.</p>
+  <div class="mix-gen-row">
+    <label>Genre
+      <select id="mixGenre" class="txt">
+        {% for g in mix_genres %}<option value="{{ g }}">{{ g }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Style
+      <select id="mixStyle" class="txt">
+        {% for key, label in mix_styles %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+      </select>
+    </label>
+    <button class="btn" id="genMixBtn">⚡ Generate Mix</button>
+  </div>
+  <div id="mixStatus" class="mix-status" style="display:none"></div>
+  <div class="mix-gen-row">
+    <button class="btn small alt" id="djUploadBtn">⬆ Upload my track</button>
+    <input type="file" id="djUploadFile" accept=".mp3,.wav,.ogg,.flac,.m4a,audio/*" style="display:none">
+    <span class="dj-note">Your own MP3s/WAVs — they play in the decks, nothing leaves your phone.</span>
+  </div>
+  <div class="mix-gen-row">
+    <label class="check" style="display:flex;align-items:center;gap:8px">
+      <input type="checkbox" id="djAutostart" checked>
+      <span>▶ Auto-play Rockdabus Prhyme's mix when this page opens</span>
+    </label>
+  </div>
+</div>
+
+<div id="djAutoBar" class="dj-autobar" style="display:none">
+  <button class="btn big" id="djAutoPlay">▶ Play Rockdabus Prhyme's mix</button>
+  <span class="dj-note" id="djAutoLabel"></span>
+</div>
+
+<div id="djSpinOverlay" class="dj-spin-overlay" aria-hidden="true">
+  <div class="dj-vinyl" id="djVinyl"></div>
+  <div class="dj-spin-sub">Now spinning</div>
+  <div class="dj-spin-name" id="djSpinName"></div>
+</div>
+
+<div class="dj-decks">
+  <!-- DECK A -->
+  <section class="deck" id="deckA">
+    <div class="deck-head">
+      <span class="deck-name deck-a-name">DECK A</span>
+      <span class="deck-time"><span id="tA-cur">0:00</span> / <span id="tA-dur">0:00</span></span>
+    </div>
+    <div class="deck-track" id="trackA">No track loaded</div>
+    <div class="deck-platter" id="platterA" role="button" tabindex="0" aria-label="Deck A turntable — tap to play or pause" title="Tap to play / pause">
+      <div class="deck-vinyl"><span class="deck-vinyl-label">A</span></div>
+      <div class="deck-tonearm"></div>
+      <div class="deck-loading" id="loadA" hidden><span class="deck-spinner"></span><span>Loading…</span></div>
+    </div>
+    <canvas class="wave" id="waveA" height="72"></canvas>
+    <div class="deck-btns">
+      <button class="btn play" id="playA">▶</button>
+      <button class="btn small" id="cueSetA" title="Set cue at current position">CUE ⏺</button>
+      <button class="btn small" id="cueGoA" title="Jump to cue">CUE ▶</button>
+    </div>
+    <div class="deck-ctl">
+      <label>Tempo <span id="tempoValA">+0.0%</span></label>
+      <input type="range" id="tempoA" min="-8" max="8" step="0.1" value="0">
+    </div>
+    <div class="deck-ctl bpmrow">
+      <label>BPM <input type="number" id="bpmA" class="txt bpm" value="140" min="50" max="200"></label>
+      <button class="btn small alt" id="tapA">TAP</button>
+    </div>
+    <div class="deck-eq">
+      <div class="eqctl"><label>LOW</label><input type="range" id="lowA" min="-24" max="24" step="1" value="0" orient="vertical"></div>
+      <div class="eqctl"><label>MID</label><input type="range" id="midA" min="-24" max="24" step="1" value="0" orient="vertical"></div>
+      <div class="eqctl"><label>HIGH</label><input type="range" id="highA" min="-24" max="24" step="1" value="0" orient="vertical"></div>
+      <div class="eqctl"><label>GAIN</label><input type="range" id="gainA" min="0" max="150" step="1" value="100" orient="vertical"></div>
+    </div>
+    <div class="deck-btns">
+      <button class="btn small" id="loadFileA">📁 File → A</button>
+      <button class="btn small" id="ejectA">⏏ Eject</button>
+    </div>
+  </section>
+
+  <!-- MIXER -->
+  <section class="dj-mixer">
+    <div class="mix-ctl">
+      <label>Crossfader</label>
+      <input type="range" id="xfade" min="0" max="100" step="1" value="50">
+      <div class="xfade-lbl"><span>A</span><span>B</span></div>
+    </div>
+    <div class="mix-btns">
+      <button class="btn alt" id="syncBtn">🔗 SYNC B→A</button>
+      <button class="btn small" id="autoMixBtn" aria-pressed="false">🔀 Auto-mix: OFF</button>
+    </div>
+    <div class="mix-ctl">
+      <label>Master <span id="masterVal">100%</span></label>
+      <input type="range" id="masterGain" min="0" max="150" step="1" value="100">
+    </div>
+  </section>
+
+  <!-- DECK B -->
+  <section class="deck" id="deckB">
+    <div class="deck-head">
+      <span class="deck-name deck-b-name">DECK B</span>
+      <span class="deck-time"><span id="tB-cur">0:00</span> / <span id="tB-dur">0:00</span></span>
+    </div>
+    <div class="deck-track" id="trackB">No track loaded</div>
+    <div class="deck-platter" id="platterB" role="button" tabindex="0" aria-label="Deck B turntable — tap to play or pause" title="Tap to play / pause">
+      <div class="deck-vinyl"><span class="deck-vinyl-label">B</span></div>
+      <div class="deck-tonearm"></div>
+      <div class="deck-loading" id="loadB" hidden><span class="deck-spinner"></span><span>Loading…</span></div>
+    </div>
+    <canvas class="wave" id="waveB" height="72"></canvas>
+    <div class="deck-btns">
+      <button class="btn play" id="playB">▶</button>
+      <button class="btn small" id="cueSetB" title="Set cue at current position">CUE ⏺</button>
+      <button class="btn small" id="cueGoB" title="Jump to cue">CUE ▶</button>
+    </div>
+    <div class="deck-ctl">
+      <label>Tempo <span id="tempoValB">+0.0%</span></label>
+      <input type="range" id="tempoB" min="-8" max="8" step="0.1" value="0">
+    </div>
+    <div class="deck-ctl bpmrow">
+      <label>BPM <input type="number" id="bpmB" class="txt bpm" value="140" min="50" max="200"></label>
+      <button class="btn small alt" id="tapB">TAP</button>
+    </div>
+    <div class="deck-eq">
+      <div class="eqctl"><label>LOW</label><input type="range" id="lowB" min="-24" max="24" step="1" value="0" orient="vertical"></div>
+      <div class="eqctl"><label>MID</label><input type="range" id="midB" min="-24" max="24" step="1" value="0" orient="vertical"></div>
+      <div class="eqctl"><label>HIGH</label><input type="range" id="highB" min="-24" max="24" step="1" value="0" orient="vertical"></div>
+      <div class="eqctl"><label>GAIN</label><input type="range" id="gainB" min="0" max="150" step="1" value="100" orient="vertical"></div>
+    </div>
+    <div class="deck-btns">
+      <button class="btn small" id="loadFileB">📁 File → B</button>
+      <button class="btn small" id="ejectB">⏏ Eject</button>
+    </div>
+  </section>
+</div>
+
+<p class="dj-note">Tip: generate a beat on the Beats page, then load it here from 📀. All mixing happens live on your phone — nothing is uploaded or replaced.</p>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+"use strict";
+const $ = id => document.getElementById(id);
+
+/* ---------- audio graph ---------- */
+const AC = window.AudioContext || window.webkitAudioContext;
+const ctx = new AC();
+const master = ctx.createGain(); master.gain.value = 1.0; master.connect(ctx.destination);
+
+function makeDeck(xfadeNode){
+  const low = ctx.createBiquadFilter();  low.type = "lowshelf";  low.frequency.value = 320;
+  const mid = ctx.createBiquadFilter();  mid.type = "peaking";   mid.frequency.value = 1000; mid.Q.value = 1.0;
+  const high= ctx.createBiquadFilter();  high.type="highshelf";  high.frequency.value = 3200;
+  const gain= ctx.createGain();
+  const bus = ctx.createGain(); // deck bus -> crossfade node
+  low.connect(mid); mid.connect(high); high.connect(gain); gain.connect(bus); bus.connect(xfadeNode);
+  return {low, mid, high, gain, bus,
+          buffer:null, src:null, playing:false,
+          offset:0, startCtx:0, rate:1,
+          cue:null, name:"", url:"", peaks:[], tapTimes:[]};
+}
+
+const xfA = ctx.createGain(), xfB = ctx.createGain();
+xfA.connect(master); xfB.connect(master);
+const deckA = makeDeck(xfA), deckB = makeDeck(xfB);
+
+function db2lin(db){ return Math.pow(10, db/20); }
+
+/* ---------- crossfader (constant power) ---------- */
+function applyXfade(){
+  const x = parseFloat($("xfade").value)/100;
+  xfA.gain.setTargetAtTime(Math.cos(x*Math.PI/2), ctx.currentTime, 0.02);
+  xfB.gain.setTargetAtTime(Math.cos((1-x)*Math.PI/2), ctx.currentTime, 0.02);
+}
+$("xfade").addEventListener("input", applyXfade); applyXfade();
+
+$("masterGain").addEventListener("input", e=>{
+  master.gain.setTargetAtTime(parseFloat(e.target.value)/100, ctx.currentTime, 0.02);
+  $("masterVal").textContent = e.target.value + "%";
+});
+
+/* ---------- deck helpers ---------- */
+function fmt(s){ s=Math.max(0,Math.floor(s)); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); }
+
+function stopSrc(d){
+  if(d.src){ try{ d.src.onended=null; d.src.stop(); }catch(e){} d.src.disconnect(); d.src=null; }
+  d.playing=false;
+  setDeckSpin(d,false);
+}
+function position(d){
+  if(!d.buffer) return 0;
+  if(d.playing) return Math.min(d.buffer.duration, d.offset + (ctx.currentTime-d.startCtx)*d.rate);
+  return d.offset;
+}
+function playDeck(d, btn, at){
+  if(!d.buffer) return;
+  ctx.resume();
+  stopSrc(d);
+  const src = ctx.createBufferSource();
+  src.buffer = d.buffer; src.playbackRate.value = d.rate;
+  src.connect(d.low);
+  const off = Math.min(at!=null?at:position(d), d.buffer.duration-0.05);
+  d.offset = off; d.startCtx = ctx.currentTime;
+  src.onended = ()=>{ if(d.src===src){ d.playing=false; btn.textContent="▶"; btn.classList.remove("stop"); setDeckSpin(d,false); onDeckEnded(d); } };
+  src.start(0, off);
+  d.src = src; d.playing = true;
+  btn.textContent="⏸"; btn.classList.add("stop");
+  setDeckSpin(d,true);
+  if(window.djrillAmbient) djrillAmbient.userAudioStart();
+}
+function pauseDeck(d, btn){
+  if(!d.playing) return;
+  d.offset = position(d);
+  stopSrc(d);
+  hideSpinOverlay();
+  btn.textContent="▶"; btn.classList.remove("stop");
+  if(window.djrillAmbient) djrillAmbient.userAudioStop();
+}
+function toggleDeck(d, btn){ d.playing ? pauseDeck(d,btn) : playDeck(d,btn); }
+
+/* ---------- record spin visuals (CSS-driven, no JS animation loops) ---------- */
+function deckNameEl(d){ return (d===deckA?$("deckA"):$("deckB")).querySelector(".deck-name"); }
+function deckPlatter(d){ return $(d===deckA?"platterA":"platterB"); }
+/* Spin speed follows the deck's playback rate: 1.8s/rev at 1.0x. */
+function setSpinRate(d){
+  const pl=deckPlatter(d); if(!pl) return;
+  const v=pl.querySelector(".deck-vinyl"); if(!v) return;
+  v.style.animationDuration=(1.8/Math.max(0.2,d.rate||1)).toFixed(3)+"s";
+}
+function setDeckSpin(d,on){
+  const el=deckNameEl(d); if(el) el.classList.toggle("spinning",on);
+  const pl=deckPlatter(d); if(pl) pl.classList.toggle("playing",on);
+  setSpinRate(d);
+}
+function showSpinOverlay(name){
+  const o=$("djSpinOverlay"); if(!o) return;
+  const v=$("djVinyl");
+  if(v){ v.classList.remove("spin","spindown"); void v.offsetWidth; } // reset so the next spin starts clean
+  $("djSpinName").textContent=name||"";
+  o.classList.add("show");
+  clearTimeout(o._hideT);
+}
+function startVinylSpin(){
+  const v=$("djVinyl"), o=$("djSpinOverlay"); if(!v||!o) return;
+  v.classList.remove("spindown");
+  void v.offsetWidth; // restart the CSS animation reliably
+  v.classList.add("spin");
+  clearTimeout(o._hideT);
+  o._hideT=setTimeout(hideSpinOverlay, 3000); // auto-hide; deck dots keep the state
+}
+function hideSpinOverlay(){
+  const o=$("djSpinOverlay"); if(!o||!o.classList.contains("show")) return;
+  const v=$("djVinyl");
+  if(v){ v.classList.remove("spin"); v.classList.add("spindown"); } // slow-down while the backdrop fades
+  clearTimeout(o._hideT);
+  o.classList.remove("show");
+}
+function jumpDeck(d, btn, t){
+  const was = d.playing;
+  if(was) pauseDeck(d, btn);
+  d.offset = Math.max(0, Math.min(t, d.buffer?d.buffer.duration-0.05:0));
+  if(was) playDeck(d, btn, d.offset);
+}
+
+/* ---------- load track ---------- */
+async function loadInto(deck, labelEl, btnEl, url, name, bpmGuess){
+  const loadEl = $(deck===deckA?"loadA":"loadB");
+  if(loadEl) loadEl.hidden = false;   // per-deck loading spinner overlay
+  labelEl.textContent = "Loading…";
+  try{
+    const res = await fetch(url);
+    if(!res.ok) throw new Error("HTTP "+res.status);
+    const ab = await res.arrayBuffer();
+    const buf = await ctx.decodeAudioData(ab);
+    stopSrc(deck); pauseReset(deck, btnEl);
+    deck.buffer = buf; deck.url = url; deck.name = name; deck.cue = null; deck.offset = 0;
+    deck.peaks = computePeaks(buf, 220);
+    labelEl.textContent = name;
+    if(bpmGuess){ const inp = deck===deckA?$("bpmA"):$("bpmB"); if(inp) inp.value = bpmGuess; }
+    drawWave(deck);
+    updateTimes();
+  }catch(e){ labelEl.textContent = "⚠ Could not load: " + name; }
+  finally{ if(loadEl) loadEl.hidden = true; }
+}
+function pauseReset(d, btn){ d.playing=false; btn.textContent="▶"; btn.classList.remove("stop"); }
+
+function computePeaks(buf, n){
+  const ch = buf.getChannelData(0), out = new Array(n).fill(0), step = Math.floor(ch.length/n)||1;
+  for(let i=0;i<n;i++){
+    let m=0; const s=i*step;
+    for(let j=s;j<s+step&&j<ch.length;j+=40){ const v=Math.abs(ch[j]); if(v>m)m=v; }
+    out[i]=m;
+  }
+  return out;
+}
+function drawWave(deck){
+  const cv = deck===deckA?$("waveA"):$("waveB");
+  const c = cv.getContext("2d");
+  const W = cv.width = cv.clientWidth*2, H = cv.height = 144;
+  c.clearRect(0,0,W,H);
+  const pk = deck.peaks; if(!pk.length) return;
+  const col = deck===deckA ? "#00e5ff" : "#ff2d78";
+  const bw = W/pk.length;
+  c.fillStyle = col;
+  pk.forEach((p,i)=>{ const h=Math.max(2,p*(H-8)); c.fillRect(i*bw,(H-h)/2,Math.max(1,bw-1),h); });
+  // progress + cue markers drawn in updateTimes
+}
+function waveClick(deck, btn, ev){
+  if(!deck.buffer) return;
+  const cv = deck===deckA?$("waveA"):$("waveB");
+  const r = cv.getBoundingClientRect();
+  const frac = Math.min(0.999, Math.max(0,(ev.clientX-r.left)/r.width));
+  jumpDeck(deck, btn, frac*deck.buffer.duration);
+}
+$("waveA").addEventListener("click", e=>waveClick(deckA,$("playA"),e));
+$("waveB").addEventListener("click", e=>waveClick(deckB,$("playB"),e));
+
+/* ---------- wire deck A ---------- */
+$("playA").addEventListener("click", ()=>toggleDeck(deckA,$("playA")));
+$("playB").addEventListener("click", ()=>toggleDeck(deckB,$("playB")));
+$("cueSetA").addEventListener("click", ()=>{ deckA.cue = position(deckA); toast("Cue A set @ "+fmt(deckA.cue)); });
+$("cueSetB").addEventListener("click", ()=>{ deckB.cue = position(deckB); toast("Cue B set @ "+fmt(deckB.cue)); });
+$("cueGoA").addEventListener("click", ()=>{ if(deckA.cue!=null) jumpDeck(deckA,$("playA"),deckA.cue); });
+$("cueGoB").addEventListener("click", ()=>{ if(deckB.cue!=null) jumpDeck(deckB,$("playB"),deckB.cue); });
+
+$("tempoA").addEventListener("input", e=>{
+  const t=parseFloat(e.target.value); $("tempoValA").textContent=(t>=0?"+":"")+t.toFixed(1)+"%";
+  deckA.rate=1+t/100; if(deckA.src) deckA.src.playbackRate.setTargetAtTime(deckA.rate,ctx.currentTime,0.02);
+  setSpinRate(deckA);
+});
+$("tempoB").addEventListener("input", e=>{
+  const t=parseFloat(e.target.value); $("tempoValB").textContent=(t>=0?"+":"")+t.toFixed(1)+"%";
+  deckB.rate=1+t/100; if(deckB.src) deckB.src.playbackRate.setTargetAtTime(deckB.rate,ctx.currentTime,0.02);
+  setSpinRate(deckB);
+});
+
+function eqWire(deck, low, mid, high, gain){
+  $(low).addEventListener("input", e=>deck.low.gain.setTargetAtTime(parseFloat(e.target.value),ctx.currentTime,0.02));
+  $(mid).addEventListener("input", e=>deck.mid.gain.setTargetAtTime(parseFloat(e.target.value),ctx.currentTime,0.02));
+  $(high).addEventListener("input", e=>deck.high.gain.setTargetAtTime(parseFloat(e.target.value),ctx.currentTime,0.02));
+  $(gain).addEventListener("input", e=>deck.gain.gain.setTargetAtTime(parseFloat(e.target.value)/100,ctx.currentTime,0.02));
+}
+eqWire(deckA,"lowA","midA","highA","gainA");
+eqWire(deckB,"lowB","midB","highB","gainB");
+
+$("loadFileA").addEventListener("click", ()=>$("fileA").click());
+$("loadFileB").addEventListener("click", ()=>$("fileB").click());
+$("fileA").addEventListener("change", e=>{ const f=e.target.files[0]; if(f) loadInto(deckA,$("trackA"),$("playA"),URL.createObjectURL(f),f.name); e.target.value=""; });
+$("fileB").addEventListener("change", e=>{ const f=e.target.files[0]; if(f) loadInto(deckB,$("trackB"),$("playB"),URL.createObjectURL(f),f.name); e.target.value=""; });
+$("ejectA").addEventListener("click", ()=>{ stopSrc(deckA); deckA.buffer=null; deckA.name=""; $("trackA").textContent="No track loaded"; pauseReset(deckA,$("playA")); clearWave($("waveA")); updateTimes(); });
+$("ejectB").addEventListener("click", ()=>{ stopSrc(deckB); deckB.buffer=null; deckB.name=""; $("trackB").textContent="No track loaded"; pauseReset(deckB,$("playB")); clearWave($("waveB")); updateTimes(); });
+function clearWave(cv){ const c=cv.getContext("2d"); c.clearRect(0,0,cv.width,cv.height); }
+
+/* tap the vinyl to play / pause — big touch target */
+[["platterA",deckA,"playA"],["platterB",deckB,"playB"]].forEach(([pid,deck,bid])=>{
+  const pl=$(pid); if(!pl) return;
+  pl.addEventListener("click", ()=>toggleDeck(deck,$(bid)));
+  pl.addEventListener("keydown", e=>{
+    if(e.key==="Enter"||e.key===" "){ e.preventDefault(); toggleDeck(deck,$(bid)); }
+  });
+});
+
+/* ---------- tap tempo ---------- */
+function tap(deck){
+  const now=performance.now()/1000, ts=deck.tapTimes;
+  if(ts.length && now-ts[ts.length-1]>2.5) ts.length=0;
+  ts.push(now); if(ts.length>8) ts.shift();
+  if(ts.length>=3){
+    const iv=[]; for(let i=1;i<ts.length;i++) iv.push(ts[i]-ts[i-1]);
+    iv.sort((a,b)=>a-b); const med=iv[Math.floor(iv.length/2)];
+    const bpm=Math.round(60/med);
+    const inp=deck===deckA?$("bpmA"):$("bpmB"); inp.value=Math.min(200,Math.max(50,bpm));
+  }
+}
+$("tapA").addEventListener("click", ()=>tap(deckA));
+$("tapB").addEventListener("click", ()=>tap(deckB));
+
+/* ---------- sync B to A ---------- */
+$("syncBtn").addEventListener("click", ()=>{
+  const a=parseFloat($("bpmA").value)||140, b=parseFloat($("bpmB").value)||140;
+  if(!b) return;
+  const target = (a*deckA.rate)/b;             // rate B needs so its effective BPM = A's
+  const clamped = Math.min(1.08, Math.max(0.92, target));
+  const pct = (clamped-1)*100;
+  $("tempoB").value = pct.toFixed(1);
+  $("tempoValB").textContent = (pct>=0?"+":"")+pct.toFixed(1)+"%";
+  deckB.rate = clamped;
+  if(deckB.src) deckB.src.playbackRate.setTargetAtTime(clamped, ctx.currentTime, 0.02);
+  setSpinRate(deckB);
+  toast("B synced to A ("+Math.round(a*deckA.rate)+" BPM)");
+});
+
+/* ---------- auto-mix ---------- */
+let autoMix=false, autoMixing=false;
+$("autoMixBtn").addEventListener("click", e=>{
+  autoMix=!autoMix; autoMixing=false;
+  e.target.textContent="🔀 Auto-mix: "+(autoMix?"ON":"OFF");
+  e.target.setAttribute("aria-pressed", autoMix);
+});
+const XF_SECS=8;
+function onDeckEnded(d){
+  if(window.djrillAmbient) djrillAmbient.userAudioStop();
+  if(!autoMix || autoMixing) return;
+  const other = d===deckA?deckB:deckA;
+  const oBtn = d===deckA?$("playB"):$("playA");
+  if(!other.buffer) return;
+  autoMixing=true;
+  playDeck(other, oBtn, 0);
+  // animate crossfader to the other deck
+  const xf=$("xfade"), from=parseFloat(xf.value), to=d===deckA?100:0, t0=performance.now();
+  (function step(){
+    const k=Math.min(1,(performance.now()-t0)/(XF_SECS*1000));
+    xf.value=from+(to-from)*k; applyXfade();
+    if(k<1) requestAnimationFrame(step); else autoMixing=false;
+  })();
+  toast("Auto-mix → "+(d===deckA?"B":"A"));
+}
+
+/* ---------- library ---------- */
+let libCache=[];
+/* shared inline preview player (one <audio>, toggled per row) */
+const previewAudio=document.createElement("audio");
+previewAudio.preload="none";
+let previewBtn=null;
+function previewTrack(url, btn){
+  if(previewBtn===btn && !previewAudio.paused){
+    previewAudio.pause(); btn.textContent="▶"; previewBtn=null; return;
+  }
+  if(previewBtn) previewBtn.textContent="▶";
+  previewAudio.src=url;
+  previewAudio.play().catch(()=>{ btn.textContent="▶"; previewBtn=null; });
+  btn.textContent="⏸"; previewBtn=btn;
+  previewAudio.onended=()=>{ btn.textContent="▶"; previewBtn=null; };
+}
+async function loadLibrary(){
+  const list=$("libList"); list.innerHTML='<div class="lib-empty">Loading…</div>';
+  try{
+    const r=await fetch("/api/library"); const j=await r.json();
+    libCache=(j.tracks||[]);
+    renderLib("");
+  }catch(e){ list.innerHTML='<div class="lib-empty">⚠ Could not load library</div>'; }
+}
+function renderLib(q){
+  const list=$("libList"); list.innerHTML="";
+  const items=libCache.filter(t=>t.name.toLowerCase().includes(q.toLowerCase())).slice(0,60);
+  if(!items.length){ list.innerHTML='<div class="lib-empty">No tracks found</div>'; return; }
+  items.forEach(t=>{
+    const row=document.createElement("div"); row.className="lib-item";
+    const nm=document.createElement("span"); nm.className="lib-name"; nm.textContent=t.name;
+    const meta=document.createElement("span"); meta.className="lib-meta"; meta.textContent=t.bpm?(t.bpm+" BPM"):"";
+    const bA=document.createElement("button"); bA.className="btn tiny"; bA.textContent="→A";
+    const bB=document.createElement("button"); bB.className="btn tiny"; bB.textContent="→B";
+    const pv=document.createElement("button"); pv.className="btn tiny alt"; pv.textContent="▶"; pv.title="Preview this track";
+    pv.onclick=()=>previewTrack(t.url, pv);
+    bA.onclick=()=>{ loadInto(deckA,$("trackA"),$("playA"),t.url,t.name,t.bpm); $("libPanel").style.display="none"; };
+    bB.onclick=()=>{ loadInto(deckB,$("trackB"),$("playB"),t.url,t.name,t.bpm); $("libPanel").style.display="none"; };
+    row.append(nm,meta,pv,bA,bB); list.appendChild(row);
+  });
+}
+$("libToggle").addEventListener("click", ()=>{
+  const p=$("libPanel"); p.style.display=p.style.display==="none"?"block":"none";
+  if(p.style.display==="block" && !libCache.length) loadLibrary();
+});
+$("libRefresh").addEventListener("click", loadLibrary);
+$("libSearch").addEventListener("input", e=>renderLib(e.target.value));
+
+/* ---------- mix generator ---------- */
+$("genMixBtn").addEventListener("click", async ()=>{
+  const btn=$("genMixBtn"), st=$("mixStatus");
+  btn.disabled=true; btn.textContent="⏳ Mixing…";
+  st.style.display="block"; st.textContent="Synthesizing beats…";
+  try{
+    const r=await fetch("/api/mix",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({genre:$("mixGenre").value, style:$("mixStyle").value})});
+    const j=await r.json();
+    if(!j.ok) throw new Error(j.error||"Mix failed");
+    const job=j.job_id;
+    const _t0=Date.now();
+    const _fmtT=(ms)=>{const s=Math.floor(ms/1000);return Math.floor(s/60)+":"+String(s%60).padStart(2,"0");};
+    const poll=setInterval(async ()=>{
+      const pr=await fetch("/api/job/"+job); const pj=await pr.json();
+      const pct=pj.progress||0;
+      st.textContent=(pj.message||"Working…")+" "+pct+"% ⏱ "+_fmtT(Date.now()-_t0);
+      if(pj.status==="done"){
+        clearInterval(poll);
+        const res=pj.result||{};
+        st.textContent="✅ Rockdabus Prhyme's pick is ready — "+(res.duration||"?")+"s @ "+(res.bpm||"?")+" BPM";
+        toast("Rockdabus Prhyme's pick 🎛");
+        loadLibrary();
+        btn.disabled=false; btn.textContent="⚡ Generate Mix";
+      }else if(pj.status==="error"){
+        clearInterval(poll);
+        st.textContent="⚠ "+(pj.message||"Mix failed");
+        btn.disabled=false; btn.textContent="⚡ Generate Mix";
+      }
+    },1200);
+  }catch(e){
+    st.textContent="⚠ "+e.message;
+    btn.disabled=false; btn.textContent="⚡ Generate Mix";
+  }
+});
+
+/* ---------- upload own track ---------- */
+$("djUploadBtn").addEventListener("click", ()=>$("djUploadFile").click());
+$("djUploadFile").addEventListener("change", async e=>{
+  const f=e.target.files[0]; e.target.value="";
+  if(!f) return;
+  toast("Uploading "+f.name+"…");
+  const fd=new FormData(); fd.append("file", f);
+  try{
+    const r=await fetch("/api/dj/upload",{method:"POST",body:fd});
+    const j=await r.json();
+    if(!j.ok) throw new Error(j.error||"Upload failed");
+    toast("✅ Added to library");
+    loadLibrary();
+    const p=$("libPanel"); if(p.style.display==="none"){ p.style.display="block"; }
+  }catch(err){ toast("⚠ "+err.message); }
+});
+
+/* ---------- global genre sync + continuity ---------- */
+(function(){
+  const g=$("mixGenre"); if(!g) return;
+  const apply=(genre)=>{ const o=[...g.options].find(x=>x.value===genre); if(o) g.value=genre; };
+  if(window.djrillGenre) apply(window.djrillGenre.get());
+  document.addEventListener("djrill:genre",e=>{
+    const d=e.detail||{};
+    apply(d.genre);
+    // Continuity: decks keep playing — just note the genre change.
+    // Nothing here touches deck state, playback, or the crossfader.
+    if(d.prevGenre && d.prevGenre!==d.genre)
+      toast("🎵 Genre → "+d.genre+" (decks keep playing)");
+  });
+})();
+
+/* ---------- Rockdabus Prhyme auto-mix on page open ---------- */
+/* Generates (or reuses) a mix, then shows a big play button. Mobile
+   browsers require a tap before audio can start, so auto-play fires
+   from that tap — decks & crossfader stay fully manual. */
+(function(){
+  const AUTO_KEY="djrill-dj-autostart", CACHE_KEY="djrill-dj-automix";
+  const chk=$("djAutostart"), bar=$("djAutoBar"),
+        playBtn=$("djAutoPlay"), label=$("djAutoLabel");
+  if(!chk||!bar) return;
+  chk.checked = localStorage.getItem(AUTO_KEY)!=="0";
+  chk.addEventListener("change",()=>localStorage.setItem(AUTO_KEY, chk.checked?"1":"0"));
+  if(!chk.checked) return;
+
+  function showStart(name, url){
+    label.textContent=name;
+    bar.style.display="flex";
+    playBtn.style.display="";
+    playBtn.onclick=async ()=>{
+      ctx.resume();
+      playBtn.disabled=true; playBtn.textContent="⏳ Loading…";
+      showSpinOverlay(name); // backdrop + track name up front; the record itself starts when audio starts
+      await loadInto(deckA,$("trackA"),$("playA"),url,name);
+      const m=/(\d{2,3})bpm/.exec(name);
+      if(m) $("bpmA").value=m[1];
+      bar.style.display="none";
+      playBtn.disabled=false; playBtn.textContent="▶ Play Rockdabus Prhyme's mix";
+      playDeck(deckA,$("playA"),0);   // audio starts…
+      if(deckA.playing){
+        startVinylSpin();             // …at the exact same moment the record starts turning
+        toast("🎧 Rockdabus Prhyme is live");
+      }else hideSpinOverlay();        // load failed: nothing is playing, dismiss the overlay
+    };
+  }
+  async function urlOk(url){
+    try{ const r=await fetch(url,{method:"HEAD"}); return r.ok; }catch(e){ return false; }
+  }
+  (async ()=>{
+    let cached=null;
+    try{ cached=JSON.parse(localStorage.getItem(CACHE_KEY)||"null"); }catch(e){}
+    if(cached && cached.file){
+      const url="/download/"+encodeURIComponent(cached.file);
+      if(await urlOk(url)){ showStart(cached.file,url); return; }
+    }
+    const genre=(window.djrillGenre&&window.djrillGenre.get())||"HipHop";
+    label.textContent="Rockdabus Prhyme is cooking a "+genre+" mix…";
+    bar.style.display="flex"; playBtn.style.display="none";
+    try{
+      const r=await fetch("/api/mix",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({genre:genre, style:"genre"})});
+      const j=await r.json();
+      if(!j.ok) throw new Error("mix failed");
+      const poll=setInterval(async ()=>{
+        let pj=null;
+        try{ pj=await (await fetch("/api/job/"+j.job_id)).json(); }catch(e){ return; }
+        if(pj.status==="done"){
+          clearInterval(poll);
+          const res=pj.result||{};
+          const file=res.mp3||res.wav;
+          if(file){
+            try{ localStorage.setItem(CACHE_KEY, JSON.stringify({file:file, genre:genre})); }catch(e){}
+            showStart(file,"/download/"+encodeURIComponent(file));
+          } else bar.style.display="none";
+        }else if(pj.status==="error"){ clearInterval(poll); bar.style.display="none"; }
+        else label.textContent="Rockdabus Prhyme is cooking a "+genre+" mix… "+(pj.progress||0)+"%";
+      },1200);
+    }catch(e){ bar.style.display="none"; }
+  })();
+})();
+
+/* deep-link: /dj?loadA=<file> */
+(function(){
+  const q=new URLSearchParams(location.search);
+  ["A","B"].forEach(D=>{
+    const f=q.get("load"+D);
+    if(f){
+      const url="/download/"+encodeURIComponent(f);
+      if(D==="A") loadInto(deckA,$("trackA"),$("playA"),url,f);
+      else loadInto(deckB,$("trackB"),$("playB"),url,f);
+    }
+  });
+})();
+
+/* ---------- clocks ---------- */
+function updateTimes(){
+  [["A",deckA],["B",deckB]].forEach(([L,d])=>{
+    const pos=position(d), dur=d.buffer?d.buffer.duration:0;
+    $("t"+L+"-cur").textContent=fmt(pos); $("t"+L+"-dur").textContent=fmt(dur);
+    // progress + cue overlay
+    const cv=$("wave"+L), c=cv.getContext("2d");
+    if(d.peaks.length){
+      drawWave(d);
+      const W=cv.width, H=cv.height;
+      if(dur>0){
+        c.fillStyle="rgba(255,255,255,.85)";
+        c.fillRect((pos/dur)*W,0,2,H);
+        if(d.cue!=null){ c.fillStyle="#ffd166"; c.fillRect((d.cue/dur)*W,0,3,H); }
+      }
+    }
+  });
+}
+setInterval(updateTimes, 250);
+window.addEventListener("resize", ()=>{ drawWave(deckA); drawWave(deckB); });
+
+function toast(msg){
+  let t=document.getElementById("djToast");
+  if(!t){ t=document.createElement("div"); t.id="djToast"; t.className="dj-toast"; document.body.appendChild(t); }
+  t.textContent=msg; t.classList.add("show");
+  clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),1800);
+}
+// unlock audio on first touch
+document.addEventListener("pointerdown", ()=>ctx.resume(), {once:true});
+})();
+</script>
+{% endblock %}

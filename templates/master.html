@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico pulse">◉</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Master a Track</h2><a class="help-link" href="{{ url_for('help_page') }}#master" aria-label="Help">?</a></div>
+    <p class="plead">Upload your recording — the engine renders a beat locked to its tempo, polishes your vocal, mixes voice-forward, and masters to <strong>-14 LUFS / -1.0 dBTP</strong>.</p>
+  </div>
+</div>
+
+<form id="masterForm" class="form" enctype="multipart/form-data">
+  <label class="field">
+    <span>Your recording (WAV, MP3, M4A…)</span>
+    <input type="file" name="file" accept="audio/*,video/*" required class="fileinput">
+  </label>
+  <label class="field">
+    <span>Track title</span>
+    <input type="text" name="title" placeholder="My Track (Prhyme™ Master)" maxlength="60">
+  </label>
+  <div class="row2">
+    <label class="field">
+      <span>Genre</span>
+      <select name="genre">
+        {% for g in genres %}<option value="{{ g }}" {% if g=='Drill' %}selected{% endif %}>{{ g }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="field">
+      <span>BPM (blank = auto-detect)</span>
+      <input type="number" name="bpm" min="50" max="200" step="0.1" placeholder="auto">
+    </label>
+  </div>
+  <label class="field">
+    <span>Seed (blank = random)</span>
+    <input type="number" name="seed" min="1" placeholder="random">
+  </label>
+
+  <details class="fxbox">
+    <summary>⚙️ Mastering options</summary>
+    <div class="row2">
+      <label class="field">
+        <span>Master chain</span>
+        <select name="chain">
+          <option>Streaming</option>
+          <option>Club</option>
+          <option>Radio</option>
+          <option>V8 Reference</option>
+          <option>LoFi Tape</option>
+          <option>Dynamic</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Loudness target (LUFS, blank = chain)</span>
+        <input type="number" name="target_lufs" min="-24" max="-6" step="0.5" placeholder="auto">
+      </label>
+    </div>
+    <div class="row2">
+      <label class="field">
+        <span>True-peak ceiling (dB)</span>
+        <input type="number" name="ceiling_db" min="-3" max="-0.3" step="0.1" value="-1.0">
+      </label>
+      <label class="field">
+        <span>Vocal boost (dB)</span>
+        <input type="number" name="vocal_boost_db" min="-6" max="12" step="0.5" value="1.5">
+      </label>
+    </div>
+    <div class="row2">
+      <label class="field">
+        <span>Fade in (s)</span>
+        <input type="number" name="fade_in" min="0" max="5" step="0.1" value="0.5">
+      </label>
+      <label class="field">
+        <span>Fade out (s)</span>
+        <input type="number" name="fade_out" min="0" max="10" step="0.5" value="3.0">
+      </label>
+    </div>
+    <div class="fxgrid">
+      <label class="check"><input type="checkbox" name="vocal_polish" checked> ✨ Vocal polish</label>
+      <label class="check"><input type="checkbox" name="timing_fix" checked> 🎯 Timing fix</label>
+      <label class="check"><input type="checkbox" name="dither" checked> Dither</label>
+      <label class="check"><input type="checkbox" name="multiband"> Multiband polish</label>
+    </div>
+    <div class="row2">
+      <label class="field">
+        <span>De-esser (0–1)</span>
+        <input type="number" name="deess" min="0" max="1" step="0.1" value="0">
+      </label>
+      <label class="field">
+        <span>Reference track (optional — match its sound)</span>
+        <input type="file" name="reference" accept="audio/*" class="fileinput">
+      </label>
+    </div>
+
+    <div class="fxsec">
+      <div class="fx-title">🎛 Creative FX <span class="fx-sub">character &amp; space — never touches your words</span></div>
+      <div class="chips">
+        <button type="button" class="chip" data-preset="clean">✨ Clean</button>
+        <button type="button" class="chip" data-preset="lofi">💿 Lo-Fi</button>
+        <button type="button" class="chip" data-preset="radiohit">📻 Radio Hit</button>
+        <button type="button" class="chip" data-preset="phonecall">📞 Phone Call</button>
+        <button type="button" class="chip" data-preset="bigspace">🌌 Big Space</button>
+      </div>
+      <div class="fxgrid">
+        <label class="check"><input type="checkbox" name="fx_radio"> 📻 Radio</label>
+        <label class="check"><input type="checkbox" name="fx_tv"> 📺 Television</label>
+        <label class="check"><input type="checkbox" name="fx_vinyl"> 💿 Old vinyl</label>
+        <label class="check"><input type="checkbox" name="fx_hp_on"> High-pass</label>
+        <label class="check"><input type="checkbox" name="fx_lp_on"> Low-pass</label>
+        <label class="check"><input type="checkbox" name="fx_echo_on"> 🔊 Echo</label>
+      </div>
+      <div class="row2">
+        <label class="field">
+          <span>High-pass cutoff (Hz)</span>
+          <input type="number" name="fx_hp_cut" min="20" max="20000" step="10" value="120">
+        </label>
+        <label class="field">
+          <span>Low-pass cutoff (Hz)</span>
+          <input type="number" name="fx_lp_cut" min="20" max="20000" step="100" value="8000">
+        </label>
+      </div>
+      <div class="row2">
+        <label class="field">
+          <span>Echo time (ms)</span>
+          <input type="number" name="fx_echo_ms" min="50" max="2000" step="25" value="375">
+        </label>
+        <label class="field">
+          <span>Echo feedback</span>
+          <input type="number" name="fx_echo_fb" min="0" max="0.6" step="0.05" value="0.35">
+        </label>
+      </div>
+      <div class="row2">
+        <label class="field">
+          <span>Echo mix</span>
+          <input type="number" name="fx_echo_mix" min="0" max="0.5" step="0.05" value="0.3">
+        </label>
+        <label class="field">
+          <span>Apply FX to</span>
+          <select name="fx_target">
+            <option value="vocal">Vocal only</option>
+            <option value="mix">Full mix</option>
+          </select>
+        </label>
+      </div>
+      <div class="fxgrid">
+        <label class="check"><input type="checkbox" name="fx_echo_sync"> 🎵 Sync echo to BPM (dotted 8th)</label>
+      </div>
+    </div>
+  </details>
+
+  <button type="submit" class="btn big">⚡ Master it</button>
+</form>
+
+<div id="jobBox" class="jobbox hidden">
+  <div class="jobmsg" id="jobMsg">Starting…</div>
+  <div class="pbar"><div class="pfill" id="jobFill"></div></div>
+  <div class="jobpct" id="jobPct">0%</div>
+  <div id="jobResult" class="result"></div>
+</div>
+
+<h2 class="ptitle" style="margin-top:2rem">Stem Mastering</h2>
+<p class="plead">Upload 2–8 stems — each gets gentle polish, then they're glued and limited together.</p>
+<form id="stemForm" class="form" enctype="multipart/form-data">
+  <label class="field">
+    <span>Stems (2–8 audio files)</span>
+    <input type="file" name="stems" accept="audio/*" multiple required class="fileinput">
+  </label>
+  <div class="row2">
+    <label class="field">
+      <span>Loudness target (LUFS)</span>
+      <input type="number" name="target_lufs" min="-24" max="-6" step="0.5" value="-14">
+    </label>
+    <label class="field">
+      <span>True-peak ceiling (dB)</span>
+      <input type="number" name="ceiling_db" min="-3" max="-0.3" step="0.1" value="-1.0">
+    </label>
+  </div>
+  <button type="submit" class="btn big">🎚 Master stems</button>
+</form>
+
+<div id="jobBox2" class="jobbox hidden">
+  <div class="jobmsg" id="jobMsg2">Starting…</div>
+  <div class="pbar"><div class="pfill" id="jobFill2"></div></div>
+  <div class="jobpct" id="jobPct2">0%</div>
+  <div id="jobResult2" class="result"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+bindJobForm("masterForm", "/api/master", true);
+bindJobForm2("stemForm", "/api/master/stems", "2");
+
+(function () {
+  var form = document.getElementById("masterForm");
+  if (!form) return;
+
+  // ---- FX preset chips: one tap sets a whole character chain
+  var PRESETS = {
+    clean:     {},
+    lofi:      { fx_vinyl: 1, fx_lp_on: 1, fx_lp_cut: 6000 },
+    radiohit:  { fx_radio: 1, fx_echo_on: 1, fx_echo_sync: 1, fx_echo_mix: 0.25 },
+    phonecall: { fx_radio: 1 },
+    bigspace:  { fx_echo_on: 1, fx_echo_ms: 520, fx_echo_fb: 0.5,
+                 fx_echo_mix: 0.4, fx_hp_on: 1, fx_hp_cut: 200 }
+  };
+  var FX_NAMES = ["fx_radio", "fx_tv", "fx_vinyl", "fx_hp_on", "fx_lp_on",
+                  "fx_echo_on", "fx_echo_sync"];
+  function setField(name, val) {
+    var el = form.elements[name];
+    if (!el) return;
+    if (el.type === "checkbox") el.checked = !!val;
+    else el.value = val;
+  }
+  document.querySelectorAll(".chip[data-preset]").forEach(function (chip) {
+    chip.addEventListener("click", function () {
+      var p = PRESETS[chip.dataset.preset] || {};
+      FX_NAMES.forEach(function (n) { setField(n, 0); });
+      Object.keys(p).forEach(function (n) { setField(n, p[n]); });
+      document.querySelectorAll(".chip[data-preset]").forEach(function (c) {
+        c.classList.toggle("on", c === chip);
+      });
+      saveForm();
+    });
+  });
+
+  // ---- remember settings between visits (never file inputs)
+  var KEY = "djrill-master-form-v1";
+  var t = null;
+  function saveForm() {
+    try {
+      var d = {};
+      Array.prototype.forEach.call(form.elements, function (el) {
+        if (!el.name || el.type === "file") return;
+        d[el.name] = el.type === "checkbox" ? (el.checked ? 1 : 0) : el.value;
+      });
+      localStorage.setItem(KEY, JSON.stringify(d));
+    } catch (e) {}
+  }
+  function loadForm() {
+    try {
+      var d = JSON.parse(localStorage.getItem(KEY) || "null");
+      if (!d) return;
+      Object.keys(d).forEach(function (n) { setField(n, d[n]); });
+    } catch (e) {}
+  }
+  form.addEventListener("change", function () {
+    clearTimeout(t); t = setTimeout(saveForm, 400);
+  });
+  loadForm();
+})();
+</script>
+{% endblock %}

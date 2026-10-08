@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Prhyme™{% if title %} — {{ title }}{% endif %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/rockdabus-buddy.css') }}">
+<link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+<meta name="theme-color" content="#0a0a14">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Prhyme™">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='img/apple-touch-icon.png') }}">
+<script>
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('{{ url_for("static", filename="sw.js") }}')
+      .catch(function (err) { console.warn('Prhyme™ SW registration failed:', err); });
+  });
+}
+</script>
+</head>
+<body data-page="{{ active|default('home') }}">
+<div class="bg-orbs"><span class="orb o1"></span><span class="orb o2"></span><span class="orb o3"></span></div>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="eq" aria-hidden="true">
+      <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+    <div class="brand-text">Prhyme™</div>
+  </div>
+  <span id="liteBadge" class="lite-badge{% if not lite %} hidden{% endif %}" title="Lite Mode is on — heavy operations are scaled down for your phone">⚡ LITE</span>
+  <span id="offlineBadge" class="offline-badge" title="Prhyme™ runs 100% on your phone — no internet needed">📴 Offline-ready</span>
+</header>
+
+<main class="page">
+<div class="a11ybar">
+  <button class="btn small" onclick="djrillA11y.toggleHC()">◐ Contrast</button>
+  <button class="btn small" onclick="djrillA11y.toggleFS()">🔍 Text size</button>
+  <button id="liteToggle" class="btn small lite-toggle{% if lite %} on{% endif %}" onclick="djrillLite.toggle()" title="Lite Mode: scales down heavy operations so nothing crashes your phone">⚡ Lite: <span id="liteToggleState">{% if lite %}ON{% else %}OFF{% endif %}</span></button>
+  <button id="explicitToggle" class="btn small explicit-toggle on" onclick="djrillExplicit.toggle()" title="Explicit lyrics: ON/OFF">🔞 Explicit: <span id="explicitState">ON</span></button>
+  <button id="ambientToggle" class="btn small ambient-toggle on" onclick="djrillAmbient.toggle()" title="Ambient background mix: ON/OFF">🎧 Ambient: <span id="ambientState">ON</span></button>
+  <label class="genre-global" title="Genre — shared across Beats, DJ, Master, Freestyle &amp; Studio">
+    <span aria-hidden="true">🎵</span>
+    <select id="genreGlobal" class="txt small" aria-label="Global genre">
+      <option value="HipHop">HipHop</option>
+      <option value="Drill">Drill</option>
+      <option value="Trap">Trap</option>
+      <option value="BoomBap">BoomBap</option>
+      <option value="House">House</option>
+      <option value="Techno">Techno</option>
+      <option value="DnB">DnB</option>
+      <option value="Afrobeats">Afrobeats</option>
+      <option value="RockNRoll">RockNRoll</option>
+      <option value="HeavyMetal">HeavyMetal</option>
+      <option value="Breakbeat">Breakbeat</option>
+      <option value="Dubstep">Dubstep</option>
+      <option value="Reggaeton">Reggaeton</option>
+      <option value="Phonk">Phonk</option>
+    </select>
+  </label>
+  <a class="btn small" href="{{ url_for('history_page') }}" style="text-decoration:none;display:flex;align-items:center;justify-content:center">🕘 History</a>
+</div>
+{% block content %}{% endblock %}
+</main>
+
+<nav class="tabbar">
+  <a href="{{ url_for('home') }}" class="tab {% if active=='home' %}on{% endif %}">
+    <span class="ico">⌂</span><span class="lbl">Home</span></a>
+  <a href="{{ url_for('master_page') }}" class="tab {% if active=='master' %}on{% endif %}">
+    <span class="ico">◉</span><span class="lbl">Master</span></a>
+  <a href="{{ url_for('beats_page') }}" class="tab {% if active=='beats' %}on{% endif %}">
+    <span class="ico">♫</span><span class="lbl">Beats</span></a>
+  <a href="{{ url_for('lyrics_page') }}" class="tab {% if active=='lyrics' %}on{% endif %}">
+    <span class="ico">✎</span><span class="lbl">Lyrics</span></a>
+  <a href="{{ url_for('convert_page') }}" class="tab {% if active=='convert' %}on{% endif %}">
+    <span class="ico">⇄</span><span class="lbl">Convert</span></a>
+  <a href="{{ url_for('studio_page') }}" class="tab {% if active=='studio' %}on{% endif %}">
+    <span class="ico">🎚</span><span class="lbl">Studio</span></a>
+  <a href="{{ url_for('video_page') }}" class="tab {% if active=='video' %}on{% endif %}">
+    <span class="ico">🎬</span><span class="lbl">Video</span></a>
+  <a href="{{ url_for('dj_page') }}" class="tab {% if active=='dj' %}on{% endif %}">
+    <span class="ico">🎧</span><span class="lbl">DJ</span></a>
+  <a href="{{ url_for('freestyle_page') }}" class="tab {% if active=='freestyle' %}on{% endif %}">
+    <span class="ico">🎤</span><span class="lbl">Freestyle</span></a>
+  <a href="{{ url_for('rockdabus_page') }}" class="tab {% if active=='rockdabus' %}on{% endif %}">
+    <span class="ico">🤖</span><span class="lbl">Rockdabus</span></a>
+  <a href="{{ url_for('help_page') }}" class="tab {% if active=='help' %}on{% endif %}">
+    <span class="ico">❓</span><span class="lbl">Help</span></a>
+  <a href="{{ url_for('billing.pricing') }}" class="tab {% if active=='pricing' %}on{% endif %}">
+    <span class="ico">💎</span><span class="lbl">Pricing</span></a>
+  {% if billing.logged_in %}
+  <a href="{{ url_for('billing.account') }}" class="tab {% if active=='account' %}on{% endif %}">
+    <span class="ico">👤</span><span class="lbl">Account</span></a>
+  {% endif %}
+</nav>
+
+<!-- Billing: upgrade banner + founding badge (injected by JS) -->
+<div id="billBanner" class="bill-banner" hidden></div>
+<script>
+(function () {
+  fetch("{{ url_for('billing.api_status') }}").then(function (r) { return r.json(); }).then(function (st) {
+    if (!st.logged_in) {
+      var b = document.getElementById("billBanner");
+      b.hidden = false;
+      b.innerHTML = '👋 <a href="{{ url_for('billing.signup') }}">Sign up free</a> — 3-day trial, no card needed.';
+      return;
+    }
+    if (st.is_founding) {
+      var brand = document.querySelector(".brand-text");
+      if (brand && !document.getElementById("founderBadge")) {
+        var s = document.createElement("span");
+        s.id = "founderBadge";
+        s.className = "founder-badge";
+        s.title = "Founding Member #" + st.founding_number + " — lifetime access";
+        s.textContent = "🏆 #" + st.founding_number;
+        brand.appendChild(s);
+      }
+    }
+    if (!st.active) {
+      var b2 = document.getElementById("billBanner");
+      b2.hidden = false;
+      b2.innerHTML = '⏸ ' + st.detail + ' <a href="{{ url_for('billing.pricing') }}">Upgrade →</a>';
+    }
+  }).catch(function () {});
+})();
+</script>
+
+<!-- Rockdabus persistent 3D buddy companion -->
+<div id="rbBuddy" class="rb-buddy" aria-label="Rockdabus assistant">
+  <div class="rb-buddy-bubble" id="rbBuddyBubble" hidden>
+    <div class="rb-buddy-bubble-text" id="rbBuddyText"></div>
+    <div class="rb-buddy-bubble-actions">
+      <button type="button" class="btn small" id="rbBuddyChat">💬 Chat</button>
+      <button type="button" class="btn small" id="rbBuddyVoiceBtn" title="Toggle voice">🔇</button>
+    </div>
+  </div>
+  <div class="rb-buddy-panel" id="rbBuddyPanel" hidden>
+    <div class="rb-buddy-panel-head">
+      <span>Rockdabus Prhyme</span>
+      <button type="button" class="btn small" id="rbBuddyMin" title="Minimize">—</button>
+    </div>
+    <div class="rb-buddy-tip" id="rbBuddyTip"></div>
+    <div class="rb-buddy-actions" id="rbBuddyActions"></div>
+    <button type="button" class="btn small rb-buddy-voice" id="rbBuddyVoice">🔇 Voice: off</button>
+    <button type="button" class="btn small rb-buddy-voice" id="rbBuddyTipBtn" style="margin-top:6px">💡 Another tip</button>
+  </div>
+  <button type="button" class="rb-buddy-disc" id="rbBuddyDisc" aria-label="Rockdabus assistant — tap to open">
+    <span class="rb-buddy-glow"></span>
+    <span class="rb-buddy-face"></span>
+  </button>
+  <button type="button" class="rb-buddy-dot" id="rbBuddyDot" hidden aria-label="Open Rockdabus">🤖</button>
+</div>
+
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<script src="{{ url_for('static', filename='js/rockdabus-buddy.js') }}"></script>
+<script src="{{ url_for('static', filename='js/ambient.js') }}"></script>
+<script src="{{ url_for('static', filename='js/onboard.js') }}"></script>
+{% block scripts %}{% endblock %}
+
+<!-- Cookie consent (GDPR/PIPEDA) -->
+<div id="cookieBanner" hidden
+     style="position:fixed;bottom:0;left:0;right:0;z-index:200;padding:14px 18px;background:rgba(10,10,18,.97);border-top:1px solid #2a2a3d;font-size:13px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+  <span style="flex:1;min-width:200px;">🍪 We use cookies &amp; local storage to keep you signed in and remember your preferences. See our <a href="{{ url_for('billing.privacy') }}">Privacy Policy</a>.</span>
+  <button class="btn small" onclick="acceptCookies()">Accept</button>
+  <button class="btn small alt" onclick="declineCookies()">Essential only</button>
+</div>
+<script>
+(function(){
+  var KEY='djrill-cookie-consent';
+  try {
+    if (!localStorage.getItem(KEY)) {
+      document.getElementById('cookieBanner').hidden = false;
+    }
+  } catch(e){}
+  window.acceptCookies = function(){
+    try { localStorage.setItem(KEY,'all'); } catch(e){}
+    document.getElementById('cookieBanner').hidden = true;
+  };
+  window.declineCookies = function(){
+    try { localStorage.setItem(KEY,'essential'); } catch(e){}
+    document.getElementById('cookieBanner').hidden = true;
+  };
+})();
+</script>
+</body>
+</html>

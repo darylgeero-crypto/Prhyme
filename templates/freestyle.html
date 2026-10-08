@@ -1,0 +1,419 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico pulse">🎤</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Freestyle</h2><a class="help-link" href="{{ url_for('help_page') }}#freestyle" aria-label="Help">?</a></div>
+    <p class="plead">Ride the beat. Karaoke-style lyric scroll, or let the assist feed you phrases and rhyme words on the bar.</p>
+  </div>
+</div>
+
+<div class="draft-banner">AI-GENERATED DRAFT — freestyle prompts are original drafts, never copied lyrics.</div>
+
+<!-- Beat sync -->
+<div class="form" style="margin-bottom:14px">
+  <div class="row2">
+    <label class="field">
+      <span>Beat to ride</span>
+      <select id="beatSel"><option value="">— no beat —</option></select>
+    </label>
+    <label class="field">
+      <span>BPM <b id="bpmVal">90</b></span>
+      <input type="range" id="bpm" min="60" max="180" value="90">
+    </label>
+  </div>
+  <div class="btnrow" style="margin-top:0">
+    <button id="beatBtn" class="btn play">▶ Beat</button>
+    <button id="metroBtn" class="btn alt">🥁 Click</button>
+  </div>
+  <audio id="beatAudio" preload="none"></audio>
+</div>
+
+<!-- Mode tabs -->
+<div class="btnrow" id="modeTabs" style="margin-bottom:14px">
+  <button class="btn modebtn on" data-mode="tele">📜 Teleprompter</button>
+  <button class="btn modebtn" data-mode="full">✎ Full verse</button>
+  <button class="btn modebtn" data-mode="phrase">💡 Phrases</button>
+  <button class="btn modebtn" data-mode="rhyme">🔗 Rhyme word</button>
+</div>
+
+<!-- TELEPROMPTER -->
+<section id="mode-tele" class="fmode">
+  <div class="form">
+    <label class="field">
+      <span>Paste lyrics or generate</span>
+      <textarea id="teleText" rows="5" placeholder="Paste your lyrics here — one line per bar…"></textarea>
+    </label>
+    <div class="row2">
+      <label class="field">
+        <span>Theme</span>
+        <select id="teleTheme">
+          {% for k, t in themes.items() %}<option value="{{ k }}">{{ t.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Words per beat</span>
+        <select id="teleDensity">
+          <option value="1">1 (slow flow)</option>
+          <option value="2" selected>2 (standard)</option>
+          <option value="4">4 (double time)</option>
+        </select>
+      </label>
+    </div>
+    <div class="btnrow" style="margin-top:0">
+      <button id="teleGen" class="btn">✎ Generate verse</button>
+      <button id="teleStart" class="btn big">▶ Start</button>
+      <button id="teleRestart" class="btn alt">↺ Restart</button>
+    </div>
+  </div>
+  <div id="teleStage" class="tele-stage hidden">
+    <div id="teleWords" class="tele-words"></div>
+    <div class="tele-progress"><div id="teleBar"></div></div>
+  </div>
+</section>
+
+<!-- FULL VERSE -->
+<section id="mode-full" class="fmode hidden">
+  <div class="form">
+    <div class="row2">
+      <label class="field">
+        <span>Theme</span>
+        <select id="fullTheme">
+          {% for k, t in themes.items() %}<option value="{{ k }}">{{ t.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Lines</span>
+        <select id="fullLines">
+          <option value="8">8</option>
+          <option value="16" selected>16</option>
+          <option value="24">24</option>
+        </select>
+      </label>
+    </div>
+    <div class="btnrow" style="margin-top:0">
+      <button id="fullGen" class="btn big">✎ Generate freestyle verse</button>
+      <button id="fullToTele" class="btn alt hidden">📜 Send to teleprompter</button>
+    </div>
+  </div>
+  <div id="fullOut" class="lyrics-out hidden">
+    <div class="draft-banner">AI-GENERATED DRAFT LYRICS — not written by the artist.</div>
+    <pre id="fullText" class="lyrics-text"></pre>
+  </div>
+</section>
+
+<!-- PHRASE PROMPTS -->
+<section id="mode-phrase" class="fmode hidden">
+  <div class="form">
+    <div class="row2">
+      <label class="field">
+        <span>Theme</span>
+        <select id="phraseTheme">
+          {% for k, t in themes.items() %}<option value="{{ k }}">{{ t.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>New phrase every</span>
+        <select id="phraseInt">
+          <option value="2">2 bars</option>
+          <option value="4" selected>4 bars</option>
+          <option value="8">8 bars</option>
+        </select>
+      </label>
+    </div>
+    <div class="btnrow" style="margin-top:0">
+      <button id="phraseStart" class="btn big">▶ Start prompts</button>
+      <button id="phraseStop" class="btn alt">⏹ Stop</button>
+    </div>
+  </div>
+  <div id="phraseStage" class="prompt-stage hidden">
+    <div class="prompt-label">your next line starts with…</div>
+    <div id="phraseWord" class="prompt-big"></div>
+    <div class="prompt-count"><span id="phraseCount">4</span> bars to go</div>
+    <div class="tele-progress"><div id="phraseBar"></div></div>
+  </div>
+</section>
+
+<!-- RHYME WORD -->
+<section id="mode-rhyme" class="fmode hidden">
+  <div class="form">
+    <div class="row2">
+      <label class="field">
+        <span>Theme</span>
+        <select id="rhymeTheme">
+          {% for k, t in themes.items() %}<option value="{{ k }}">{{ t.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>New word every</span>
+        <select id="rhymeInt">
+          <option value="2">2 bars</option>
+          <option value="4" selected>4 bars</option>
+          <option value="8">8 bars</option>
+        </select>
+      </label>
+    </div>
+    <div class="btnrow" style="margin-top:0">
+      <button id="rhymeStart" class="btn big">▶ Start rhyme words</button>
+      <button id="rhymeStop" class="btn alt">⏹ Stop</button>
+    </div>
+  </div>
+  <div id="rhymeStage" class="prompt-stage hidden">
+    <div class="prompt-label">land on this rhyme…</div>
+    <div id="rhymeWord" class="prompt-big accent"></div>
+    <div class="prompt-count"><span id="rhymeCount">4</span> bars to go</div>
+    <div class="tele-progress"><div id="rhymeBar"></div></div>
+  </div>
+</section>
+
+<style>
+.tele-stage { margin-top:16px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1); border-radius:14px; padding:18px 14px; }
+.tele-words { font-size:21px; line-height:2; font-weight:600; max-height:44vh; overflow-y:auto; }
+.tele-words .w { opacity:.38; transition:opacity .12s, color .12s; padding:0 2px; border-radius:4px; }
+.tele-words .w.done { opacity:.85; }
+.tele-words .w.now { opacity:1; color:var(--cyan,#00e5ff); background:rgba(0,229,255,.14); text-shadow:0 0 14px rgba(0,229,255,.6); }
+.tele-progress { height:6px; background:rgba(255,255,255,.08); border-radius:3px; margin-top:12px; overflow:hidden; }
+.tele-progress > div { height:100%; width:0%; background:linear-gradient(90deg,#00e5ff,#7a5cff); border-radius:3px; }
+.prompt-stage { margin-top:16px; text-align:center; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1); border-radius:14px; padding:26px 14px; }
+.prompt-label { color:var(--dim); font-size:13px; text-transform:uppercase; letter-spacing:2px; margin-bottom:10px; }
+.prompt-big { font-size:34px; font-weight:800; line-height:1.3; min-height:90px; display:flex; align-items:center; justify-content:center; }
+.prompt-big.accent { color:#ffb02e; text-shadow:0 0 18px rgba(255,176,46,.5); }
+.prompt-count { color:var(--dim); margin-top:8px; font-size:14px; }
+.modebtn.on { border-color:var(--cyan,#00e5ff); box-shadow:0 0 14px rgba(0,229,255,.3); }
+#teleText { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.12); border-radius:10px; color:#fff; padding:10px; font-size:15px; font-family:inherit; resize:vertical; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+"use strict";
+const $ = id => document.getElementById(id);
+const bpmEl = $("bpm"), bpmVal = $("bpmVal");
+const bpm = () => parseFloat(bpmEl.value) || 90;
+bpmEl.addEventListener("input", () => bpmVal.textContent = bpmEl.value);
+
+/* ---------- beat picker + audio ---------- */
+const beatAudio = $("beatAudio"), beatSel = $("beatSel");
+fetch("/api/freestyle/beats").then(r => r.json()).then(j => {
+  (j.beats || []).forEach(b => {
+    const o = document.createElement("option");
+    o.value = b.url; o.textContent = b.label;
+    beatSel.appendChild(o);
+  });
+}).catch(() => {});
+$("beatBtn").addEventListener("click", () => {
+  if (!beatSel.value) { alert("Pick a beat first — or generate one on the Beats page."); return; }
+  if (beatAudio.paused) {
+    beatAudio.src = beatSel.value; beatAudio.loop = true;
+    beatAudio.play().catch(() => {});
+    $("beatBtn").textContent = "⏸ Beat"; $("beatBtn").classList.add("stop");
+  } else {
+    beatAudio.pause();
+    $("beatBtn").textContent = "▶ Beat"; $("beatBtn").classList.remove("stop");
+  }
+});
+
+/* ---------- click track (WebAudio, no files) ---------- */
+let AC = null, clickOn = false, clickTimer = null;
+function ac(){ if(!AC) AC = new (window.AudioContext||window.webkitAudioContext)(); return AC; }
+function clickTick(strong){
+  const c = ac(), t = c.currentTime;
+  const o = c.createOscillator(), g = c.createGain();
+  o.type = "square"; o.frequency.value = strong ? 1600 : 1000;
+  g.gain.setValueAtTime(0.25, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+  o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + 0.07);
+}
+$("metroBtn").addEventListener("click", () => {
+  clickOn = !clickOn;
+  $("metroBtn").textContent = clickOn ? "⏹ Click" : "🥁 Click";
+  if (clickOn) {
+    ac().resume();
+    let beat = 0;
+    const loop = () => {
+      if (!clickOn) return;
+      clickTick(beat % 4 === 0); beat++;
+      clickTimer = setTimeout(loop, 60000 / bpm());
+    };
+    loop();
+  } else clearTimeout(clickTimer);
+});
+
+/* ---------- mode tabs ---------- */
+document.querySelectorAll(".modebtn").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll(".modebtn").forEach(x => x.classList.remove("on"));
+  b.classList.add("on");
+  document.querySelectorAll(".fmode").forEach(s => s.classList.add("hidden"));
+  $("mode-" + b.dataset.mode).classList.remove("hidden");
+}));
+
+/* ---------- TELEPROMPTER ---------- */
+let teleRAF = null, teleT0 = 0, teleWords = [], teleTimes = [];
+function teleBuild(){
+  const lines = $("teleText").value.split("\n").map(l => l.trim()).filter(Boolean);
+  if (!lines.length) { alert("Paste some lyrics or generate a verse first."); return false; }
+  const density = parseFloat($("teleDensity").value) || 2;   // words per beat
+  const beatDur = 60 / bpm();
+  const stage = $("teleWords"); stage.innerHTML = "";
+  teleWords = []; teleTimes = [];
+  let t = 1.0;  // 1s count-in
+  lines.forEach(line => {
+    const ws = line.split(/\s+/);
+    const lineDur = Math.max(4 * beatDur, (ws.length / density) * beatDur);
+    const per = lineDur / ws.length;
+    ws.forEach((w, i) => {
+      const sp = document.createElement("span");
+      sp.className = "w"; sp.textContent = w;
+      stage.appendChild(sp); stage.appendChild(document.createTextNode(" "));
+      teleWords.push(sp); teleTimes.push(t + i * per);
+    });
+    t += lineDur;
+    const br = document.createElement("br"); stage.appendChild(br);
+  });
+  teleTotal = t + 1;
+  $("teleStage").classList.remove("hidden");
+  return true;
+}
+let teleTotal = 1;
+function teleStop(){
+  cancelAnimationFrame(teleRAF); teleRAF = null;
+  $("teleStart").textContent = "▶ Start";
+}
+function telePlay(){
+  if (teleRAF) { teleStop(); return; }
+  if (!teleTimes.length && !teleBuild()) return;
+  ac().resume();
+  teleT0 = performance.now() / 1000;
+  $("teleStart").textContent = "⏸ Pause";
+  const total = teleTotal;
+  const tick = () => {
+    const el = performance.now() / 1000 - teleT0;
+    let cur = -1;
+    for (let i = 0; i < teleTimes.length; i++) {
+      if (teleTimes[i] <= el) cur = i; else break;
+    }
+    teleWords.forEach((sp, i) => {
+      sp.classList.toggle("now", i === cur);
+      sp.classList.toggle("done", i < cur);
+    });
+    if (cur >= 0 && teleWords[cur]) {
+      teleWords[cur].scrollIntoView({block: "center", behavior: "smooth"});
+    }
+    $("teleBar").style.width = Math.min(100, el / total * 100) + "%";
+    if (el >= total) { teleStop(); return; }
+    teleRAF = requestAnimationFrame(tick);
+  };
+  tick();
+}
+$("teleStart").addEventListener("click", telePlay);
+$("teleRestart").addEventListener("click", () => {
+  teleStop(); teleTimes = [];
+  if (teleBuild()) telePlay();
+});
+$("teleGen").addEventListener("click", async () => {
+  const r = await fetch("/api/lyrics", {method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({theme: "", lyric_theme: $("teleTheme").value,
+      genre: "HipHop", verse_lines: 16, hook_lines: 0})});
+  const j = await r.json();
+  if (j.ok && j.sections && j.sections.verse1) {
+    $("teleText").value = j.sections.verse1.join("\n");
+    teleTimes = [];
+  }
+});
+bpmEl.addEventListener("change", () => { teleTimes = []; }); // re-time on bpm change
+
+/* ---------- FULL VERSE ---------- */
+let lastFullLines = [];
+$("fullGen").addEventListener("click", async () => {
+  const btn = $("fullGen"); btn.textContent = "Writing…";
+  try {
+    const r = await fetch("/api/lyrics", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({theme: "", lyric_theme: $("fullTheme").value,
+        genre: "HipHop", verse_lines: parseInt($("fullLines").value),
+        hook_lines: 0})});
+    const j = await r.json();
+    if (!j.ok) { $("fullText").textContent = "Error: " + (j.error || "unknown"); return; }
+    lastFullLines = j.sections.verse1 || [];
+    $("fullOut").classList.remove("hidden");
+    $("fullText").textContent = lastFullLines.join("\n");
+    $("fullToTele").classList.remove("hidden");
+  } finally { btn.textContent = "✎ Generate freestyle verse"; }
+});
+$("fullToTele").addEventListener("click", () => {
+  $("teleText").value = lastFullLines.join("\n");
+  document.querySelector('[data-mode="tele"]').click();
+  $("teleStage").classList.add("hidden"); teleTimes = [];
+  window.scrollTo({top: 0, behavior: "smooth"});
+});
+
+/* ---------- prompt engine (phrases + rhyme words) ---------- */
+let promptCache = {};  // theme -> {phrases:[], rhyme_sets:[]}
+async function getPrompts(theme){
+  if (promptCache[theme]) return promptCache[theme];
+  const r = await fetch("/api/freestyle/prompts", {method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({theme, n: 24, seed: Math.floor(Math.random() * 999999)})});
+  const j = await r.json();
+  if (!j.ok) throw new Error("prompt fetch failed");
+  promptCache[theme] = j;
+  return j;
+}
+function runPromptLoop({stageId, bigId, countId, barId, stopId, getItems}) {
+  const stage = $(stageId);
+  stage.classList.remove("hidden");
+  let idx = 0, timer = null, alive = true;
+  const items = getItems();
+  if (!items.length) { alert("No prompts — try another theme."); return () => {}; }
+  const show = () => {
+    if (!alive) return;
+    const it = items[idx % items.length]; idx++;
+    const big = $(bigId);
+    big.style.opacity = 0;
+    setTimeout(() => { big.textContent = (typeof it === "string") ? it : it.word; big.style.opacity = 1; }, 120);
+  };
+  const barMs = (240 / bpm()) * 1000;  // one bar
+  const intEl = $(stageId === "phraseStage" ? "phraseInt" : "rhymeInt");
+  const getBars = () => parseInt(intEl.value) || 4;
+  show();
+  let remain = getBars();
+  $(countId).textContent = remain;
+  const tickMs = 250;
+  let acc = 0;
+  timer = setInterval(() => {
+    if (!alive) { clearInterval(timer); return; }
+    const bars = getBars(), cycleMs = bars * barMs;
+    acc += tickMs;
+    const frac = (acc % cycleMs) / cycleMs;
+    $(barId).style.width = (frac * 100) + "%";
+    const left = bars - Math.floor(acc / barMs);
+    $(countId).textContent = Math.max(0, left);
+    if (acc >= cycleMs) { acc = 0; show(); }
+  }, tickMs);
+  return () => { alive = false; clearInterval(timer); stage.classList.add("hidden"); };
+}
+let stopPhrase = null, stopRhyme = null;
+$("phraseStart").addEventListener("click", async () => {
+  if (stopPhrase) stopPhrase();
+  try {
+    const p = await getPrompts($("phraseTheme").value);
+    stopPhrase = runPromptLoop({stageId: "phraseStage", bigId: "phraseWord",
+      countId: "phraseCount", barId: "phraseBar",
+      getItems: () => p.phrases});
+  } catch(e) { alert("Couldn't load phrases."); }
+});
+$("phraseStop").addEventListener("click", () => { if (stopPhrase) stopPhrase(); stopPhrase = null; });
+$("rhymeStart").addEventListener("click", async () => {
+  if (stopRhyme) stopRhyme();
+  try {
+    const p = await getPrompts($("rhymeTheme").value);
+    stopRhyme = runPromptLoop({stageId: "rhymeStage", bigId: "rhymeWord",
+      countId: "rhymeCount", barId: "rhymeBar",
+      getItems: () => p.rhyme_sets});
+  } catch(e) { alert("Couldn't load rhyme words."); }
+});
+$("rhymeStop").addEventListener("click", () => { if (stopRhyme) stopRhyme(); stopRhyme = null; });
+})();
+</script>
+{% endblock %}

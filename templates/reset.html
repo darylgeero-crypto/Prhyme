@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico pulse">🔑</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Reset password</h2></div>
+  </div>
+</div>
+
+<div class="bill-form-card">
+  {% if error %}<div class="bill-note warn">{{ error }}</div>{% endif %}
+  {% if token %}
+  <form method="post" action="{{ url_for('billing.reset_post', token=token) }}">
+    <label class="bill-label">New password <span class="bill-hint">(min 8 characters)</span>
+      <input class="txt" type="password" name="password" required minlength="8"
+             autocomplete="new-password" placeholder="••••••••">
+    </label>
+    <button class="btn" type="submit" style="width:100%;margin-top:12px">Set new password →</button>
+  </form>
+  {% else %}
+  <p class="bill-alt"><a href="{{ url_for('billing.login') }}">Back to login →</a></p>
+  {% endif %}
+</div>
+{% endblock %}

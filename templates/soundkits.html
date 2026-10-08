@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico bounce">🥁</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Soundkits</h2><a class="help-link" href="{{ url_for('help_page') }}#beats" aria-label="Help">?</a></div>
+    <p class="plead">Upload your own WAV drum sounds, map them to instruments, and use them in the beat generator. Your kits, your sound.</p>
+  </div>
+</div>
+
+<div class="form">
+  <div class="row2">
+    <label class="field">
+      <span>New kit name</span>
+      <input type="text" id="newKitName" placeholder="My Trap Kit" maxlength="40">
+    </label>
+    <div class="field" style="justify-content:flex-end;display:flex;align-items:flex-end">
+      <button class="btn" id="createKitBtn">＋ Create kit</button>
+    </div>
+  </div>
+</div>
+
+<div id="kitsWrap"><p class="plead">Loading kits…</p></div>
+
+<div class="phead" style="margin-top:24px">
+  <span class="pico">🎛️</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Built-in Sound Library</h2></div>
+    <p class="plead" id="libCount">Browse every synthesized sound. Tap ▶ to preview.</p>
+  </div>
+</div>
+<div id="libWrap"><p class="plead">Loading sounds…</p></div>
+{% endblock %}
+{% block scripts %}
+<script>
+const SLOTS = {{ instruments|tojson }};
+const SLOT_LABEL = {kick: "Kick", snare: "Snare", chat: "Closed hat", ohat: "Open hat", clap: "Clap"};
+
+async function refresh() {
+  const r = await fetch("/api/kits");
+  const j = await r.json();
+  const wrap = document.getElementById("kitsWrap");
+  if (!j.ok) { wrap.innerHTML = '<div class="err">Failed to load kits</div>'; return; }
+  const kits = j.custom || [];
+  if (!kits.length) {
+    wrap.innerHTML = '<p class="plead">No custom kits yet — create one above, then upload a WAV for each drum sound.</p>';
+    return;
+  }
+  wrap.innerHTML = kits.map(k => `
+    <div class="card kit-card" style="margin-bottom:14px">
+      <div class="kit-head">
+        <strong>🥁 ${escapeHtml(k.name)}</strong>
+        <span class="kit-actions">
+          <button class="btn small" onclick="renameKit(${JSON.stringify(k.name)})">✎</button>
+          <button class="btn small danger" onclick="deleteKit(${JSON.stringify(k.name)})">🗑</button>
+        </span>
+      </div>
+      <div class="slot-grid">
+        ${SLOTS.map(s => {
+          const info = (k.instruments || {})[s];
+          return `<div class="slot">
+            <div class="slot-name">${SLOT_LABEL[s] || s}</div>
+            ${info
+              ? `<div class="slot-loaded">✅ ${info.dur}s
+                   <button class="btn small" onclick="preview(${JSON.stringify(k.name)},${JSON.stringify(s)})">▶</button>
+                   <button class="btn small danger" onclick="delSample(${JSON.stringify(k.name)},${JSON.stringify(s)})">✕</button>
+                 </div>`
+              : `<label class="slot-upload">⬆ Upload WAV
+                   <input type="file" accept=".wav,audio/wav" hidden
+                          onchange="uploadSample(${JSON.stringify(k.name)},${JSON.stringify(s)},this)">
+                 </label>`}
+          </div>`;
+        }).join("")}
+      </div>
+      <p class="plead" style="margin:6px 0 0">Use in <a href="/beats">Make a Beat</a> → Drum kit → “🥁 ${escapeHtml(k.name)}”.</p>
+    </div>`).join("");
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+document.getElementById("createKitBtn").onclick = async () => {
+  const name = document.getElementById("newKitName").value.trim();
+  if (!name) return alert("Give your kit a name first.");
+  const r = await fetch("/api/kits", {method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({name})});
+  const j = await r.json();
+  if (!j.ok) return alert(j.error || "Failed");
+  document.getElementById("newKitName").value = "";
+  refresh();
+};
+
+async function renameKit(name) {
+  const nn = prompt("Rename kit:", name);
+  if (!nn || nn === name) return;
+  const r = await fetch(`/api/kits/${encodeURIComponent(name)}/rename`, {method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({new_name: nn})});
+  const j = await r.json();
+  if (!j.ok) return alert(j.error || "Failed");
+  refresh();
+}
+
+async function deleteKit(name) {
+  if (!confirm(`Delete kit “${name}” and all its sounds?`)) return;
+  const r = await fetch(`/api/kits/${encodeURIComponent(name)}`, {method: "DELETE"});
+  const j = await r.json();
+  if (!j.ok) return alert(j.error || "Failed");
+  refresh();
+}
+
+async function uploadSample(kit, inst, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("instrument", inst);
+  fd.append("file", file);
+  const r = await fetch(`/api/kits/${encodeURIComponent(kit)}/upload`, {method: "POST", body: fd});
+  const j = await r.json();
+  if (!j.ok) return alert(j.error || "Upload failed");
+  refresh();
+}
+
+function preview(kit, inst) {
+  new Audio(`/api/kits/${encodeURIComponent(kit)}/preview/${encodeURIComponent(inst)}`).play();
+}
+
+async function delSample(kit, inst) {
+  if (!confirm(`Remove the ${inst} sound from “${kit}”?`)) return;
+  const r = await fetch(`/api/kits/${encodeURIComponent(kit)}/${encodeURIComponent(inst)}`, {method: "DELETE"});
+  const j = await r.json();
+  if (!j.ok) return alert(j.error || "Failed");
+  refresh();
+}
+
+refresh();
+
+/* ---- Built-in sound library browser ---- */
+const CAT_LABEL = {kick:"🥁 Kicks", snare:"🥁 Snares", chat:"🎩 Closed hats",
+  ohat:"🎩 Open hats", clap:"👏 Claps", perc:"🪘 Percussion",
+  "808":"🔊 808s", melodic:"🎹 Melodic", fx:"✨ FX",
+  bass:"🎸 Bass", loops:"🔁 Loops"};
+const CAT_ORDER = ["kick","snare","chat","ohat","clap","perc","808","melodic","fx","bass","loops"];
+const PAGE_SIZE = 48;
+let _libAudio = null;
+let _libData = null;   // {cat: [variants]}
+let _libShown = {};    // {cat: number currently rendered}
+let _libQuery = "";
+
+async function loadLibrary() {
+  const wrap = document.getElementById("libWrap");
+  const r = await fetch("/api/kits");
+  const j = await r.json();
+  if (!j.ok || !j.all_sounds) { wrap.innerHTML = '<p class="plead">Sound library unavailable.</p>'; return; }
+  _libData = j.all_sounds;
+  const totalCats = CAT_ORDER.filter(c => (_libData[c]||[]).length).length;
+  document.getElementById("libCount").textContent =
+    `${j.total_sounds} synthesized sounds across ${totalCats} categories. Tap ▶ to preview.`;
+  // search box
+  const searchHtml = `<input id="libSearch" class="lib-search" type="search"
+    placeholder="🔍 Search 1500+ sounds…" aria-label="Search sounds"
+    oninput="libSearch(this.value)">`;
+  wrap.innerHTML = searchHtml + CAT_ORDER.map(cat => {
+    const sounds = _libData[cat] || [];
+    if (!sounds.length) return "";
+    _libShown[cat] = 0;
+    return `<details class="lib-cat" data-cat="${cat}" ${cat==="kick"?"open":""}>
+      <summary><strong>${CAT_LABEL[cat]||cat}</strong> <span class="plead">(${sounds.length})</span></summary>
+      <div class="lib-grid" id="lib-grid-${cat}"></div>
+      <div class="lib-more-wrap"><button class="btn small" id="lib-more-${cat}"
+        onclick="libMore('${cat}')">Show more</button></div>
+    </details>`;
+  }).join("");
+  // render the open section immediately
+  for (const cat of CAT_ORDER) {
+    const det = wrap.querySelector(`details[data-cat="${cat}"]`);
+    if (det && det.open) libRender(cat);
+    if (det) det.addEventListener("toggle", () => { if (det.open) libRender(cat); });
+  }
+}
+
+function _libFiltered(cat) {
+  const sounds = _libData[cat] || [];
+  if (!_libQuery) return sounds;
+  const q = _libQuery.toLowerCase();
+  return sounds.filter(v => v.toLowerCase().includes(q));
+}
+
+function libRender(cat) {
+  const grid = document.getElementById("lib-grid-" + cat);
+  const moreBtn = document.getElementById("lib-more-" + cat);
+  if (!grid) return;
+  const sounds = _libFiltered(cat);
+  const shown = _libShown[cat] || 0;
+  const next = Math.min(sounds.length, shown + PAGE_SIZE);
+  let html = "";
+  for (let i = shown; i < next; i++) {
+    const v = sounds[i];
+    html += `<button class="btn small lib-snd"
+      onclick='playLibSound(${JSON.stringify(cat)},${JSON.stringify(v)})'
+      >▶ ${escapeHtml(v)}</button>`;
+  }
+  grid.insertAdjacentHTML("beforeend", html);
+  _libShown[cat] = next;
+  if (moreBtn) moreBtn.style.display = next < sounds.length ? "" : "none";
+  if (!sounds.length) grid.innerHTML = '<p class="plead">No matches.</p>';
+}
+
+function libMore(cat) { libRender(cat); }
+
+function libSearch(q) {
+  _libQuery = (q || "").trim();
+  _libShown = {};
+  for (const cat of CAT_ORDER) {
+    _libShown[cat] = 0;
+    const grid = document.getElementById("lib-grid-" + cat);
+    if (grid) grid.innerHTML = "";
+    const det = document.querySelector(`details[data-cat="${cat}"]`);
+    // auto-open sections that have matches when searching
+    if (det) {
+      if (_libQuery) {
+        const n = _libFiltered(cat).length;
+        det.open = n > 0;
+        const sum = det.querySelector("summary .plead");
+        if (sum) sum.textContent = n ? `(${n} match${n===1?"":"es"})` : "(0)";
+      } else {
+        const sum = det.querySelector("summary .plead");
+        const total = (_libData[cat]||[]).length;
+        if (sum) sum.textContent = `(${total})`;
+      }
+    }
+    if (!det || det.open) libRender(cat);
+  }
+}
+
+function playLibSound(cat, variant) {
+  if (_libAudio) { _libAudio.pause(); _libAudio = null; }
+  let url = `/api/kit/sound?category=${encodeURIComponent(cat)}&variant=${encodeURIComponent(variant)}`;
+  if (cat === "808") url += "&freq=55";
+  if (cat === "melodic") url += "&freq=220";
+  _libAudio = new Audio(url);
+  _libAudio.play().catch(()=>{});
+}
+
+loadLibrary();
+</script>
+<style>
+.kit-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+.kit-actions { display:flex; gap:6px; }
+.slot-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:8px; }
+.slot { border:1px solid var(--line,#333); border-radius:10px; padding:8px; }
+.slot-name { font-weight:600; font-size:.85em; margin-bottom:6px; }
+.slot-loaded { display:flex; align-items:center; gap:6px; font-size:.85em; }
+.slot-upload { display:block; text-align:center; padding:10px 4px; border:1px dashed var(--line,#444);
+  border-radius:8px; cursor:pointer; font-size:.85em; }
+.btn.small { padding:4px 10px; font-size:.85em; }
+.btn.danger { background:#5a1d1d; }
+.lib-cat { border:1px solid var(--line,#333); border-radius:10px; margin-bottom:8px; }
+.lib-cat summary { padding:10px 12px; cursor:pointer; font-size:.95em; }
+.lib-grid { display:flex; flex-wrap:wrap; gap:6px; padding:0 12px 12px; }
+.lib-snd { text-transform:none; }
+.lib-search { width:100%; padding:10px 14px; margin-bottom:10px; border-radius:10px;
+  border:1px solid var(--line,#333); background:var(--bg2,#1a1a1a); color:inherit;
+  font-size:1em; }
+.lib-more-wrap { padding:0 12px 12px; text-align:center; }
+</style>
+{% endblock %}

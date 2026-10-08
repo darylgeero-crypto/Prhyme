@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico">💻</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Active sessions</h2></div>
+    <p class="plead">Devices signed into your account.</p>
+  </div>
+</div>
+
+<div class="bill-form-card" style="max-width:600px;">
+  {% for s in sessions %}
+  <div class="bill-status-row">
+    <span>
+      <strong>{{ s.user_agent[:40] or 'Unknown device' }}</strong><br>
+      <span style="font-size:12px;opacity:.7;">{{ s.ip or 'unknown IP' }}</span>
+      {% if s.token == current_token %}
+      <span class="bill-plan-lifetime" style="font-size:11px;"> · this device</span>
+      {% endif %}
+    </span>
+    {% if s.token != current_token %}
+    <button class="btn small alt" onclick="revokeSession('{{ s.token }}')">Revoke</button>
+    {% endif %}
+  </div>
+  {% else %}
+  <p>No other active sessions.</p>
+  {% endfor %}
+  {% if sessions|length > 1 %}
+  <p style="margin-top:12px;">
+    <button class="btn small alt" onclick="revokeAll()">Revoke all other sessions</button>
+  </p>
+  {% endif %}
+  <p class="bill-alt"><a href="{{ url_for('billing.account') }}">← Back to account</a></p>
+</div>
+
+<script>
+async function revokeSession(token) {
+  if (!confirm("Revoke this session? That device will be signed out.")) return;
+  const r = await fetch("{{ url_for('billing.api_revoke_session') }}", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({token})
+  });
+  if ((await r.json()).ok) location.reload();
+  else alert("Failed.");
+}
+async function revokeAll() {
+  if (!confirm("Sign out all other devices?")) return;
+  const r = await fetch("{{ url_for('billing.api_revoke_all_sessions') }}", {method: "POST"});
+  if ((await r.json()).ok) location.reload();
+  else alert("Failed.");
+}
+</script>
+{% endblock %}

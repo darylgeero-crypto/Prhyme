@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico spin">⇄</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Convert Audio</h2><a class="help-link" href="{{ url_for('help_page') }}#convert" aria-label="Help">?</a></div>
+    <p class="plead">Drop any audio file in — get WAV, MP3, OGG, FLAC or M4A out. Audio can also be pulled from video files.</p>
+  </div>
+</div>
+
+<form id="convertForm" class="form" enctype="multipart/form-data">
+  <label class="field">
+    <span>Audio file (WAV, MP3, M4A, OGG, FLAC…)</span>
+    <input type="file" name="file" accept="audio/*,video/*" required class="fileinput">
+  </label>
+  <label class="field">
+    <span>Convert to</span>
+    <select name="format">
+      {% for f in formats %}<option value="{{ f }}" {% if f=='.mp3' %}selected{% endif %}>{{ f }}</option>{% endfor %}
+    </select>
+  </label>
+  <button type="submit" class="btn big">⇄ Convert</button>
+</form>
+
+<div id="jobBox" class="jobbox hidden">
+  <div class="jobmsg" id="jobMsg">Starting…</div>
+  <div class="pbar"><div class="pfill" id="jobFill"></div></div>
+  <div class="jobpct" id="jobPct">0%</div>
+  <div id="jobResult" class="result"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+bindJobForm("convertForm", "/api/convert", true);
+</script>
+{% endblock %}

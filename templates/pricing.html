@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico pulse">💎</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Prhyme™ Pricing</h2></div>
+    <p class="plead">Your phone is the studio. Pick the plan that fits.</p>
+    <p><span class="prhyming-flash">Prhyming</span></p>
+  </div>
+</div>
+
+{% if request.args.get('canceled') == '1' %}
+<div class="bill-note warn">Checkout was canceled — no charge made. Your trial (if any) is untouched.</div>
+{% endif %}
+
+<div class="bill-grid">
+  <div class="bill-card platinum">
+    <div class="bill-badge">👑 PRHYME PLATINUM</div>
+    <div class="bill-price">${{ "%.2f"|format(platinum) }} <span>/ year</span></div>
+    <p class="bill-desc"><strong>All-access annual.</strong> Everything Prhyme™ offers for a full year — full songs, full lyrics, all 1683+ sounds, all 17 genres, priority generation queue, every new feature the moment it ships, and direct support. For serious producers.</p>
+    {% if billing.logged_in %}
+    <button class="btn" onclick="billCheckout('platinum')">Go Platinum →</button>
+    {% else %}
+    <a class="btn" href="{{ url_for('billing.signup') }}">Sign up for Platinum →</a>
+    {% endif %}
+  </div>
+
+  <div class="bill-card founding{% if founding_left <= 0 %} gone{% endif %}">
+    <div class="bill-badge">🔥 FOUNDING 100</div>
+    <div class="bill-price">FREE <span>forever</span></div>
+    <p class="bill-desc">The first 100 producers get Prhyme™ free for life. Founding badge in-app, your name on the founders wall, early access to every new feature.</p>
+    {% if founding_left > 0 %}
+    <div class="bill-spots">{{ founding_left }} of 100 spots left</div>
+    <div class="bill-bar"><span style="width:{{ (100 - founding_left) }}%"></span></div>
+    <a class="btn" href="{{ url_for('billing.signup') }}">Claim a founding spot →</a>
+    {% else %}
+    <div class="bill-spots">All founding spots claimed</div>
+    <button class="btn" disabled>Closed</button>
+    {% endif %}
+  </div>
+
+  <div class="bill-card">
+    <div class="bill-badge">✨ FREE TRIAL</div>
+    <div class="bill-price">$0 <span>/ 3 days</span></div>
+    <p class="bill-desc">Full access to everything — beats, mastering, DJ mode, lyrics, Studio — for 3 days. No card required.</p>
+    <a class="btn" href="{{ url_for('billing.signup') }}">Start free trial →</a>
+  </div>
+
+  <div class="bill-card">
+    <div class="bill-badge">♫ MONTHLY</div>
+    <div class="bill-price">${{ "%.2f"|format(monthly) }} <span>/ month</span></div>
+    <p class="bill-desc">Full access, billed monthly. Cancel anytime — you keep access until the end of your billing period.</p>
+    {% if billing.logged_in %}
+    <button class="btn" onclick="billCheckout('monthly')">Subscribe monthly →</button>
+    {% else %}
+    <a class="btn" href="{{ url_for('billing.signup') }}">Sign up to subscribe →</a>
+    {% endif %}
+  </div>
+
+  <div class="bill-card hot">
+    <div class="bill-badge">♾ LIFETIME</div>
+    <div class="bill-price">${{ "%.2f"|format(lifetime) }} <span>one-time</span></div>
+    {% if lifetime < lifetime_full %}
+    <p class="bill-desc"><strong>Pre-launch deal — 50% off.</strong> Pay once, own Prhyme™ forever. Price goes to ${{ "%.2f"|format(lifetime_full) }} after launch.</p>
+    {% else %}
+    <p class="bill-desc">Pay once, own Prhyme™ forever. Every future update included.</p>
+    {% endif %}
+    {% if billing.logged_in %}
+    <button class="btn" onclick="billCheckout('lifetime')">Get lifetime access →</button>
+    {% else %}
+    <a class="btn" href="{{ url_for('billing.signup') }}">Sign up for lifetime →</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="bill-guarantee">
+  🛡 <strong>30-day money-back guarantee.</strong> Full refund within 30 days of purchase, no questions asked.
+</div>
+
+<script>
+async function billCheckout(plan) {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = "Redirecting to checkout…";
+  try {
+    const r = await fetch("{{ url_for('billing.api_checkout') }}", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({plan})
+    });
+    const j = await r.json();
+    if (j.ok && j.url) {
+      location.href = j.url;
+    } else {
+      alert(j.error || "Checkout failed.");
+      btn.disabled = false;
+      btn.textContent = "Try again →";
+    }
+  } catch (e) {
+    alert("Checkout failed: " + e.message);
+    btn.disabled = false;
+  }
+}
+</script>
+{% endblock %}

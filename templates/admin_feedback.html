@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico pulse">🛠</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Feedback inbox</h2></div>
+    <p class="plead">User reports &amp; feature requests.</p>
+  </div>
+</div>
+
+<div style="margin-bottom:12px;">
+  {% for s in ['new','triaged','fixed','wontfix'] %}
+  <a class="chip {% if status_filter==s %}on{% endif %}"
+     href="{{ url_for('admin_feedback') }}?status={{ s }}">{{ s }} ({{ counts.get(s,0) }})</a>
+  {% endfor %}
+  <a class="chip {% if not status_filter %}on{% endif %}"
+     href="{{ url_for('admin_feedback') }}">all</a>
+</div>
+
+{% for it in items %}
+<div class="bill-form-card" style="margin-bottom:10px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <strong>#{{ it.id }} [{{ it.kind }}] {{ it.subject }}</strong>
+    <span class="bill-plan-{{ it.status }}">{{ it.status }}</span>
+  </div>
+  <div style="font-size:12px;opacity:.7;margin:4px 0;">
+    {{ it.category }} · {{ it.email or 'no email' }} · uid {{ it.uid or 'anon' }}
+  </div>
+  <p style="font-size:13px;white-space:pre-wrap;">{{ it.description }}</p>
+  <div>
+    {% for s in ['triaged','fixed','wontfix','new'] %}
+    <button class="btn small" onclick="setStatus({{ it.id }},'{{ s }}')">{{ s }}</button>
+    {% endfor %}
+  </div>
+</div>
+{% else %}
+<p>No feedback yet.</p>
+{% endfor %}
+
+<script>
+async function setStatus(id, status) {
+  const r = await fetch("/api/admin/feedback/" + id + "/status", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({status})
+  });
+  if ((await r.json()).ok) location.reload();
+  else alert("Failed.");
+}
+</script>
+{% endblock %}

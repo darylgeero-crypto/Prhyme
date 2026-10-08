@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico wiggle">🎚</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Studio</h2><a class="help-link" href="{{ url_for('help_page') }}#studio" aria-label="Help">?</a></div>
+    <p class="plead">Multitrack timeline, mixer, and mixdown — a real DAW in your pocket. Drag clips to move them, drag their edges to trim.</p>
+  </div>
+</div>
+
+<!-- transport -->
+<div class="transport">
+  <button id="playBtn" class="btn play">▶</button>
+  <button id="recBtn" class="btn rec" title="Record vocals into selected track">●</button>
+  <div class="tgroup">
+    <label>BPM <input id="bpmInput" type="number" min="50" max="200" value="92"></label>
+    <button id="tapBtn" class="btn small">Tap</button>
+  </div>
+  <div id="timeDisp" class="timedisp">0:00.0</div>
+  <div id="recInd" class="recind hidden">🔴 REC <span id="recTime">0:00</span></div>
+</div>
+
+<!-- structure -->
+<div class="panel">
+  <div class="panel-h">Song structure</div>
+  <div id="structList" class="structlist"></div>
+  <div class="row2">
+    <label class="field"><span>Section</span>
+      <select id="secType">
+        <option>Intro</option><option selected>Verse</option><option>Hook</option>
+        <option>Bridge</option><option>Outro</option>
+      </select></label>
+    <label class="field"><span>Bars</span>
+      <input id="secBars" type="number" min="1" max="64" value="8"></label>
+  </div>
+  <div class="btnrow">
+    <button id="addSecBtn" class="btn">+ Add section</button>
+    <button id="layoutBeatsBtn" class="btn alt">♫ Lay out section beats</button>
+  </div>
+</div>
+
+<!-- timeline -->
+<div class="panel">
+  <div class="panel-h">Timeline
+    <span class="zoombtns">
+      <button id="zoomOut" class="btn tiny">−</button>
+      <button id="zoomIn" class="btn tiny">+</button>
+    </span>
+  </div>
+  <div class="tlwrap">
+    <div id="trackHeads" class="trackheads"></div>
+    <div class="tlscroll" id="tlScroll">
+      <canvas id="tlCanvas"></canvas>
+    </div>
+  </div>
+  <div class="btnrow">
+    <button id="addTrackBtn" class="btn">+ Track</button>
+    <button id="uploadBtn" class="btn">⬆ Upload clip</button>
+    <button id="genBeatBtn" class="btn">♫ Generate beat</button>
+    <input id="uploadInput" type="file" accept="audio/*" class="hidden">
+  </div>
+  <div class="btnrow" style="margin-top:8px">
+    <button id="undoBtn" class="btn small" title="Undo">↩</button>
+    <button id="redoBtn" class="btn small" title="Redo">↪</button>
+    <button id="dupBtn" class="btn small">⧉ Dup</button>
+    <button id="splitBtn" class="btn small">✂ Split</button>
+    <button id="snapBtn" class="btn small on">🧲 Snap</button>
+    <button id="loopBtn" class="btn small">🔁 Loop</button>
+    <button id="metroBtn" class="btn small">🥁 Click</button>
+  </div>
+  <div id="beatForm" class="form hidden" style="margin-top:12px">
+    <div class="row2">
+      <label class="field"><span>Genre</span>
+        <select id="beatGenre">{% for g in genres %}<option value="{{ g }}">{{ g }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Bars</span>
+        <input id="beatBars" type="number" min="4" max="32" value="8"></label>
+    </div>
+    <button id="beatGo" class="btn big">Generate into Studio</button>
+  </div>
+</div>
+
+<!-- clip inspector -->
+<div id="clipPanel" class="panel hidden">
+  <div class="panel-h">Clip</div>
+  <div id="clipName" class="clipname"></div>
+  <div class="row2">
+    <label class="field"><span>Start (s)</span><input id="clipStart" type="number" step="0.1" min="0"></label>
+    <label class="field"><span>Length (s)</span><input id="clipLen" type="number" step="0.1" min="0.1"></label>
+  </div>
+  <div class="row2">
+    <label class="field"><span>Gain</span><input id="clipGain" type="number" step="0.1" min="0" max="4" value="1"></label>
+    <label class="field"><span>Fade in/out (s)</span>
+      <div class="row2"><input id="clipFadeIn" type="number" step="0.1" min="0" value="0">
+      <input id="clipFadeOut" type="number" step="0.1" min="0" value="0"></div></label>
+  </div>
+  <div class="btnrow">
+    <button id="dupBtn2" class="btn small">⧉ Duplicate</button>
+    <button id="clipDel" class="btn danger">Delete clip</button>
+  </div>
+</div>
+
+<!-- track FX -->
+<div class="panel">
+  <div class="panel-h">Track FX <span class="hint">applies to selected track on export</span></div>
+  <div class="row2">
+    <label class="field"><span>EQ low (dB)</span><input id="fxLow" type="number" step="0.5" min="-12" max="12" value="0"></label>
+    <label class="field"><span>EQ mid (dB)</span><input id="fxMid" type="number" step="0.5" min="-12" max="12" value="0"></label>
+  </div>
+  <div class="row2">
+    <label class="field"><span>EQ high (dB)</span><input id="fxHigh" type="number" step="0.5" min="-12" max="12" value="0"></label>
+    <label class="field"><span>Reverb (0–1)</span><input id="fxVerb" type="number" step="0.1" min="0" max="1" value="0"></label>
+  </div>
+  <div class="row2">
+    <label class="field"><span>Delay (0–1)</span><input id="fxDelay" type="number" step="0.1" min="0" max="1" value="0"></label>
+    <label class="field"><span>Comp ratio</span><input id="fxComp" type="number" step="0.5" min="1" max="10" value="1"></label>
+  </div>
+</div>
+
+<!-- character FX rack -->
+<div class="panel">
+  <div class="panel-h">🎛 Character FX <span class="hint">selected track · export</span>
+    <button id="crBypass" class="btn tiny tgl" title="Bypass character FX">Bypass</button>
+  </div>
+  <div class="fxgrid">
+    <button id="crRadio" class="btn small tgl" title="Radio effect">📻 Radio</button>
+    <button id="crTv" class="btn small tgl" title="Television effect">📺 TV</button>
+    <button id="crVinyl" class="btn small tgl" title="Old vinyl effect">💿 Vinyl</button>
+  </div>
+  <div class="row2">
+    <label class="field"><span>🔼 High-pass <input id="crHpOn" type="checkbox" class="chk"></span>
+      <input id="crHpCut" type="range" min="40" max="1000" step="10" value="120">
+      <em id="crHpVal" class="val">120 Hz</em></label>
+    <label class="field"><span>🔽 Low-pass <input id="crLpOn" type="checkbox" class="chk"></span>
+      <input id="crLpCut" type="range" min="2000" max="18000" step="100" value="8000">
+      <em id="crLpVal" class="val">8000 Hz</em></label>
+  </div>
+  <div class="row2">
+    <label class="field"><span>🔁 Echo <input id="crEchoOn" type="checkbox" class="chk"></span>
+      <input id="crEchoMix" type="range" min="0" max="0.8" step="0.05" value="0.3">
+      <em class="val">mix</em></label>
+    <label class="field"><span>Feedback</span>
+      <input id="crEchoFb" type="range" min="0" max="0.7" step="0.05" value="0.35">
+      <em class="val">fb</em></label>
+  </div>
+  <div class="row2">
+    <label class="field"><span>Echo time (ms)</span>
+      <input id="crEchoMs" type="range" min="50" max="1000" step="10" value="375">
+      <em id="crEchoMsVal" class="val">375 ms</em></label>
+    <label class="field"><span>Sync to BPM <input id="crEchoSync" type="checkbox" class="chk" checked></span>
+      <em class="val">dotted 8th</em></label>
+  </div>
+</div>
+
+<!-- mixer -->
+<div class="panel">
+  <div class="panel-h">🎚 Mixer <span class="hint">live levels while playing</span></div>
+  <div id="mixerStrips" class="mixer"></div>
+</div>
+
+<!-- project -->
+<div class="panel">
+  <div class="panel-h">Project</div>
+  <div class="row2">
+    <label class="field"><span>Name</span><input id="projName" type="text" placeholder="my-song" maxlength="60"></label>
+    <label class="field"><span>Saved</span><select id="projList"><option value="">— load —</option></select></label>
+  </div>
+  <div class="btnrow">
+    <button id="saveBtn" class="btn">💾 Save</button>
+    <button id="loadBtn" class="btn alt">📂 Load</button>
+    <button id="exportBtn" class="btn big">⬇ Export mixdown</button>
+  </div>
+</div>
+
+<div id="jobBox" class="jobbox hidden">
+  <div class="jobmsg" id="jobMsg">Starting…</div>
+  <div class="pbar"><div class="pfill" id="jobFill"></div></div>
+  <div class="jobpct" id="jobPct">0%</div>
+  <div id="jobResult" class="result"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/studio.js') }}"></script>
+{% endblock %}

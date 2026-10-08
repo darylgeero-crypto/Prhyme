@@ -1,0 +1,383 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico bounce">♫</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Make a Beat</h2><a class="help-link" href="{{ url_for('help_page') }}#beats" aria-label="Help">?</a></div>
+    <p class="plead">Original synthesized beat, rendered live by the Prhyme™ engine at your tempo. No samples, no loops — built from scratch.</p>
+  </div>
+</div>
+
+<form id="beatsForm" class="form">
+  <div class="row2">
+    <label class="field">
+      <span>Artist style <em style="font-style:normal;opacity:.6">(optional)</em></span>
+      <select name="artist" id="artistSel">
+        <option value="">— None (genre default) —</option>
+        {% for era, names in artist_groups %}
+        <optgroup label="{{ era }}">
+          {% for n in names %}<option value="{{ n }}">{{ n }}</option>{% endfor %}
+        </optgroup>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field">
+      <span>Tempo (BPM)</span>
+      <input type="number" name="bpm" min="50" max="200" value="92" id="bpmInput">
+    </label>
+  </div>
+  <p class="plead" id="artistNote" style="display:none;margin:4px 0 0"></p>
+  <div class="row2">
+    <label class="field">
+      <span>Genre</span>
+      <select name="genre" id="genreSel">
+        {% for g in genres %}<option value="{{ g }}" {% if g=='Drill' %}selected{% endif %}>{{ g }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="field">
+      <span>Era flavor</span>
+      <select name="era" id="eraSel">
+        <option value="">— Auto —</option>
+        <option value="2000s">🔥 2000s</option>
+        <option value="2010s">🎯 2010s</option>
+        <option value="2020s">🌊 2020s</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>Length</span>
+      <select name="length">
+        <option value="loop16">Loop — 16 bars</option>
+        <option value="loop32">Loop — 32 bars</option>
+        <option value="2:30">Full song — 2:30</option>
+        <option value="3:00" selected>Full song — 3:00</option>
+        <option value="3:30">Full song — 3:30</option>
+      </select>
+    </label>
+  </div>
+  <div class="row2">
+    <label class="field">
+      <span>Drum kit</span>
+      <select name="kit" id="kitSel">
+        <optgroup label="Genre kits">
+          {% for k in kits %}{% if k.group=='genre' %}<option value="{{ k.name }}" {% if k.name=='classic' %}selected{% endif %}>{{ k.label }} — {{ k.desc }}</option>{% endif %}{% endfor %}
+        </optgroup>
+        <optgroup label="Character kits">
+          {% for k in kits %}{% if k.group=='character' %}<option value="{{ k.name }}" {% if k.name=='classic' %}selected{% endif %}>{{ k.label }} — {{ k.desc }}</option>{% endif %}{% endfor %}
+        </optgroup>
+        {% if custom_kits %}
+        <optgroup label="My kits">
+          {% for k in custom_kits %}<option value="custom:{{ k.name }}">🥁 {{ k.name }} ({{ k.instruments|length }} sounds)</option>{% endfor %}
+        </optgroup>
+        {% endif %}
+      </select>
+    </label>
+    <label class="field">
+      <span>Lead instrument</span>
+      <select name="melody" id="melodySel">
+        <option value="">— Genre default —</option>
+        {% for m in melody_insts %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+  <p class="plead" style="margin:4px 0 0">🥁 <a href="{{ url_for('soundkits_page') }}">Manage soundkits</a> — upload your own WAV drum sounds and build custom kits.</p>
+
+  <details class="fxbox">
+    <summary>🕉 Healing mode <em style="font-style:normal;opacity:.6">(optional)</em> — Fibonacci tuning, 432 Hz, solfeggio, chakras, binaural beats &amp; more</summary>
+    <label class="check" style="margin:8px 0;display:flex;align-items:center;gap:8px">
+      <input type="checkbox" name="healing" id="healingChk">
+      <span>Enable healing mode — calming Fibonacci-ratio melodies &amp; drone bed</span>
+    </label>
+    <div class="row2">
+      <label class="field">
+        <span>Preset</span>
+        <select name="healing_preset" id="healingPreset">
+          <option value="">— Custom —</option>
+          {% for p in healing_presets %}<option value="{{ p.name }}">{{ p.label }} — {{ p.desc }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Base tuning</span>
+        <select name="healing_base">
+          <option value="432" selected>432 Hz (healing)</option>
+          <option value="440">440 Hz (standard)</option>
+        </select>
+      </label>
+    </div>
+    <div class="row2">
+      <label class="field">
+        <span>Drone bed</span>
+        <select name="healing_drone_mode" id="healingDroneMode">
+          {% for m in healing_options.drone_modes %}<option value="{{ m.name }}">{{ m.label }} — {{ m.desc }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Binaural beat band 🎧</span>
+        <select name="healing_binaural_band" id="healingBinauralBand">
+          <option value="">Off</option>
+          {% for b in healing_options.binaural_bands %}<option value="{{ b.name }}">{{ b.label }} — {{ b.desc }}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
+    <div class="fxgrid">
+      <label class="check"><input type="checkbox" name="healing_solfeggio" checked> Solfeggio/chakra/planetary drone bed</label>
+      <label class="check"><input type="checkbox" name="healing_binaural"> Binaural spaciousness 🎧</label>
+      <label class="check"><input type="checkbox" name="healing_soft_drums"> Soft minimal drums</label>
+    </div>
+    <details class="fxbox" style="margin-top:8px">
+      <summary style="font-size:.9em">📖 Frequency guide — what each tone is for</summary>
+      <div style="font-size:.85em;line-height:1.6;margin-top:6px">
+        <p><b>Solfeggio</b> (396–852 Hz): six classic meditation tones, cycled phrase by phrase.</p>
+        <p><b>Chakras</b>:
+          {% for c in healing_options.chakras %}{{ c.name }} ({{ c.freq|int }} Hz) — {{ c.desc }}{% if not loop.last %} {% endif %}{% endfor %}</p>
+        <p><b>Planetary</b>:
+          {% for p in healing_options.planets %}{{ p.name }} ({{ p.freq }} Hz) — {{ p.desc }}{% if not loop.last %} {% endif %}{% endfor %}</p>
+        <p><b>Binaural bands</b>: pick a band to set the left/right beat rate
+          ({% for b in healing_options.binaural_bands %}{{ b.label }}{% if not loop.last %}, {% endif %}{% endfor %}).
+          Best with headphones. 🎧</p>
+        <p><b>Fibonacci</b>: melodies use Fibonacci-ratio intervals instead of equal temperament — the app's signature healing sound, always on in healing mode.</p>
+      </div>
+    </details>
+    <p class="plead" style="margin:6px 0 0">Wellness-vibe tones for relaxation and focus. No health claims — just a calming sound. 🎧 recommended for binaural.</p>
+  </details>
+
+  <details class="fxbox">
+    <summary>🌀 Fibonacci bursts <em style="font-style:normal;opacity:.6">(optional)</em> — short Fibonacci-sequence melodic phrases woven into any genre</summary>
+    <div class="fib-toggle-row">
+      <label class="switch" title="Fibonacci bursts on/off">
+        <input type="checkbox" name="fib_bursts" id="fibBurstsChk"
+               onchange="document.getElementById('fibOptions').hidden=!this.checked;
+                         document.getElementById('fibState').textContent=this.checked?'ON':'OFF'">
+        <span class="tslider"></span>
+      </label>
+      <span>Fibonacci bursts <b id="fibState">OFF</b></span>
+    </div>
+    <div class="fib-options" id="fibOptions" hidden>
+      <div class="field">
+        <span>Burst length</span>
+        <div class="seg" role="radiogroup" aria-label="Burst length">
+          <label><input type="radio" name="fib_burst_length" value="short"><span>Short<br><em>1 bar</em></span></label>
+          <label><input type="radio" name="fib_burst_length" value="medium" checked><span>Medium<br><em>2 bars</em></span></label>
+          <label><input type="radio" name="fib_burst_length" value="long"><span>Long<br><em>4 bars</em></span></label>
+        </div>
+      </div>
+      <div class="field">
+        <span>Intensity — how prominent in the mix</span>
+        <div class="seg" role="radiogroup" aria-label="Burst intensity">
+          <label><input type="radio" name="fib_burst_intensity" value="subtle"><span>Subtle<br><em>background</em></span></label>
+          <label><input type="radio" name="fib_burst_intensity" value="balanced" checked><span>Balanced<br><em>blended</em></span></label>
+          <label><input type="radio" name="fib_burst_intensity" value="bold"><span>Bold<br><em>front &amp; center</em></span></label>
+        </div>
+      </div>
+      <div class="field">
+        <span>Fibonacci sequence</span>
+        <div class="seg" role="radiogroup" aria-label="Fibonacci sequence">
+          <label><input type="radio" name="fib_burst_sequence" value="ascending" checked><span>Ascending<br><em>rises up</em></span></label>
+          <label><input type="radio" name="fib_burst_sequence" value="descending"><span>Descending<br><em>falls down</em></span></label>
+          <label><input type="radio" name="fib_burst_sequence" value="alternating"><span>Alternating<br><em>call &amp; response</em></span></label>
+        </div>
+      </div>
+    </div>
+    <p class="plead" style="margin:6px 0 0">The melody walks the Fibonacci sequence (1, 1, 2, 3, 5, 8…) mapped to the pentatonic scale — always in your genre's key, never random.</p>
+  </details>
+
+  <div class="row2">
+    <label class="field">
+      <span>Seed (blank = random)</span>
+      <input type="number" name="seed" min="1" placeholder="random">
+    </label>
+  </div>
+
+  <label class="check" style="margin:10px 0;display:flex;align-items:center;gap:8px">
+    <input type="checkbox" name="fastmode" checked>
+    <span>⚡ Fast mode — phone-friendly render (uncheck for full V68 engine)</span>
+  </label>
+
+  <details class="fxbox">
+    <summary>⚙️ Beat FX — fills, swing, risers &amp; more</summary>
+    <div class="fxgrid">
+      <label class="check"><input type="checkbox" name="fills"> Drum fills</label>
+      <label class="check"><input type="checkbox" name="humanize"> Humanize</label>
+      <label class="check"><input type="checkbox" name="risers"> Risers</label>
+      <label class="check"><input type="checkbox" name="builds"> Drop builds</label>
+      <label class="check"><input type="checkbox" name="glide808"> 808 glide</label>
+      <label class="check"><input type="checkbox" name="hatrolls"> Hat rolls</label>
+      <label class="check"><input type="checkbox" name="percs"> Perc layer</label>
+      <label class="check"><input type="checkbox" name="crash"> Crash accents</label>
+      <label class="check"><input type="checkbox" name="intro_outro"> Intro / outro</label>
+      <label class="check"><input type="checkbox" name="quality"> 🔊 Quality chain</label>
+    </div>
+    <div class="row2">
+      <label class="field">
+        <span>Swing (0–1)</span>
+        <input type="number" name="swing" min="0" max="1" step="0.1" value="0">
+      </label>
+      <label class="field">
+        <span>Time feel</span>
+        <select name="feel">
+          <option value="normal">Normal</option>
+          <option value="half">Half-time</option>
+          <option value="double">Double-time</option>
+        </select>
+      </label>
+    </div>
+    <div class="row2">
+      <label class="field">
+        <span>Transpose (−6…+6 st)</span>
+        <input type="number" name="transpose" min="-6" max="6" value="0">
+      </label>
+      <label class="field">
+        <span>Arrangement (0–5)</span>
+        <input type="number" name="arrange" min="0" max="5" value="0">
+      </label>
+    </div>
+  </details>
+
+  <button type="submit" class="btn big">♫ Generate beat</button>
+</form>
+
+<div id="jobBox" class="jobbox hidden">
+  <div class="jobmsg" id="jobMsg">Starting…</div>
+  <div class="pbar"><div class="pfill" id="jobFill"></div></div>
+  <div class="jobpct" id="jobPct">0%</div>
+  <div id="jobResult" class="result"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+bindJobForm("beatsForm", "/api/beats", false);
+// Lite Mode: full songs cap at 2:30, loops cap at 16 bars; lock fast mode
+// on (server enforces too).
+(function () {
+  const lenSel = document.querySelector('select[name="length"]');
+  const fast = document.querySelector('input[name="fastmode"]');
+  const applyLite = (on) => {
+    if (lenSel) [...lenSel.options].forEach(o => {
+      o.disabled = on && (o.value === "loop32" || o.value === "3:00" ||
+                          o.value === "3:30");
+      if (o.disabled && lenSel.value === o.value)
+        lenSel.value = o.value.startsWith("loop") ? "loop16" : "2:30";
+    });
+    if (fast) { fast.checked = true; fast.disabled = on; }
+  };
+  document.addEventListener("djrill:lite", e => applyLite(e.detail.lite));
+  applyLite(document.body.classList.contains("lite-on") ||
+            localStorage.getItem("djrill-lite") !== "0");
+})();
+// artist style: auto-set BPM + genre from the artist's production style
+(function () {
+  const sel = document.getElementById("artistSel");
+  const bpm = document.getElementById("bpmInput");
+  const genre = document.getElementById("genreSel");
+  const note = document.getElementById("artistNote");
+  sel.addEventListener("change", async () => {
+    const name = sel.value;
+    if (!name) { note.style.display = "none"; return; }
+    try {
+      const r = await fetch("/api/artist/" + encodeURIComponent(name));
+      const j = await r.json();
+      if (j.ok) {
+        bpm.value = j.bpm;
+        const opt = [...genre.options].find(o => o.value === j.genre);
+        if (opt) genre.value = j.genre;
+        note.textContent = "🎤 " + j.name + " style · " + j.era + " · " +
+          j.region + " — " + j.notes;
+        note.style.display = "block";
+      }
+    } catch (e) { /* offline-safe */ }
+  });
+})();
+// healing presets: auto-set BPM + genre + melody, enable the toggle
+(function () {
+  const sel = document.getElementById("healingPreset");
+  const chk = document.getElementById("healingChk");
+  const bpm = document.getElementById("bpmInput");
+  const genre = document.getElementById("genreSel");
+  const melody = document.getElementById("melodySel");
+  const PRESETS = {{ healing_presets|tojson }};
+  sel.addEventListener("change", () => {
+    const p = PRESETS.find(x => x.name === sel.value);
+    if (!p) return;
+    chk.checked = true;
+    bpm.value = p.bpm;
+    const go = [...genre.options].find(o => o.value === p.genre);
+    if (go) genre.value = p.genre;
+    const mo = [...melody.options].find(o => o.value === p.melody);
+    if (mo) melody.value = p.melody;
+    // reflect the preset's healing options in the checkboxes
+    const q = (n) => document.querySelector('[name="' + n + '"]');
+    if (q("healing_solfeggio")) q("healing_solfeggio").checked = !!p.healing.solfeggio;
+    if (q("healing_binaural")) q("healing_binaural").checked = !!p.healing.binaural;
+    if (q("healing_soft_drums")) q("healing_soft_drums").checked = !!p.healing.soft_drums;
+    if (q("healing_base")) q("healing_base").value = String(Math.round(p.healing.base));
+    if (q("healing_drone_mode") && p.healing.drone_mode) q("healing_drone_mode").value = p.healing.drone_mode;
+    if (q("healing_binaural_band")) q("healing_binaural_band").value = p.healing.binaural_band || "";
+  });
+})();
+// daily-challenge deep link: /beats?seed=..&genre=..&bpm=..&artist=..
+(function () {
+  const q = new URLSearchParams(location.search);
+  const form = document.getElementById("beatsForm");
+  if (q.get("seed")) form.querySelector('[name="seed"]').value = q.get("seed");
+  if (q.get("bpm")) form.querySelector('[name="bpm"]').value = q.get("bpm");
+  if (q.get("genre")) {
+    const sel = form.querySelector('[name="genre"]');
+    const opt = [...sel.options].find(o => o.value === q.get("genre"));
+    if (opt) sel.value = q.get("genre");
+  }
+  if (q.get("artist")) {
+    const sel = document.getElementById("artistSel");
+    const opt = [...sel.options].find(o => o.value === q.get("artist"));
+    if (opt) { sel.value = q.get("artist"); sel.dispatchEvent(new Event("change")); }
+  }
+})();
+// global genre sync: shared 🎵 selector in the top bar
+// + continuity: "Morphing X → Y" badge and gentle BPM carry-over
+(function () {
+  const g = document.getElementById("genreSel");
+  const bpmInput = document.getElementById("bpmInput");
+  if (!g) return;
+
+  let morphEl = null;
+  function morphBadge(text) {
+    if (!morphEl) {
+      morphEl = document.createElement("div");
+      morphEl.id = "genreMorph";
+      morphEl.setAttribute("aria-hidden", "true");
+      document.body.appendChild(morphEl);
+    }
+    morphEl.textContent = text;
+    morphEl.classList.add("show");
+    clearTimeout(morphBadge._t);
+    morphBadge._t = setTimeout(() => morphEl.classList.remove("show"), 1200);
+  }
+
+  // Nudge BPM into the new genre's range ONLY if the current tempo falls
+  // outside it — never a hard reset of the user's tempo. This page has no
+  // key/scale control (just BPM/artist/kit/melody), so everything else
+  // carries over untouched.
+  function morphBpm(genre) {
+    if (!bpmInput || !window.djrillGenreBpm) return;
+    const range = window.djrillGenreBpm[genre];
+    if (!range) return;
+    const cur = parseFloat(bpmInput.value);
+    if (!isFinite(cur)) return;
+    if (cur < range[0]) bpmInput.value = range[0];
+    else if (cur > range[1]) bpmInput.value = range[1];
+  }
+
+  const apply = (genre) => {
+    const opt = [...g.options].find(o => o.value === genre);
+    if (opt) g.value = genre;
+  };
+  if (window.djrillGenre) apply(window.djrillGenre.get());
+  document.addEventListener("djrill:genre", e => {
+    const d = e.detail || {};
+    apply(d.genre);
+    if (d.prevGenre && d.prevGenre !== d.genre) {
+      morphBadge("Morphing " + d.prevGenre + " → " + d.genre + "…");
+      morphBpm(d.genre);
+    }
+  });
+})();
+</script>
+{% endblock %}

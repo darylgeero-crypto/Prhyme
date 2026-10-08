@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico wiggle">🎛</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Samples</h2><a class="help-link" href="{{ url_for('help_page') }}#samples" aria-label="Help">?</a></div>
+    <p class="plead">Your sample library — upload, tag, preview, and reuse.</p>
+  </div>
+</div>
+
+<form id="sampleForm" class="form" enctype="multipart/form-data">
+  <label class="field"><span>Upload sample</span>
+    <input type="file" name="file" id="sampleFile" accept="audio/*" required class="fileinput"></label>
+  <label class="field"><span>Tags (comma-separated)</span>
+    <input type="text" name="tags" placeholder="drums, dark, 140bpm" maxlength="120"></label>
+  <button type="submit" class="btn big">⬆ Add sample</button>
+</form>
+
+<div class="panel" style="margin-top:16px">
+  <div class="panel-h">Library</div>
+  <label class="field"><span>Filter by tag</span>
+    <input type="text" id="tagFilter" placeholder="e.g. drums"></label>
+  <div id="sampleList" style="margin-top:12px"><div class="skel"></div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function loadSamples() {
+  const list = document.getElementById("sampleList");
+  const filter = (document.getElementById("tagFilter").value || "").toLowerCase();
+  try {
+    const r = await fetch("/api/samples");
+    const j = await r.json();
+    const items = (j.samples || []).filter(s =>
+      !filter || (s.tags || []).join(" ").toLowerCase().includes(filter) ||
+      s.file.toLowerCase().includes(filter));
+    if (!items.length) { list.innerHTML = '<p class="plead">No samples yet.</p>'; return; }
+    list.innerHTML = items.map(s =>
+      '<div class="histitem"><div class="ht">' + escapeHtml(s.file) + "</div>" +
+      '<div class="hm">' + s.size_kb + " KB" +
+      ((s.tags || []).length ? " · " + s.tags.map(escapeHtml).join(", ") : "") + "</div>" +
+      '<div class="hd"><audio controls preload="none" style="width:100%;height:40px" src="/sample/' +
+      encodeURIComponent(s.file) + '"></audio>' +
+      '<button class="btn small" onclick="delSample(\'' + encodeURIComponent(s.file) + '\')">🗑</button></div></div>'
+    ).join("");
+  } catch (e) { list.innerHTML = '<div class="err">Load failed</div>'; }
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+async function delSample(f) {
+  if (!confirm("Delete this sample?")) return;
+  await fetch("/api/samples/" + f, { method: "DELETE" });
+  loadSamples();
+}
+document.getElementById("tagFilter").addEventListener("input", loadSamples);
+document.getElementById("sampleForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const r = await fetch("/api/samples", { method: "POST", body: fd });
+  const j = await r.json().catch(() => ({}));
+  if (j.ok) { toast("Sample added"); e.target.reset(); loadSamples(); }
+  else toast("Upload failed: " + (j.error || ""));
+});
+loadSamples();
+</script>
+{% endblock %}

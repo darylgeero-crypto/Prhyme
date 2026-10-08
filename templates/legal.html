@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico">📜</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">{{ title }}</h2></div>
+  </div>
+</div>
+<div class="bill-form-card" style="max-width:800px;">
+  <div class="legal-body" style="font-size:13px;line-height:1.7;white-space:pre-wrap;">{{ content }}</div>
+</div>
+{% endblock %}

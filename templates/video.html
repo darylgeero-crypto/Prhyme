@@ -1,0 +1,308 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico bounce">🎬</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Make a Video</h2><a class="help-link" href="{{ url_for('help_page') }}#video" aria-label="Help">?</a></div>
+    <p class="plead">Lyric videos, selfie videos, and performance cuts — rendered on your phone.</p>
+  </div>
+</div>
+
+<div class="draft-banner">Your footage &amp; photos only — nothing synthetic, no fake performer.</div>
+
+{% if not ffmpeg %}
+<div class="err">FFmpeg isn't installed — video rendering needs it. In Termux: <b>pkg install ffmpeg</b></div>
+{% endif %}
+
+<div class="btnrow" id="modeTabs">
+  <button type="button" class="btn mini on" data-mode="lyric">Lyric</button>
+  <button type="button" class="btn mini" data-mode="selfie">Selfie</button>
+  <button type="button" class="btn mini" data-mode="performance">Performance</button>
+  <button type="button" class="btn mini" data-mode="waveform">Waveform</button>
+  <button type="button" class="btn mini" data-mode="collage">Collage</button>
+  <button type="button" class="btn mini" data-mode="minimal">Minimal</button>
+</div>
+
+<form id="videoForm" class="form" enctype="multipart/form-data">
+  <input type="hidden" name="mode" id="modeField" value="lyric">
+
+  <label class="field">
+    <span>Audio track</span>
+    <input type="file" name="audio" id="audioFile" accept="audio/*" required class="fileinput">
+  </label>
+
+  <div id="selfieFields" class="hidden">
+    <label class="field">
+      <span>Your photos (1–10) — they animate with slow Ken Burns motion</span>
+      <input type="file" name="photos" accept="image/*" multiple class="fileinput">
+    </label>
+    <label class="field">
+      <span>Ken Burns direction</span>
+      <select name="kb_direction">
+        <option value="auto">Auto (alternate)</option>
+        <option value="in">Zoom in</option>
+        <option value="out">Zoom out</option>
+        <option value="left">Pan left</option>
+        <option value="right">Pan right</option>
+        <option value="up">Pan up</option>
+        <option value="down">Pan down</option>
+      </select>
+    </label>
+  </div>
+
+  <div id="perfFields" class="hidden">
+    <label class="field">
+      <span>Your performance footage (1–3 clips) — cut to the track</span>
+      <input type="file" name="footage" accept="video/*" multiple class="fileinput">
+    </label>
+  </div>
+
+  <label class="field">
+    <span>Title</span>
+    <input type="text" name="title" value="Prhyme™" maxlength="60">
+  </label>
+
+  <label class="field">
+    <span>Lyrics — one line per line (timed across the track for you)</span>
+    <textarea name="lyricsText" id="lyricsText" rows="6" placeholder="Paste your lyrics, one line per line…"></textarea>
+  </label>
+
+  <div class="row2">
+    <label class="field">
+      <span>Theme (for draft)</span>
+      <input type="text" id="genTheme" placeholder="e.g. coming up" maxlength="40">
+    </label>
+    <label class="field">
+      <span>Genre</span>
+      <select id="genGenre">
+        {% for g in genres %}<option value="{{ g }}">{{ g }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+  <button type="button" class="btn" id="genBtn">✎ Generate draft lyrics</button>
+  <div class="draft-banner hidden" id="draftNote">AI-GENERATED DRAFT LYRICS — not written by the artist.</div>
+
+  <details class="fxbox">
+    <summary>⚙️ Video FX — grades, cards, aspect &amp; more</summary>
+    <div class="row2">
+      <label class="field">
+        <span>Aspect ratio</span>
+        <select name="aspect">
+          <option value="16:9">16:9 landscape</option>
+          <option value="9:16">9:16 vertical</option>
+          <option value="1:1">1:1 square</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Color grade</span>
+        <select name="grade">
+          <option value="none">None</option>
+          <option value="warm">Warm</option>
+          <option value="cold">Cold</option>
+          <option value="bw">Black &amp; white</option>
+          <option value="vintage">Vintage</option>
+          <option value="neon">Neon</option>
+        </select>
+      </label>
+    </div>
+    <div class="row2">
+      <label class="field">
+        <span>Reactive background (waveform mode)</span>
+        <select name="bg">
+          <option value="rings">Pulsing rings</option>
+          <option value="bars">Spectrum bars</option>
+          <option value="wave">Scrolling wave</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Watermark text</span>
+        <input type="text" name="watermark" placeholder="Prhyme™" maxlength="24">
+      </label>
+    </div>
+    <div class="fxgrid">
+      <label class="check"><input type="checkbox" name="subtitles"> Burn subtitles</label>
+      <label class="check"><input type="checkbox" name="title_card"> Title card</label>
+      <label class="check"><input type="checkbox" name="outro_card"> Outro card</label>
+      <label class="check"><input type="checkbox" name="fast_preview"> Fast preview</label>
+    </div>
+    <label class="field">
+      <span>Final aspect (blank = keep)</span>
+      <select name="out_aspect">
+        <option value="">Keep</option>
+        <option value="16:9">16:9</option>
+        <option value="9:16">9:16</option>
+        <option value="1:1">1:1</option>
+      </select>
+    </label>
+  </details>
+
+  <button type="submit" class="btn big" {% if not ffmpeg %}disabled{% endif %}>🎬 Render video</button>
+  <p class="note">Rendering takes a while — keep this page open. You'll get an MP4 download.</p>
+</form>
+
+<div id="jobBox" class="jobbox hidden">
+  <div class="jobmsg" id="jobMsg">Starting…</div>
+  <div class="pbar"><div class="pfill" id="jobFill"></div></div>
+  <div class="jobpct" id="jobPct">0%</div>
+  <div id="jobResult" class="result"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  // mode tabs
+  const tabs = document.querySelectorAll("#modeTabs .btn");
+  const modeField = document.getElementById("modeField");
+  tabs.forEach(t => t.addEventListener("click", () => {
+    tabs.forEach(x => x.classList.remove("on"));
+    t.classList.add("on");
+    modeField.value = t.dataset.mode;
+    const m = t.dataset.mode;
+    document.getElementById("selfieFields").classList.toggle("hidden",
+      !(m === "selfie" || m === "collage"));
+    document.getElementById("perfFields").classList.toggle("hidden", m !== "performance");
+  }));
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+      ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+  }
+
+  // draft lyric generation -> fills the textarea
+  document.getElementById("genBtn").addEventListener("click", async () => {
+    const audio = document.getElementById("audioFile").files[0];
+    if (!audio) { alert("Pick your audio first — lyrics are timed to its length."); return; }
+    const dur = await audioDuration(audio);
+    if (!dur) { alert("Couldn't read the audio length."); return; }
+    const txt = document.getElementById("lyricsText");
+    txt.value = "Writing…";
+    try {
+      const r = await fetch("/api/video/lyrics", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({source: "generate",
+          theme: document.getElementById("genTheme").value,
+          genre: document.getElementById("genGenre").value,
+          duration: dur})
+      });
+      const j = await r.json();
+      if (!j.ok) { txt.value = ""; alert(j.error || "Failed"); return; }
+      txt.value = j.events.map(e => e.line).join("\n");
+      document.getElementById("draftNote").classList.remove("hidden");
+    } catch (e) { txt.value = ""; alert("Network error"); }
+  });
+
+  function audioDuration(file) {
+    return new Promise((res) => {
+      const a = document.createElement("audio");
+      a.preload = "metadata";
+      a.onloadedmetadata = () => res(a.duration || 0);
+      a.onerror = () => res(0);
+      a.src = URL.createObjectURL(file);
+      setTimeout(() => res(a.duration || 0), 8000);
+    });
+  }
+
+  // submit -> build timed lyrics -> render job -> poll
+  const form = document.getElementById("videoForm");
+  const box = document.getElementById("jobBox");
+  const msg = document.getElementById("jobMsg");
+  const fill = document.getElementById("jobFill");
+  const pct = document.getElementById("jobPct");
+  const res = document.getElementById("jobResult");
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    box.classList.remove("hidden");
+    res.innerHTML = "";
+    const fail = (t) => { res.innerHTML = '<div class="err">' + escapeHtml(t) + "</div>"; };
+
+    const mode = modeField.value;
+    const audio = document.getElementById("audioFile").files[0];
+    if (!audio) return fail("Pick an audio file.");
+    if (mode === "selfie" || mode === "collage") {
+      const n = form.querySelector('input[name="photos"]').files.length;
+      if (n < 1 || n > 10) return fail("Add 1–10 photos.");
+    }
+    if (mode === "performance") {
+      const n = form.querySelector('input[name="footage"]').files.length;
+      if (n < 1 || n > 3) return fail("Add 1–3 clips.");
+    }
+    const lines = document.getElementById("lyricsText").value.trim();
+    if (!lines) return fail("Add lyrics (paste yours or generate a draft).");
+
+    msg.textContent = "Reading audio…"; fill.style.width = "2%"; pct.textContent = "2%";
+    const dur = await audioDuration(audio);
+    if (!dur) return fail("Couldn't read the audio length.");
+
+    msg.textContent = "Timing lyrics…";
+    let events;
+    try {
+      const r = await fetch("/api/video/lyrics", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({source: "paste", text: lines, duration: dur})
+      });
+      const j = await r.json();
+      if (!j.ok) return fail(j.error || "Lyric timing failed");
+      events = j.events;
+    } catch (err) { return fail("Network error: " + err); }
+
+    const fd = new FormData(form);
+    fd.append("events", JSON.stringify(events));
+    if (mode === "selfie" || mode === "collage")
+      for (const p of form.querySelector('input[name="photos"]').files) fd.append("photos", p);
+    if (mode === "performance")
+      for (const p of form.querySelector('input[name="footage"]').files) fd.append("footage", p);
+
+    msg.textContent = "Uploading…";
+    let start;
+    try { start = await fetch("/api/video/render", {method: "POST", body: fd}); }
+    catch (err) { return fail("Network error: " + err); }
+    let j;
+    try { j = await start.json(); } catch (err) { return fail("Bad server response"); }
+    if (!j.ok) return fail(j.error || "Request failed");
+    poll(j.job_id);
+
+    const _t0 = Date.now();
+    const _fmtT = (ms) => {
+      const s = Math.floor(ms / 1000);
+      return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+    };
+    let _last = -1, _stall = 0;
+    async function poll(jobId) {
+      try {
+        const r = await fetch("/api/job/" + jobId);
+        const s = await r.json();
+        if (!s.ok) return fail(s.error || "Job lost");
+        const p = Math.max(0, Math.min(100, s.progress || 0));
+        if (p === _last) _stall++; else { _stall = 0; _last = p; }
+        const elapsed = " ⏱ " + _fmtT(Date.now() - _t0);
+        fill.style.width = p + "%"; pct.textContent = p + "%" + elapsed;
+        msg.textContent = (s.message || "Working…") +
+          (_stall >= 6 ? " ⏳ still working…" : "");
+        if (s.status === "done") {
+          fill.style.width = "100%"; pct.textContent = "100%";
+          msg.textContent = s.message || "Done";
+          showResult(res, s.result || {});
+        } else if (s.status === "error") {
+          fail(s.message || "Job failed");
+        } else {
+          setTimeout(() => poll(jobId), 1500);
+        }
+      } catch (err) { setTimeout(() => poll(jobId), 3000); }
+    }
+
+    function showResult(el, r) {
+      let html = "";
+      if (r.mp4) {
+        html += '<div class="stats">🎬 ' + (r.duration || "?") + "s video</div>";
+        html += '<a class="dl" href="/download/' + encodeURIComponent(r.mp4) + '">⬇ Download MP4</a>';
+        if (r.thumbnail)
+          html += '<a class="dl alt" href="/download/' + encodeURIComponent(r.thumbnail) + '">🖼 Thumbnail</a>';
+        html += '<video controls playsinline preload="metadata" style="width:100%;margin-top:10px;border-radius:12px" src="/download/' + encodeURIComponent(r.mp4) + '"></video>';
+      }
+      el.innerHTML = html || '<div class="err">No result</div>';
+    }
+  });
+})();
+</script>
+{% endblock %}

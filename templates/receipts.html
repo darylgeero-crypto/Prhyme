@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico">🧾</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Receipts</h2></div>
+    <p class="plead">Your purchase history.</p>
+  </div>
+</div>
+
+<div class="bill-form-card" style="max-width:600px;">
+  {% for p in purchases %}
+  <div class="bill-status-row">
+    <span>
+      <strong>{{ p.plan|title }}</strong><br>
+      <span style="font-size:12px;opacity:.7;">
+        #{{ p.id }}
+      </span>
+    </span>
+    <strong>${{ "%.2f"|format(p.amount) }} {{ p.currency|upper }}</strong>
+  </div>
+  {% else %}
+  <p>No purchases yet.</p>
+  {% endfor %}
+  <p class="bill-alt"><a href="{{ url_for('billing.account') }}">← Back to account</a></p>
+</div>
+{% endblock %}

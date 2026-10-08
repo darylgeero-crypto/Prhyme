@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico pulse">💬</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Feedback</h2></div>
+    <p class="plead">Report a problem or suggest a feature — we read everything.</p>
+  </div>
+</div>
+
+<div class="bill-form-card">
+  <div class="seg" style="margin-bottom:16px;">
+    <label><input type="radio" name="fbkind" value="bug" checked><span>🐛<em>Report a problem</em></span></label>
+    <label><input type="radio" name="fbkind" value="feature"><span>💡<em>Suggest a feature</em></span></label>
+  </div>
+
+  <label class="bill-label">Category
+    <select class="txt" id="fbCategory"></select>
+  </label>
+  <label class="bill-label">Subject
+    <input class="txt" type="text" id="fbSubject" maxlength="120"
+           placeholder="Short summary">
+  </label>
+  <label class="bill-label">Description
+    <textarea class="txt" id="fbDesc" rows="5" maxlength="5000"
+              placeholder="What happened? What did you expect? Steps to reproduce…"></textarea>
+  </label>
+  <label class="bill-label">Email <span class="bill-hint">(optional — so we can follow up)</span>
+    <input class="txt" type="email" id="fbEmail" placeholder="you@example.com">
+  </label>
+  <button class="btn big" onclick="submitFeedback()">Send →</button>
+  <div id="fbMsg" style="margin-top:12px;"></div>
+</div>
+
+<script>
+const CATS = {
+  bug: {{ bug_cats|tojson }},
+  feature: {{ feat_cats|tojson }}
+};
+function refreshCats() {
+  const kind = document.querySelector('input[name=fbkind]:checked').value;
+  const sel = document.getElementById('fbCategory');
+  sel.innerHTML = CATS[kind].map(c => '<option>' + c + '</option>').join('');
+  document.getElementById('fbDesc').placeholder = kind === 'bug'
+    ? 'What happened? What did you expect? Steps to reproduce…'
+    : 'Describe your idea. What would it do? Why would it help?';
+}
+document.querySelectorAll('input[name=fbkind]').forEach(r =>
+  r.addEventListener('change', refreshCats));
+refreshCats();
+
+async function submitFeedback() {
+  const kind = document.querySelector('input[name=fbkind]:checked').value;
+  const msg = document.getElementById('fbMsg');
+  const body = {
+    kind,
+    category: document.getElementById('fbCategory').value,
+    subject: document.getElementById('fbSubject').value.trim(),
+    description: document.getElementById('fbDesc').value.trim(),
+    email: document.getElementById('fbEmail').value.trim()
+  };
+  if (!body.subject || !body.description) {
+    msg.innerHTML = '<div class="bill-note warn">Subject and description are required.</div>';
+    return;
+  }
+  const r = await fetch("{{ url_for('api_feedback') }}", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body)
+  });
+  const j = await r.json();
+  if (j.ok) {
+    msg.innerHTML = '<div class="bill-note good">✅ ' + j.message + ' (Ticket #' + j.id + ')</div>';
+    document.getElementById('fbSubject').value = '';
+    document.getElementById('fbDesc').value = '';
+  } else {
+    msg.innerHTML = '<div class="bill-note warn">' + (j.error || 'Failed.') + '</div>';
+  }
+}
+</script>
+{% endblock %}

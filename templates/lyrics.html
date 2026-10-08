@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico wiggle">✎</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Draft Lyrics</h2><a class="help-link" href="{{ url_for('help_page') }}#lyrics" aria-label="Help">?</a></div>
+    <p class="plead">Seeded draft lyrics by theme &amp; mood — a starting point for <em>your</em> writing.</p>
+  </div>
+</div>
+
+<div class="draft-banner">AI-GENERATED DRAFT LYRICS — not written by the artist.</div>
+
+<form id="lyricsForm" class="form">
+  <label class="field">
+    <span>Theme / working title</span>
+    <input type="text" name="theme" placeholder="e.g. coming up from nothing" maxlength="80">
+  </label>
+  <div class="row2">
+    <label class="field">
+      <span>Mood</span>
+      <select name="mood">
+        <option value="">Any</option>
+        <option>Hungry</option>
+        <option>Reflective</option>
+        <option>Aggressive</option>
+        <option>Celebratory</option>
+        <option>Dark</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>Genre</span>
+      <select name="genre">
+        {% for g in genres %}<option value="{{ g }}" {% if g=='HipHop' %}selected{% endif %}>{{ g }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+  <label class="field">
+    <span>Artist style <small style="opacity:.6">(emulation only — draft stays labeled, never attributed)</small></span>
+    <select name="artist">
+      <option value="">None — neutral style</option>
+      {% for grp in artists|groupby('genre') %}
+      <optgroup label="{{ grp.grouper }}">
+        {% for a in grp.list|sort(attribute='name') %}
+        <option value="{{ a.name }}">{{ a.name }} — {{ a.subgenre }}</option>
+        {% endfor %}
+      </optgroup>
+      {% endfor %}
+    </select>
+  </label>
+  <label class="field">
+    <span>Seed (blank = from theme + mood)</span>
+    <input type="number" name="seed" min="1" placeholder="auto">
+  </label>
+
+  <details class="fxbox">
+    <summary>⚙️ Lyric craft options</summary>
+    <label class="field">
+      <span>Lyric theme</span>
+      <select name="lyric_theme">
+        <option value="street">Street</option>
+        <option value="faith">Faith</option>
+        <option value="hustle">Hustle</option>
+        <option value="introspective">Introspective</option>
+        <option value="gospel">Gospel</option>
+        <option value="love">Love</option>
+        <option value="victory">Victory</option>
+        <option value="pain">Pain</option>
+        <option value="party">Party</option>
+      </select>
+    </label>
+    <div class="row2">
+      <label class="field">
+        <span>Rhyme scheme</span>
+        <select name="rhyme_scheme">
+          <option value="AABB">AABB (couplets)</option>
+          <option value="ABAB">ABAB (alternating)</option>
+          <option value="AAAA">AAAA (mono-rhyme)</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Syllables / line</span>
+        <input type="number" name="syl_target" min="6" max="20" value="12">
+      </label>
+    </div>
+    <div class="row2">
+      <label class="field">
+        <span>Verse lines</span>
+        <select name="verse_lines">
+          <option value="8">8</option>
+          <option value="12">12</option>
+          <option value="16" selected>16</option>
+          <option value="24">24</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Hook lines</span>
+        <select name="hook_lines">
+          <option value="4">4</option>
+          <option value="8" selected>8</option>
+          <option value="12">12</option>
+        </select>
+      </label>
+    </div>
+    <label class="field">
+      <span>Your words (comma-separated — woven into lines)</span>
+      <input type="text" name="custom_words" placeholder="Edmonton, grind, day one" maxlength="120">
+    </label>
+    <div class="fxgrid">
+      <label class="check"><input type="checkbox" name="hook_first"> Hook first</label>
+      <label class="check"><input type="checkbox" name="call_response"> Call &amp; response</label>
+      <label class="check"><input type="checkbox" name="internal_rhyme"> Internal rhymes</label>
+      <label class="check"><input type="checkbox" name="multi_boost"> Multisyllabic rhymes</label>
+    </div>
+  </details>
+
+  <button type="submit" class="btn big">✎ Generate draft</button>
+</form>
+
+<div id="lyricsOut" class="lyrics-out hidden">
+  <div id="attrBadge" class="attr-badge attr-ai">AI-GENERATED DRAFT LYRICS — not written by the artist.</div>
+  <div><span id="paBadge" class="pa-badge hidden"></span></div>
+  <div class="lyrics-meta" id="lyricsMeta"></div>
+  <textarea id="lyricsText" class="lyrics-text" rows="18" spellcheck="false"
+    placeholder="Your lyrics will appear here — edit them freely."></textarea>
+  <div class="attr-hint" id="attrHint"></div>
+  <div class="btnrow">
+    <button id="copyBtn" class="btn">⧉ Copy text</button>
+    <button id="lrcBtn" class="btn alt">⬇ LRC file</button>
+  </div>
+  <div id="lyricsStats" class="stats"></div>
+  <div id="lyricsAdlibs" class="stats"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let lastLrc = "";
+let originalLyrics = "";   // pristine AI output for attribution diff
+let currentAttr = "ai";    // ai | inspired | daryl
+
+// --- Attribution: word-level diff vs original AI output ---
+function _words(s) {
+  return (s || "").toLowerCase().replace(/[^\w\s']/g, " ").split(/\s+/).filter(Boolean);
+}
+function _lcsLen(a, b) {
+  // Longest common subsequence length (word level). Lyrics are short; O(n*m) is fine.
+  const n = a.length, m = b.length;
+  if (!n || !m) return 0;
+  let prev = new Array(m + 1).fill(0), cur = new Array(m + 1).fill(0);
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
+    }
+    const t = prev; prev = cur; cur = t;
+  }
+  return prev[m];
+}
+function attributionFor(editedText) {
+  const wOrig = _words(originalLyrics), wEdit = _words(editedText);
+  if (!wOrig.length) return {key: "ai", pct: 0};
+  const lcs = _lcsLen(wOrig, wEdit);
+  const pct = Math.round((1 - lcs / Math.max(wOrig.length, wEdit.length)) * 100);
+  if (pct <= 0) return {key: "ai", pct};
+  if (pct <= 50) return {key: "inspired", pct};
+  return {key: "daryl", pct};
+}
+const ATTR_HTML = {
+  ai: "AI-GENERATED DRAFT LYRICS — not written by the artist.",
+  inspired: "AI inspired",
+  daryl: 'Written by <strong>Daryl Jackson</strong><br><span class="attr-sub">AI inspired</span>'
+};
+const ATTR_HINT = {
+  ai: "",
+  inspired: "You've edited the draft — attribution updated.",
+  daryl: "Heavily rewritten — credited to you as the writer."
+};
+function refreshAttribution() {
+  const txt = document.getElementById("lyricsText");
+  const badge = document.getElementById("attrBadge");
+  const hint = document.getElementById("attrHint");
+  const {key, pct} = attributionFor(txt.value);
+  currentAttr = key;
+  badge.className = "attr-badge attr-" + key;
+  badge.innerHTML = ATTR_HTML[key];
+  hint.textContent = ATTR_HINT[key] + (pct > 0 ? " (" + pct + "% changed)" : "");
+}
+function attributionLine() {
+  // Plain-text attribution for copy/download headers
+  if (currentAttr === "daryl") return "Written by Daryl Jackson (AI inspired)";
+  if (currentAttr === "inspired") return "AI inspired";
+  return "AI-GENERATED DRAFT LYRICS — not written by the artist.";
+}
+document.getElementById("lyricsForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const payload = {
+    theme: fd.get("theme"), mood: fd.get("mood"),
+    genre: fd.get("genre"), seed: fd.get("seed"),
+    artist: fd.get("artist"),
+    lyric_theme: fd.get("lyric_theme"),
+    rhyme_scheme: fd.get("rhyme_scheme"),
+    syl_target: fd.get("syl_target"),
+    verse_lines: fd.get("verse_lines"),
+    hook_lines: fd.get("hook_lines"),
+    custom_words: fd.get("custom_words"),
+    hook_first: fd.get("hook_first") ? true : false,
+    call_response: fd.get("call_response") ? true : false,
+    internal_rhyme: fd.get("internal_rhyme") ? true : false,
+    multi_boost: fd.get("multi_boost") ? true : false,
+    explicit: (window.djrillExplicit ? djrillExplicit.get() : true)
+  };
+  const out = document.getElementById("lyricsOut");
+  const txt = document.getElementById("lyricsText");
+  const meta = document.getElementById("lyricsMeta");
+  out.classList.remove("hidden");
+  txt.value = "Writing…";
+  meta.textContent = "";
+  try {
+    const r = await fetch("/api/lyrics", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    const j = await r.json();
+    if (!j.ok) { txt.value = "Error: " + (j.error || "unknown"); return; }
+    txt.value = j.text;
+    originalLyrics = j.text;   // snapshot for attribution diff
+    refreshAttribution();
+    lastLrc = j.lrc || "";
+    const explicitOn = payload.explicit !== false;
+    const pa = document.getElementById("paBadge");
+    pa.className = explicitOn ? "pa-badge" : "pa-clean";
+    pa.textContent = explicitOn
+      ? "⚠ PARENTAL ADVISORY — EXPLICIT CONTENT"
+      : "🔞 Clean";
+    meta.textContent = "“" + (j.title || "Untitled") + "” · Seed " + j.seed +
+      " · draft only — rewrite it in your voice";
+    const st = j.stats || {};
+    document.getElementById("lyricsStats").innerHTML =
+      Object.entries(st).map(([k, v]) =>
+        k + ": " + v.lines + " lines, ~" + v.avg_syl + " syl").join(" · ");
+    const ad = j.adlibs || {};
+    document.getElementById("lyricsAdlibs").textContent =
+      "Ad-libs: hook → " + (ad.hook || []).join(" ");
+  } catch (err) {
+    txt.value = "Error: " + err;
+  }
+});
+// Live attribution as the user edits
+document.getElementById("lyricsText").addEventListener("input", refreshAttribution);
+document.getElementById("copyBtn").addEventListener("click", async () => {
+  const t = attributionLine() + "\n\n" + document.getElementById("lyricsText").value;
+  try { await navigator.clipboard.writeText(t); } catch (e) {}
+  const b = document.getElementById("copyBtn");
+  b.textContent = "✓ Copied"; setTimeout(() => b.textContent = "⧉ Copy text", 1500);
+});
+document.getElementById("lrcBtn").addEventListener("click", () => {
+  const header = "[ar:" + attributionLine() + "]\n";
+  const blob = new Blob([header + lastLrc], {type: "text/plain"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "prhyme-lyrics.lrc";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+});
+</script>
+{% endblock %}
