@@ -79,6 +79,7 @@ import soundkits  # user-uploaded custom drum kits (WAV one-shots)
 import audiofx
 import vocalfix  # vocal clarity + subtle timing correction (never deletes words)
 import vocalfx  # ONLINE-ONLY vocal separator + auto SFX layer (cloud DSP/Demucs)
+import player as player_mod  # offline music player: browse + stream on-device audio
 import trackfx  # creative FX: radio, vinyl, TV, filters, echo (never deletes words)
 import rockdabus as RB  # Rockdabus Prhyme — conversational assistant brain
 
@@ -176,6 +177,11 @@ try:
     print("💎 Billing enabled (pricing: /pricing, account: /account)", flush=True)
 except Exception as e:
     print(f"⚠️  Billing disabled: {e}", flush=True)
+
+# Offline music player: browse + stream audio from on-device storage.
+player_mod.init_player(OUTPUT_DIR)
+app.register_blueprint(player_mod.bp)
+print("🎵 Player enabled (/player — Music/Downloads/Generated)", flush=True)
 
 # SECURITY: startup integrity check — hash critical modules, warn if modified
 # since last known-good run. This catches accidental corruption or tampering.
@@ -1100,6 +1106,12 @@ def convert_page():
 def separate_page():
     # ONLINE-ONLY: separation runs in the cloud, not on-device.
     return render_template("separate.html", active="separate")
+
+
+@app.get("/player")
+def player_page():
+    # OFFLINE: plays audio from on-device storage (Music/Downloads/Generated).
+    return render_template("player.html", active="player")
 
 
 @app.get("/beats")

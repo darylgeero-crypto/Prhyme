@@ -87,6 +87,8 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     <span class="ico">🎬</span><span class="lbl">Video</span></a>
   <a href="{{ url_for('dj_page') }}" class="tab {% if active=='dj' %}on{% endif %}">
     <span class="ico">🎧</span><span class="lbl">DJ</span></a>
+  <a href="{{ url_for('player_page') }}" class="tab {% if active=='player' %}on{% endif %}">
+    <span class="ico">🎵</span><span class="lbl">Player</span></a>
   <a href="{{ url_for('freestyle_page') }}" class="tab {% if active=='freestyle' %}on{% endif %}">
     <span class="ico">🎤</span><span class="lbl">Freestyle</span></a>
   <a href="{{ url_for('rockdabus_page') }}" class="tab {% if active=='rockdabus' %}on{% endif %}">

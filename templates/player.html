@@ -1,0 +1,440 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+.pl-tools{display:flex;gap:10px;margin-bottom:6px}
+.pl-tools .txt{background:var(--panel);border:1px solid rgba(255,255,255,.12);border-radius:12px;color:var(--txt);padding:10px 12px;font-size:15px}
+.pl-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:var(--panel);border:1px solid rgba(255,255,255,.07);margin-bottom:8px;cursor:pointer}
+.pl-row:active{transform:scale(.99)}
+.pl-row.playing{border-color:var(--cyan);box-shadow:0 0 18px rgba(0,229,255,.18)}
+.pl-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14.5px}
+.pl-src{flex:none;font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(0,229,255,.12);color:#bff3ff;border:1px solid rgba(0,229,255,.3)}
+.pl-meta{flex:none;font-size:11px;color:var(--dim)}
+.pl-queue .qrow{display:flex;gap:8px;align-items:center;padding:7px 10px;border-radius:10px;background:rgba(255,255,255,.03);margin-bottom:6px;font-size:13.5px}
+.pl-queue .qn{flex:none;width:22px;height:22px;border-radius:50%;background:var(--panel2);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--dim)}
+.pl-bar{position:fixed;left:0;right:0;bottom:calc(84px + env(safe-area-inset-bottom));z-index:9;background:rgba(14,14,24,.97);backdrop-filter:blur(14px);border-top:1px solid rgba(255,255,255,.1);padding:10px 14px calc(10px + env(safe-area-inset-bottom));transform:translateY(160%);transition:transform .25s ease}
+.pl-bar.show{transform:none}
+.pl-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:4px}
+.pl-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;font-size:14.5px}
+.pl-times{flex:none;font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
+.pl-seek{width:100%;margin:2px 0 8px}
+.pl-controls{display:flex;align-items:center;gap:8px}
+.pl-controls .btn{flex:none}
+#plPlay{min-width:52px;font-size:18px}
+.pl-vol{flex:1;min-width:60px}
+.eq-drawer{position:fixed;left:0;right:0;bottom:calc(84px + env(safe-area-inset-bottom));z-index:8;background:rgba(14,14,24,.98);border-top:1px solid rgba(255,255,255,.1);padding:14px 16px;transform:translateY(120%);transition:transform .25s ease;max-height:62vh;overflow-y:auto}
+.eq-drawer.show{transform:none}
+.pl-bar.eq-open{transform:translateY(160%)}
+.eq-band{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.eq-band .fl{flex:none;width:64px;font-size:13px;color:var(--dim)}
+.eq-band input{flex:1}
+.eq-band .fv{flex:none;width:64px;text-align:right;font-size:13px;font-variant-numeric:tabular-nums}
+.eq-presets{display:flex;gap:10px;margin-bottom:12px}
+.eq-presets select{flex:1;background:var(--panel);border:1px solid rgba(255,255,255,.12);border-radius:12px;color:var(--txt);padding:10px 12px;font-size:14px}
+body.pl-open .page{padding-bottom:170px}
+</style>
+
+<div class="phead">
+  <span class="pico">🎵</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Music Player</h2><a class="help-link" href="{{ url_for('help_page') }}#player" aria-label="Help">?</a></div>
+    <p class="plead">Your on-device library — <b>Music</b>, <b>Downloads</b> and Prhyme <b>Generated</b> beats. Fully offline.</p>
+  </div>
+</div>
+
+<div class="pl-tools">
+  <input id="plSearch" class="txt" type="search" placeholder="🔍 Search tracks…" autocomplete="off">
+  <button id="plRescan" class="btn small">↻</button>
+</div>
+<p class="muted" id="plCount"></p>
+
+<h3 class="sect">Up next</h3>
+<div id="plQueue" class="pl-queue"><p class="muted">Nothing queued — tap a track below.</p></div>
+
+<h3 class="sect">Tracks</h3>
+<div id="plList"><p class="muted">Scanning…</p></div>
+
+<div id="eqDrawer" class="eq-drawer">
+  <div class="eq-head" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <b>🎛 Equalizer</b><span id="eqNote" class="muted" style="font-size:12px"></span>
+  </div>
+  <div class="eq-presets">
+    <select id="eqPreset" aria-label="EQ preset"></select>
+  </div>
+  <div id="eqBands"></div>
+</div>
+
+<div id="plBar" class="pl-bar">
+  <div class="pl-top">
+    <div class="pl-title" id="plTitle">—</div>
+    <div class="pl-times"><span id="plCur">0:00</span> / <span id="plDur">0:00</span></div>
+  </div>
+  <input id="plSeek" type="range" min="0" max="1000" value="0" class="pl-seek" aria-label="Seek">
+  <div class="pl-controls">
+    <button id="plMode" class="btn small" title="Play mode: normal">▶️</button>
+    <button id="plPrev" class="btn small" title="Previous">⏮</button>
+    <button id="plPlay" class="btn" title="Play/Pause">▶</button>
+    <button id="plNext" class="btn small" title="Next">⏭</button>
+    <button id="plEq" class="btn small" title="Equalizer">🎛</button>
+    <input id="plVol" type="range" min="0" max="100" value="80" class="pl-vol" title="Volume" aria-label="Volume">
+  </div>
+</div>
+<audio id="plAudio" preload="none"></audio>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  "use strict";
+
+  /* ---------------- state ---------------- */
+  var tracks = [], view = [], order = [], pos = -1, curId = null;
+  var mode = "normal"; // normal | shuffle | repeat-all | repeat-one
+  var MODES = ["normal", "shuffle", "repeat-all", "repeat-one"];
+  var MODE_META = {
+    "normal":     {icon: "▶️", label: "Normal order"},
+    "shuffle":    {icon: "🔀", label: "Shuffle — every track once"},
+    "repeat-all": {icon: "🔁", label: "Repeat all"},
+    "repeat-one": {icon: "🔂", label: "Repeat one"}
+  };
+
+  var audio = document.getElementById("plAudio");
+  var listEl = document.getElementById("plList");
+  var queueEl = document.getElementById("plQueue");
+  var countEl = document.getElementById("plCount");
+  var barEl = document.getElementById("plBar");
+  var titleEl = document.getElementById("plTitle");
+  var curEl = document.getElementById("plCur");
+  var durEl = document.getElementById("plDur");
+  var seekEl = document.getElementById("plSeek");
+  var playBtn = document.getElementById("plPlay");
+  var modeBtn = document.getElementById("plMode");
+  var volEl = document.getElementById("plVol");
+  var searchEl = document.getElementById("plSearch");
+
+  /* ---------------- helpers ---------------- */
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c];
+    });
+  }
+  function fmtTime(s) {
+    if (!isFinite(s) || s < 0) return "0:00";
+    s = Math.floor(s);
+    return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2);
+  }
+  function fmtSize(b) {
+    if (b >= 1048576) return (b / 1048576).toFixed(1) + " MB";
+    if (b >= 1024) return Math.round(b / 1024) + " KB";
+    return b + " B";
+  }
+
+  /* ---------------- 5-band EQ (Web Audio, offline) ---------------- */
+  var BANDS = [60, 230, 910, 3600, 14000];
+  var BAND_LABELS = ["60Hz", "230Hz", "910Hz", "3.6kHz", "14kHz"];
+  var PRESETS = {
+    "Flat":        [0, 0, 0, 0, 0],
+    "Bass Boost":  [6, 4, 1, 0, 0],
+    "Treble Boost":[0, 0, 0, 4, 6],
+    "Vocal":       [-2, -1, 3, 4, 2],
+    "Hip-Hop":     [5, 2, 0, 1, 3],
+    "Trap":        [6, 3, -1, 1, 2],
+    "Drill":       [5, 3, 0, 2, 3],
+    "R&B":         [3, 1, 1, 3, 2],
+    "Pop":         [1, 0, 1, 3, 3],
+    "Rock":        [2, 1, 0, 2, 3],
+    "EDM":         [5, 0, -1, 2, 5],
+    "Lo-Fi":       [3, 2, 0, -2, -4],
+    "Jazz":        [1, 1, 2, 2, 1],
+    "Classical":   [0, 0, 0, 1, 1],
+    "Reggae":      [4, 2, 0, -1, 1],
+    "Afrobeat":    [4, 2, 1, 2, 3],
+    "Dancehall":   [5, 2, 0, 3, 2],
+    "Gospel":      [2, 1, 2, 4, 2],
+    "Country":     [1, 2, 2, 3, 1]
+  };
+  var eqGains = [0, 0, 0, 0, 0], eqPresetName = "Flat";
+  var AC = null, eqFilters = [], eqGainNode = null, eqReady = false, eqTried = false;
+  var eqNote = document.getElementById("eqNote");
+  var eqPresetSel = document.getElementById("eqPreset");
+  var eqBandsEl = document.getElementById("eqBands");
+
+  try {
+    var saved = JSON.parse(localStorage.getItem("prhyme_eq") || "null");
+    if (saved && Array.isArray(saved.gains) && saved.gains.length === 5) {
+      eqGains = saved.gains.map(function (g) { return Math.max(-12, Math.min(12, +g || 0)); });
+      eqPresetName = saved.preset || "Custom";
+    }
+  } catch (e) { /* storage unavailable — defaults stand */ }
+
+  function eqSave() {
+    try { localStorage.setItem("prhyme_eq", JSON.stringify({gains: eqGains, preset: eqPresetName})); }
+    catch (e) { /* ignore */ }
+  }
+  function eqApply() {
+    if (!eqReady) return;
+    for (var i = 0; i < 5; i++) eqFilters[i].gain.value = eqGains[i];
+  }
+  // Build the filter graph lazily on first play (autoplay policy). If the
+  // WebView can't do MediaElementSource, fall back to plain <audio>.
+  function eqInit() {
+    if (eqReady || eqTried) return eqReady;
+    eqTried = true;
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) throw new Error("no AudioContext");
+      AC = new Ctx();
+      var src = AC.createMediaElementSource(audio);
+      var node = src, types = ["lowshelf", "peaking", "peaking", "peaking", "highshelf"];
+      for (var i = 0; i < 5; i++) {
+        var f = AC.createBiquadFilter();
+        f.type = types[i]; f.frequency.value = BANDS[i]; f.Q.value = 1.0;
+        f.gain.value = eqGains[i];
+        node.connect(f); node = f; eqFilters.push(f);
+      }
+      eqGainNode = AC.createGain();
+      eqGainNode.gain.value = volEl.value / 100;
+      node.connect(eqGainNode); eqGainNode.connect(AC.destination);
+      eqReady = true;
+    } catch (err) {
+      eqNote.textContent = "EQ not supported here — playback still works.";
+    }
+    return eqReady;
+  }
+  function eqBuildUI() {
+    var html = '<option value="__custom" disabled>— Presets —</option>';
+    Object.keys(PRESETS).forEach(function (name) {
+      html += '<option value="' + esc(name) + '">' + esc(name) + "</option>";
+    });
+    eqPresetSel.innerHTML = html;
+    if (PRESETS[eqPresetName]) eqPresetSel.value = eqPresetName;
+    else eqPresetSel.value = "__custom";
+    var bh = "";
+    for (var i = 0; i < 5; i++) {
+      bh += '<div class="eq-band"><span class="fl">' + BAND_LABELS[i] + "</span>" +
+        '<input type="range" min="-12" max="12" step="0.5" value="' + eqGains[i] + '" data-band="' + i + '" aria-label="' + BAND_LABELS[i] + ' gain">' +
+        '<span class="fv" id="eqVal' + i + '">' + eqGains[i] + " dB</span></div>";
+    }
+    eqBandsEl.innerHTML = bh;
+    eqBandsEl.querySelectorAll("input").forEach(function (sl) {
+      sl.addEventListener("input", function () {
+        var i = +sl.dataset.band;
+        eqGains[i] = parseFloat(sl.value);
+        document.getElementById("eqVal" + i).textContent = eqGains[i] + " dB";
+        eqPresetName = "Custom";
+        eqPresetSel.value = "__custom";
+        eqSave(); eqApply();
+      });
+    });
+    eqPresetSel.addEventListener("change", function () {
+      var p = PRESETS[eqPresetSel.value];
+      if (!p) return;
+      eqGains = p.slice(); eqPresetName = eqPresetSel.value;
+      eqBandsEl.querySelectorAll("input").forEach(function (sl) {
+        var i = +sl.dataset.band;
+        sl.value = eqGains[i];
+        document.getElementById("eqVal" + i).textContent = eqGains[i] + " dB";
+      });
+      eqSave(); eqApply();
+    });
+  }
+
+  /* ---------------- queue / shuffle ---------------- */
+  // Fisher-Yates — every track plays exactly once before any repeat.
+  function shuffled(arr) {
+    var a = arr.slice(), i, j, t;
+    for (i = a.length - 1; i > 0; i--) {
+      j = Math.floor(Math.random() * (i + 1));
+      t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+  function buildOrder(keepCurrent) {
+    var base = view.slice();
+    if (mode === "shuffle") {
+      order = shuffled(base);
+      if (keepCurrent && curId) {
+        var k = -1;
+        for (var i = 0; i < order.length; i++) if (order[i].id === curId) { k = i; break; }
+        if (k > 0) { var t = order.splice(k, 1)[0]; order.unshift(t); pos = 0; return; }
+        if (k === 0) { pos = 0; return; }
+      }
+      pos = order.length ? 0 : -1;
+    } else {
+      order = base;
+      if (keepCurrent && curId) {
+        var p = -1;
+        for (var i2 = 0; i2 < order.length; i2++) if (order[i2].id === curId) { p = i2; break; }
+        pos = p;
+      } else pos = order.length ? 0 : -1;
+    }
+  }
+  function upcoming(n) {
+    var out = [];
+    if (pos < 0 || !order.length) return out;
+    for (var k = 1; k <= n; k++) {
+      var i = pos + k;
+      if (i >= order.length) {
+        if (mode === "repeat-all" || mode === "shuffle") i = i % order.length;
+        else break;
+      }
+      if (mode === "repeat-one" && k === 1) { out.push(order[pos]); continue; }
+      out.push(order[i]);
+    }
+    return out;
+  }
+
+  /* ---------------- playback ---------------- */
+  function playAt(i) {
+    if (i < 0 || i >= order.length) return;
+    pos = i; var t = order[pos]; curId = t.id;
+    eqInit();
+    if (AC && AC.state === "suspended") AC.resume();
+    audio.src = "/api/player/stream/" + t.id;
+    (function(){var pr=audio.play();if(pr&&pr.catch)pr.catch(function(){});})();
+    titleEl.textContent = t.name;
+    barEl.classList.add("show");
+    document.body.classList.add("pl-open");
+    playBtn.textContent = "⏸";
+    renderList(); renderQueue();
+  }
+  function toggle() {
+    if (!order.length) return;
+    if (pos < 0) { playAt(0); return; }
+    if (audio.paused) {
+      eqInit();
+      if (AC && AC.state === "suspended") AC.resume();
+      (function(){var pr=audio.play();if(pr&&pr.catch)pr.catch(function(){});})();
+      playBtn.textContent = "⏸";
+    } else { audio.pause(); playBtn.textContent = "▶"; }
+  }
+  function next(auto) {
+    if (!order.length) return;
+    if (mode === "repeat-one" && auto) { audio.currentTime = 0; (function(){var pr=audio.play();if(pr&&pr.catch)pr.catch(function(){});})(); return; }
+    var n = pos + 1;
+    if (n >= order.length) {
+      if (mode === "repeat-all") { playAt(0); return; }
+      if (mode === "shuffle" && auto) {
+        // Deck exhausted — reshuffle for a fresh no-repeat cycle.
+        buildOrder(false); renderQueue();
+        if (order.length) { playAt(0); return; }
+      }
+      // normal / shuffle manual end: stop
+      playBtn.textContent = "▶";
+      return;
+    }
+    playAt(n);
+  }
+  function prev() {
+    if (!order.length || pos < 0) return;
+    if (audio.currentTime > 3) { audio.currentTime = 0; return; }
+    playAt(Math.max(0, pos - 1));
+  }
+
+  audio.addEventListener("timeupdate", function () {
+    if (audio.duration) {
+      seekEl.value = Math.round(audio.currentTime / audio.duration * 1000);
+      curEl.textContent = fmtTime(audio.currentTime);
+      durEl.textContent = fmtTime(audio.duration);
+    }
+  });
+  audio.addEventListener("loadedmetadata", function () {
+    durEl.textContent = fmtTime(audio.duration);
+  });
+  audio.addEventListener("ended", function () { next(true); });
+  audio.addEventListener("error", function () {
+    titleEl.textContent = "Couldn't play — skipping…";
+    setTimeout(function () { next(true); }, 800);
+  });
+  seekEl.addEventListener("input", function () {
+    if (audio.duration) audio.currentTime = seekEl.value / 1000 * audio.duration;
+  });
+  playBtn.addEventListener("click", toggle);
+  document.getElementById("plNext").addEventListener("click", function () { next(false); });
+  document.getElementById("plPrev").addEventListener("click", prev);
+  volEl.addEventListener("input", function () {
+    var v = volEl.value / 100;
+    if (eqReady && eqGainNode) eqGainNode.gain.value = v;
+    else audio.volume = v;
+  });
+  modeBtn.addEventListener("click", function () {
+    mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length];
+    modeBtn.textContent = MODE_META[mode].icon;
+    modeBtn.title = "Play mode: " + MODE_META[mode].label;
+    buildOrder(true); renderQueue();
+  });
+  document.getElementById("plEq").addEventListener("click", function () {
+    var d = document.getElementById("eqDrawer");
+    var open = d.classList.toggle("show");
+    barEl.classList.toggle("eq-open", open);
+  });
+
+  /* ---------------- list rendering ---------------- */
+  function renderList() {
+    if (!view.length) {
+      listEl.innerHTML = '<p class="muted">No tracks found. Put audio in <b>Music</b> or <b>Downloads</b>, or generate beats in Prhyme — then hit ↻.</p>';
+      return;
+    }
+    var h = [];
+    for (var i = 0; i < view.length; i++) {
+      var t = view[i];
+      h.push('<div class="pl-row' + (t.id === curId ? " playing" : "") + '" data-id="' + t.id + '">' +
+        '<div class="pl-name">' + esc(t.name) + '</div>' +
+        '<span class="pl-src">' + esc(t.source) + "</span>" +
+        '<span class="pl-meta">' + esc(t.ext.toUpperCase()) + " · " + fmtSize(t.size) + "</span></div>");
+    }
+    listEl.innerHTML = h.join("");
+    listEl.querySelectorAll(".pl-row").forEach(function (row) {
+      row.addEventListener("click", function () {
+        var id = row.dataset.id, idx = -1;
+        for (var i = 0; i < order.length; i++) if (order[i].id === id) { idx = i; break; }
+        if (idx < 0) { buildOrder(false); for (var j = 0; j < order.length; j++) if (order[j].id === id) { idx = j; break; } }
+        playAt(idx);
+      });
+    });
+  }
+  function renderQueue() {
+    var up = upcoming(8);
+    if (!up.length) { queueEl.innerHTML = '<p class="muted">Nothing queued — tap a track below.</p>'; return; }
+    var h = [];
+    for (var i = 0; i < up.length; i++) {
+      h.push('<div class="qrow"><span class="qn">' + (i + 1) + "</span><span class=\"pl-name\">" +
+        esc(up[i].name) + '</span><span class="pl-src">' + esc(up[i].source) + "</span></div>");
+    }
+    queueEl.innerHTML = h.join("");
+  }
+  function applySearch() {
+    var q = searchEl.value.trim().toLowerCase();
+    view = q ? tracks.filter(function (t) { return t.name.toLowerCase().indexOf(q) >= 0; })
+             : tracks.slice();
+    countEl.textContent = view.length + " track" + (view.length === 1 ? "" : "s") +
+      (q ? ' matching "' + searchEl.value.trim() + '"' : "");
+    buildOrder(true); renderList(); renderQueue();
+  }
+  var searchTimer = null;
+  searchEl.addEventListener("input", function () {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(applySearch, 150);
+  });
+
+  /* ---------------- load ---------------- */
+  function load(refresh) {
+    listEl.innerHTML = '<p class="muted">Scanning…</p>';
+    fetch("/api/player/files" + (refresh ? "?refresh=1" : ""))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ok) throw new Error(j.error || "scan failed");
+        tracks = j.files || [];
+        applySearch();
+      })
+      .catch(function (err) {
+        listEl.innerHTML = '<p class="muted">Scan failed: ' + esc(err.message) + '</p>';
+      });
+  }
+  document.getElementById("plRescan").addEventListener("click", function () { load(true); });
+
+  audio.volume = 1.0; // volume is driven by the EQ gain node once built
+  eqBuildUI();
+  load(false);
+})();
+</script>
+{% endblock %}
