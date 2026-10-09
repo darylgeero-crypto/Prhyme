@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico spin">✂</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Vocal Separator + SFX</h2><a class="help-link" href="{{ url_for('help_page') }}#separate" aria-label="Help">?</a></div>
+    <p class="plead">Upload a track — get back 3 layers: <b>Vocals</b>, <b>Instrumental</b>, and an auto-generated <b>SFX</b> layer (risers, impacts &amp; whooshes placed at section transitions).</p>
+    <p class="online-badge">🌐 <b>Online only</b> — separation runs in the cloud. Upload, we split it, you download the layers.</p>
+  </div>
+</div>
+
+<form id="sepForm" class="form" enctype="multipart/form-data">
+  <label class="field">
+    <span>Track with vocals (WAV, MP3, M4A, OGG, FLAC…)</span>
+    <input type="file" name="file" accept="audio/*" required class="fileinput">
+  </label>
+  <label class="field">
+    <span>Title (optional)</span>
+    <input type="text" name="title" placeholder="My Track — Separated" maxlength="80">
+  </label>
+  <button type="submit" class="btn big">✂ Separate</button>
+</form>
+
+<div id="jobBox" class="jobbox hidden">
+  <div class="jobmsg" id="jobMsg">Starting…</div>
+  <div class="pbar"><div class="pfill" id="jobFill"></div></div>
+  <div class="jobpct" id="jobPct">0%</div>
+  <div id="jobResult" class="result"></div>
+</div>
+
+<div id="layersBox" class="hidden">
+  <h3 class="sect">Your 3 layers <span id="engineTag" class="enginetag"></span></h3>
+  <p class="muted" id="transNote"></p>
+  <div class="layers">
+    <div class="layer">
+      <div class="layer-head"><span>🎤 Vocals</span><span id="volVVal" class="volval">100%</span></div>
+      <audio id="audV" controls preload="none"></audio>
+      <input type="range" id="volV" min="0" max="150" value="100" class="volslider">
+    </div>
+    <div class="layer">
+      <div class="layer-head"><span>🎹 Instrumental</span><span id="volIVal" class="volval">100%</span></div>
+      <audio id="audI" controls preload="none"></audio>
+      <input type="range" id="volI" min="0" max="150" value="100" class="volslider">
+    </div>
+    <div class="layer">
+      <div class="layer-head"><span>💥 SFX</span><span id="volSVal" class="volval">80%</span></div>
+      <audio id="audS" controls preload="none"></audio>
+      <input type="range" id="volS" min="0" max="150" value="80" class="volslider">
+    </div>
+  </div>
+  <div class="mixrow">
+    <button id="mixBtn" class="btn big">🎚 Mix &amp; Download</button>
+  </div>
+  <div id="mixResult" class="result"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  "use strict";
+  var jobId = null, layers = null;
+
+  function showBox() {
+    var b = document.getElementById("jobBox");
+    b.classList.remove("hidden");
+    document.getElementById("jobResult").innerHTML = "";
+  }
+  function setProg(p, msg) {
+    document.getElementById("jobFill").style.width = p + "%";
+    document.getElementById("jobPct").textContent = Math.round(p) + "%";
+    if (msg) document.getElementById("jobMsg").textContent = msg;
+  }
+  function fail(msg) {
+    document.getElementById("jobMsg").textContent = "Error: " + msg;
+  }
+
+  // per-layer volume sliders: live gain + label
+  [["volV", "audV", "volVVal"], ["volI", "audI", "volIVal"], ["volS", "audS", "volSVal"]]
+    .forEach(function (trio) {
+      var sl = document.getElementById(trio[0]);
+      var au = document.getElementById(trio[1]);
+      var lb = document.getElementById(trio[2]);
+      sl.addEventListener("input", function () {
+        au.volume = Math.min(1, sl.value / 100);
+        lb.textContent = sl.value + "%";
+      });
+      au.volume = Math.min(1, sl.value / 100);
+    });
+
+  document.getElementById("sepForm").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    showBox();
+    setProg(2, "Uploading…");
+    var fd = new FormData(e.target);
+    var r;
+    try { r = await fetch("/api/separate", { method: "POST", body: fd }); }
+    catch (err) { return fail("Network error: " + err); }
+    var j;
+    try { j = await r.json(); } catch (err) { return fail("Bad server response"); }
+    if (!j.ok) return fail(j.error || "Request failed");
+    jobId = j.job_id;
+    poll();
+  });
+
+  async function poll() {
+    var r;
+    try { r = await fetch("/api/separate/" + jobId); }
+    catch (err) { return fail("Network error: " + err); }
+    var j;
+    try { j = await r.json(); } catch (err) { return fail("Bad server response"); }
+    if (!j.ok) return fail(j.error || "Unknown job");
+    setProg(j.progress || 0, j.message || "");
+    if (j.status === "done") return onDone(j.result || {});
+    if (j.status === "error") return fail(j.message || "Failed");
+    setTimeout(poll, 2500);
+  }
+
+  function onDone(res) {
+    setProg(100, "Done");
+    layers = res;
+    document.getElementById("engineTag").textContent = res.engine || "";
+    var n = res.transitions || 0;
+    document.getElementById("transNote").textContent =
+      n ? ("Auto-placed SFX at " + n + " detected section transition" + (n === 1 ? "" : "s") + ".") : "";
+    var dl = function (f) { return "/download/" + encodeURIComponent(f); };
+    document.getElementById("audV").src = dl(res.vocals_mp3 || res.vocals_wav);
+    document.getElementById("audI").src = dl(res.inst_mp3 || res.inst_wav);
+    document.getElementById("audS").src = dl(res.sfx_mp3 || res.sfx_wav);
+    document.getElementById("layersBox").classList.remove("hidden");
+    document.getElementById("layersBox").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  document.getElementById("mixBtn").addEventListener("click", async function () {
+    if (!jobId) return;
+    var box = document.getElementById("mixResult");
+    box.innerHTML = "<p class=\"muted\">Mixing…</p>";
+    var body = {
+      job_id: jobId,
+      vocal: document.getElementById("volV").value / 100,
+      inst: document.getElementById("volI").value / 100,
+      sfx: document.getElementById("volS").value / 100
+    };
+    var r;
+    try {
+      r = await fetch("/api/separate/mix", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+    } catch (err) { box.innerHTML = "<p class=\"err\">Network error: " + err + "</p>"; return; }
+    var j;
+    try { j = await r.json(); } catch (err) { box.innerHTML = "<p class=\"err\">Bad server response</p>"; return; }
+    if (!j.ok) { box.innerHTML = "<p class=\"err\">" + (j.error || "Mix failed") + "</p>"; return; }
+    var html = "<p><b>Mix ready:</b></p><div class=\"dlrow\">";
+    if (j.mix_mp3) html += "<a class=\"btn\" href=\"/download/" + encodeURIComponent(j.mix_mp3) + "\">⬇ MP3</a>";
+    if (j.mix_wav) html += "<a class=\"btn alt\" href=\"/download/" + encodeURIComponent(j.mix_wav) + "?dl=1\">⬇ WAV</a>";
+    html += "</div>";
+    if (j.mix_mp3) html += "<audio controls preload=\"none\" src=\"/download/" + encodeURIComponent(j.mix_mp3) + "\"></audio>";
+    box.innerHTML = html;
+  });
+})();
+</script>
+{% endblock %}

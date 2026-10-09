@@ -154,3 +154,19 @@ body[data-genre="Phonk"]{--genre-accent:#90be6d}#genreFlash{position:fixed;inset
 .bill-plan-platinum{color:#ffd166}
 .topbar-prhyming{margin-left:10px;font-size:13px;letter-spacing:3px;}
 .cookie-banner:not([hidden]){display:flex;}
+
+/* Vocal Separator + SFX (online-only) */
+.online-badge{display:inline-block;margin-top:8px;padding:8px 14px;border-radius:20px;font-size:13px;background:rgba(0,229,255,.1);border:1px solid #00e5ff;color:#bff3ff}
+.online-badge b{color:#00e5ff}
+.layers{display:flex;flex-direction:column;gap:14px;margin:12px 0}
+.layer{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:12px 14px}
+.layer-head{display:flex;justify-content:space-between;align-items:center;font-weight:700;margin-bottom:8px}
+.volval{font-size:13px;opacity:.75;font-weight:400}
+.layer audio{width:100%;margin:4px 0 8px}
+.volslider{width:100%;accent-color:#00e5ff}
+.mixrow{margin:14px 0;text-align:center}
+.enginetag{font-size:12px;font-weight:400;opacity:.65;border:1px solid rgba(255,255,255,.2);border-radius:12px;padding:2px 10px;margin-left:8px;vertical-align:middle}
+.dlrow{display:flex;gap:10px;margin:10px 0}
+.sect{margin:18px 0 6px}
+.muted{opacity:.65;font-size:13px}
+.err{color:#ff6b81}

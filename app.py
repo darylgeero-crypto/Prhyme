@@ -59,7 +59,7 @@ else:
     sys.modules["pygame"] = _pygame_stub
 
 import numpy as np
-from scipy.io.wavfile import write as wav_write
+from scipy.io.wavfile import write as wav_write, read as wav_read
 from scipy import signal
 from flask import Flask, request, render_template, jsonify, send_file, abort, url_for, session as _flask_session
 from werkzeug.utils import secure_filename
@@ -78,6 +78,7 @@ import mixgen  # DJ mix generator: beatmatched original mixes + era styles
 import soundkits  # user-uploaded custom drum kits (WAV one-shots)
 import audiofx
 import vocalfix  # vocal clarity + subtle timing correction (never deletes words)
+import vocalfx  # ONLINE-ONLY vocal separator + auto SFX layer (cloud DSP/Demucs)
 import trackfx  # creative FX: radio, vinyl, TV, filters, echo (never deletes words)
 import rockdabus as RB  # Rockdabus Prhyme — conversational assistant brain
 
@@ -368,7 +369,8 @@ _rl_lock = threading.Lock()
 # SECURITY: expensive operations get a much tighter budget to prevent
 # resource exhaustion (intentional or accidental).
 _HEAVY_PATHS = ("/api/beats", "/api/master", "/api/mix", "/api/video/",
-                "/api/daw/export", "/api/daw/stems", "/api/convert")
+                "/api/daw/export", "/api/daw/stems", "/api/convert",
+                "/api/separate")
 _rl_heavy = {}
 _rl_heavy_lock = threading.Lock()
 
@@ -1094,6 +1096,12 @@ def convert_page():
                            formats=sorted(C.SUPPORTED_OUT))
 
 
+@app.get("/separate")
+def separate_page():
+    # ONLINE-ONLY: separation runs in the cloud, not on-device.
+    return render_template("separate.html", active="separate")
+
+
 @app.get("/beats")
 def beats_page():
     return render_template("beats.html", active="beats", genres=GENRES,
@@ -1752,6 +1760,134 @@ def api_convert():
                          args=(job_id, src, out_ext), daemon=True)
     t.start()
     return jsonify({"ok": True, "job_id": job_id})
+
+
+# ------------------------------------------------- vocal separator + SFX
+# ONLINE-ONLY feature: the phone uploads, the cloud separates (DSP or
+# Demucs via vocalfx), the phone downloads the 3 layers.
+def run_separate_job(job_id, src_path, title):
+    """Separate vocals/instrumental, auto-build SFX layer, write 3 stems."""
+    def prog(p, msg):
+        set_job(job_id, progress=p, message=msg)
+
+    try:
+        prog(3, "Loading audio…")
+        sr, audio = M.load_audio(src_path)  # float64 stereo @44.1k
+        dur_s = len(audio) / sr
+        if dur_s > 600:
+            raise ValueError("Track too long — 10 minute max for separation")
+        if dur_s < 3:
+            raise ValueError("Track too short to separate")
+
+        eng = vocalfx.engine_name()
+        prog(8, f"Separating vocals ({eng})…")
+
+        def _sp(p):
+            prog(8 + int(p * 0.62), f"Separating vocals ({eng})… {int(p)}%")
+
+        # normalize to WAV first (uploads may be MP3/M4A/OGG…)
+        norm_wav = os.path.join(OUTPUT_DIR, f"{job_id[:8]}_sep-src.wav")
+        vocalfx.write_wav(norm_wav + ".tmp", audio, sr)
+        os.replace(norm_wav + ".tmp", norm_wav)
+        vocals, inst = vocalfx.separate_track(norm_wav, sr, _sp)
+
+        prog(72, "Detecting section transitions…")
+        transitions = vocalfx.detect_transitions(audio, sr)
+
+        prog(80, "Building SFX layer…")
+        sfx = vocalfx.build_sfx_layer(len(audio), sr, transitions,
+                                      seed=M.new_beat_seed())
+
+        prog(88, "Writing layers…")
+        base = f"{job_id[:8]}_{safe_name(title, 'separate')}"
+        layers = {"vocals": vocals, "inst": inst, "sfx": sfx}
+        result = {"engine": eng, "transitions": len(transitions),
+                  "duration": round(dur_s, 1)}
+        for key, arr in layers.items():
+            wav_path = os.path.join(OUTPUT_DIR, f"{base}-{key}.wav")
+            mp3_path = os.path.join(OUTPUT_DIR, f"{base}-{key}.mp3")
+            tmp = wav_path + ".tmp"
+            wav_write(tmp, SR, vocalfx._pcm16(arr))
+            os.replace(tmp, wav_path)
+            ok = encode_mp3(wav_path, mp3_path)
+            result[f"{key}_wav"] = os.path.basename(wav_path)
+            if ok:
+                result[f"{key}_mp3"] = os.path.basename(mp3_path)
+
+        set_job(job_id, status="done", progress=100,
+                message=f"Done — {eng}, {len(transitions)} SFX transitions",
+                result=result)
+    except Exception as e:
+        set_job(job_id, status="error", progress=0, message=f"Error: {e}")
+
+
+@app.post("/api/separate")
+def api_separate():
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"ok": False, "error": "No file uploaded"}), 400
+    try:
+        src = save_upload(f)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    title = (request.form.get("title") or "Separated Track").strip()[:80]
+    job_id = new_job("separate", title)
+    t = threading.Thread(target=run_separate_job,
+                         args=(job_id, src, title), daemon=True)
+    t.start()
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.get("/api/separate/<job_id>")
+def api_separate_status(job_id):
+    with jobs_lock:
+        j = jobs.get(job_id)
+    if not j:
+        return jsonify({"ok": False, "error": "Unknown job"}), 404
+    return jsonify({"ok": True, **j})
+
+
+@app.post("/api/separate/mix")
+def api_separate_mix():
+    data = request.get_json(force=True, silent=True) or {}
+
+    def _vol(name, default):
+        try:
+            return max(0.0, min(2.0, float(data.get(name, default))))
+        except (TypeError, ValueError):
+            return default
+
+    vols = (_vol("vocal", 1.0), _vol("inst", 1.0), _vol("sfx", 0.8))
+    job_id = (data.get("job_id") or "").strip()
+    with jobs_lock:
+        j = jobs.get(job_id) if job_id else None
+    if not j or (j.get("result") or {}).get("vocals_wav") is None:
+        return jsonify({"ok": False,
+                        "error": "Unknown or unfinished separation job"}), 404
+    res = j["result"]
+    try:
+        layers = []
+        for key in ("vocals", "inst", "sfx"):
+            p = os.path.join(OUTPUT_DIR, res[f"{key}_wav"])
+            r_sr, d = wav_read(p)
+            d = d.astype(np.float64) / 32768.0
+            if d.ndim == 1:
+                d = np.column_stack([d, d])
+            layers.append(d)
+        n = min(a.shape[0] for a in layers)
+        mixed = vocalfx.mix_layers(*[a[:n] for a in layers], vols=vols)
+        base = f"{job_id[:8]}_separate-mix"
+        wav_path = os.path.join(OUTPUT_DIR, base + ".wav")
+        mp3_path = os.path.join(OUTPUT_DIR, base + ".mp3")
+        tmp = wav_path + ".tmp"
+        wav_write(tmp, SR, vocalfx._pcm16(mixed))
+        os.replace(tmp, wav_path)
+        out = {"ok": True, "mix_wav": os.path.basename(wav_path)}
+        if encode_mp3(wav_path, mp3_path):
+            out["mix_mp3"] = os.path.basename(mp3_path)
+        return jsonify(out)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Mix failed: {e}"}), 500
 
 
 # Explicit-content filter: common profanities, word-boundary matched

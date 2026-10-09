@@ -79,6 +79,8 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     <span class="ico">✎</span><span class="lbl">Lyrics</span></a>
   <a href="{{ url_for('convert_page') }}" class="tab {% if active=='convert' %}on{% endif %}">
     <span class="ico">⇄</span><span class="lbl">Convert</span></a>
+  <a href="{{ url_for('separate_page') }}" class="tab {% if active=='separate' %}on{% endif %}">
+    <span class="ico">✂</span><span class="lbl">Separate</span></a>
   <a href="{{ url_for('studio_page') }}" class="tab {% if active=='studio' %}on{% endif %}">
     <span class="ico">🎚</span><span class="lbl">Studio</span></a>
   <a href="{{ url_for('video_page') }}" class="tab {% if active=='video' %}on{% endif %}">
