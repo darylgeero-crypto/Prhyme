@@ -199,8 +199,8 @@ html += '<div class="fxchips">🎛 ' +
 r.fx_applied.map(escapeHtml).join(' · ') + '</div>';
 if (main) html += '<audio controls preload="metadata" style="width:100%;margin:10px 0" src="/download/' +
 encodeURIComponent(main) + '"></audio>';
-if (main) html += '<a class="dl" href="/download/' + encodeURIComponent(main) + '">⬇ Download</a>';
-if (r.wav) html += '<a class="dl alt" href="/download/' + encodeURIComponent(r.wav) + '">⬇ WAV (lossless)</a>';
+if (main) html += '<a class="dl" href="/download/' + encodeURIComponent(main) + '?dl=1">⬇ Download</a>';
+if (r.wav) html += '<a class="dl alt" href="/download/' + encodeURIComponent(r.wav) + '?dl=1">⬇ WAV (lossless)</a>';
 if (r.seed !== undefined)
 html += '<button class="btn small" onclick="copySeed(' + r.seed + ')">⧉ Copy seed ' + r.seed + '</button>';
 if (main)

@@ -628,8 +628,8 @@ const box = $("jobBox"), msg = $("jobMsg"), resEl = $("jobResult");
 box.classList.remove("hidden");
 msg.textContent = "Mixdown ready — " + (res.lufs || "?") + " LUFS · " + (res.dbtp || "?") + " dBTP";
 let html = '<div class="stats">⚡ ' + res.lufs + ' LUFS · ' + res.dbtp + ' dBTP · ' + res.duration + 's</div>';
-if (res.mp3) html += '<a class="dl" href="/download/' + encodeURIComponent(res.mp3) + '">⬇ Download MP3</a>';
-if (res.wav) html += '<a class="dl alt" href="/download/' + encodeURIComponent(res.wav) + '">⬇ WAV (lossless)</a>';
+if (res.mp3) html += '<a class="dl" href="/download/' + encodeURIComponent(res.mp3) + '?dl=1">⬇ Download MP3</a>';
+if (res.wav) html += '<a class="dl alt" href="/download/' + encodeURIComponent(res.wav) + '?dl=1">⬇ WAV (lossless)</a>';
 resEl.innerHTML = html;
 });
 });
@@ -736,7 +736,7 @@ box.classList.remove("hidden");
 msg.textContent = (res.stems || []).length + " stems ready";
 resEl.innerHTML = (res.stems || []).map(s =>
 '<div class="stats">🎚 ' + esc(s.track) + '</div>' +
-'<a class="dl" href="/download/' + encodeURIComponent(s.mp3) + '">⬇ ' +
+'<a class="dl" href="/download/' + encodeURIComponent(s.mp3) + '?dl=1">⬇ ' +
 esc(s.track) + ' MP3</a>').join("");
 });
 });

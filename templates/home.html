@@ -1,29 +1,27 @@
 {% extends "base.html" %}
 {% block content %}
-<!-- Prhyme™ 3D intro: far box → zoom → record player → spin-up → Rockdabus transform -->
+<!-- Prhyme™ cinematic intro v2: particles → turntable materialize → vinyl spin-up → Rockdabus burst → title -->
 <div id="prhymeIntro" class="prhyme-intro" role="dialog" aria-label="Welcome to Prhyme">
-  <div class="intro-3d-scene" aria-hidden="true">
-    <div class="intro-box3d" id="introBox3d">
-      <div class="box-face bf-front"><span class="box-logo">Prhyme™</span></div>
-      <div class="box-face bf-back"></div>
-      <div class="box-face bf-right"></div>
-      <div class="box-face bf-left"></div>
-      <div class="box-face bf-top"></div>
-      <div class="box-face bf-bottom"></div>
-      <div class="intro-turntable" id="introTurntable">
-        <div class="tt-body">
-          <div class="tt-vinyl"><div class="tt-label"></div><div class="tt-hole"></div></div>
-          <div class="tt-tonearm"></div>
-        </div>
-        <div class="tt-glow" id="introGlow"></div>
+  <canvas class="intro-particles" id="introParticles" aria-hidden="true"></canvas>
+  <div class="intro-vignette" aria-hidden="true"></div>
+  <div class="intro-stage intro-stage-tt" aria-hidden="true">
+    <div class="intro-turntable" id="introTurntable">
+      <div class="tt-body">
+        <div class="tt-vinyl"><div class="tt-label"></div><div class="tt-hole"></div></div>
+        <div class="tt-tonearm"></div>
       </div>
+      <div class="tt-glow" id="introGlow"></div>
+      <div class="tt-ring"></div>
     </div>
   </div>
   <div class="intro-flash" aria-hidden="true"></div>
   <div class="intro-shockwave" aria-hidden="true"></div>
+  <div class="intro-shockwave sw2" aria-hidden="true"></div>
   <img class="intro-mascot" id="introMascot" src="{{ url_for('static', filename='img/rockdabus.webp') }}" alt="Rockdabus Prhyme">
-  <div class="intro-title">Prhyme™</div>
+  <div class="intro-title"><span>P</span><span>r</span><span>h</span><span>y</span><span>m</span><span>e</span><span class="tm">™</span></div>
+  <div class="intro-tagline">Your phone is a studio now</div>
   <div class="intro-prhyming"><span class="prhyming-flash">Prhyming</span></div>
+  <div class="intro-progress"><div class="intro-progress-fill" id="introProgressFill"></div></div>
   <button class="intro-skip" id="introSkip">Skip ▸</button>
 </div>
 
@@ -137,10 +135,77 @@
   var skip = document.getElementById('introSkip');
   if (!intro) return;
   if (sessionStorage.getItem('prhyme_intro_seen')) { intro.remove(); return; }
-  function done(){ sessionStorage.setItem('prhyme_intro_seen','1'); intro.classList.add('intro-out'); setTimeout(function(){ intro.remove(); }, 400); document.dispatchEvent(new CustomEvent('prhyme:intro-done')); }
+
+  /* Lightweight canvas particle field: ambient drift + burst on transform.
+     Capped at 60 particles, devicePixelRatio-aware, pauses when hidden. */
+  (function(){
+    var canvas = document.getElementById('introParticles');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    var W, H, parts = [], burstParts = [], raf = null, burstAt = 2100;
+    var startTime = performance.now();
+    function resize(){
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      W = canvas.clientWidth; H = canvas.clientHeight;
+      canvas.width = W * dpr; canvas.height = H * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    function spawn(n, burst){
+      for (var i = 0; i < n; i++){
+        var a = Math.random() * Math.PI * 2;
+        var p = {
+          x: burst ? W/2 : Math.random()*W,
+          y: burst ? H*0.42 : Math.random()*H,
+          vx: burst ? Math.cos(a)*(2+Math.random()*5) : (Math.random()-.5)*.3,
+          vy: burst ? Math.sin(a)*(2+Math.random()*5) : (Math.random()-.5)*.3 - .15,
+          r: burst ? 1+Math.random()*3 : .6+Math.random()*1.8,
+          hue: Math.random() < .5 ? 187 : 335,
+          life: 1, decay: burst ? .008+Math.random()*.015 : 0
+        };
+        (burst ? burstParts : parts).push(p);
+      }
+    }
+    function frame(now){
+      var elapsed = now - startTime;
+      ctx.clearRect(0, 0, W, H);
+      // Trigger burst at transform moment
+      if (elapsed >= burstAt && burstParts.length === 0 && parts.length > 0){
+        spawn(45, true);
+      }
+      var all = parts.concat(burstParts);
+      for (var i = all.length-1; i >= 0; i--){
+        var p = all[i];
+        p.x += p.vx; p.y += p.vy;
+        if (p.decay) { p.life -= p.decay; if (p.life <= 0){ var bi = burstParts.indexOf(p); if (bi>=0) burstParts.splice(bi,1); continue; } }
+        // Wrap ambient particles
+        if (!p.decay){
+          if (p.x < -10) p.x = W+10; if (p.x > W+10) p.x = -10;
+          if (p.y < -10) p.y = H+10; if (p.y > H+10) p.y = -10;
+        }
+        var alpha = (p.decay ? p.life : .5) * .8;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+        ctx.fillStyle = 'hsla(' + p.hue + ',95%,65%,' + alpha.toFixed(2) + ')';
+        ctx.fill();
+      }
+      if (document.hidden){ raf = null; return; }
+      raf = requestAnimationFrame(frame);
+    }
+    resize();
+    window.addEventListener('resize', resize);
+    spawn(55, false);
+    raf = requestAnimationFrame(frame);
+    // Cleanup when intro is removed
+    var obs = new MutationObserver(function(){
+      if (!document.body.contains(canvas) && raf){ cancelAnimationFrame(raf); raf = null; obs.disconnect(); }
+    });
+    obs.observe(document.body, {childList: true, subtree: true});
+  })();
+
+  function done(){ sessionStorage.setItem('prhyme_intro_seen','1'); intro.classList.add('intro-out'); setTimeout(function(){ intro.remove(); }, 450); document.dispatchEvent(new CustomEvent('prhyme:intro-done')); }
   skip.addEventListener('click', function(e){ e.stopPropagation(); done(); });
   intro.addEventListener('click', done);
-  setTimeout(done, 7000);
+  setTimeout(done, 4200);
 })();
 </script>
 {% endblock %}

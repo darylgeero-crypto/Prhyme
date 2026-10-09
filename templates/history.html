@@ -31,7 +31,7 @@
       let dls = "";
       for (const k of ["mp3", "wav", "mp4", "file"]) {
         if (r[k]) dls += '<a class="dl alt" style="padding:8px 12px;min-height:44px;font-size:14px" href="/download/' +
-          encodeURIComponent(r[k]) + '">⬇ ' + k.toUpperCase() + '</a>';
+          encodeURIComponent(r[k]) + '?dl=1">⬇ ' + k.toUpperCase() + '</a>';
       }
       let meta = (r.lufs !== undefined ? r.lufs + " LUFS · " : "") +
         (r.bpm ? r.bpm + " BPM · " : "") + (r.duration ? r.duration + "s" : "");
@@ -62,7 +62,7 @@
       const j = await r.json();
       if (!j.ok) { out.innerHTML = '<div class="err">' + escapeHtml(j.error) + "</div>"; return; }
       out.innerHTML = '<a class="dl" href="/download/' + encodeURIComponent(j.zip) +
-        '">⬇ Download ZIP (' + j.count + ' files)</a>';
+        '?dl=1">⬇ Download ZIP (' + j.count + ' files)</a>';
       toast("Bundle ready");
     } catch (e) { out.innerHTML = '<div class="err">Network error</div>'; }
   });

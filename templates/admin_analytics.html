@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico">📊</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Analytics</h2></div>
+    <p class="plead">Last {{ days }} days. Aggregated only — no personal data.</p>
+  </div>
+</div>
+
+<div class="bill-form-card" style="max-width:600px;">
+  <div style="margin-bottom:12px;">
+    {% for d in [7, 30, 90] %}
+    <a class="chip {% if days==d %}on{% endif %}"
+       href="{{ url_for('admin_analytics') }}?days={{ d }}">{{ d }}d</a>
+    {% endfor %}
+  </div>
+  {% for e in events %}
+  <div class="bill-status-row">
+    <span><strong>{{ e.event }}</strong>
+      {% if e.plan_label %}<span style="opacity:.6;">· {{ e.plan_label }}</span>{% endif %}
+    </span>
+    <strong>{{ e.c }}</strong>
+  </div>
+  {% else %}
+  <p>No events yet.</p>
+  {% endfor %}
+</div>
+{% endblock %}
