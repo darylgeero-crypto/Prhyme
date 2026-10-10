@@ -663,10 +663,11 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         intro = bar_dur  # 1 intro bar
         n_bars = int(np.ceil((intro + v_dur + 2 * bar_dur) / bar_dur))
 
-        # Memory guard: vocal + beat + mix buffers.
-        check_audio_budget(vocal.shape[0] * 3, channels=2, copies=8,
-                           label="master")
         _lite = lite_mode()
+        # Memory guard: vocal + beat + mix buffers.
+        # Lite mode uses the lightweight renderer (fewer numpy temporaries).
+        check_audio_budget(vocal.shape[0] * 3, channels=2,
+                           copies=4 if _lite else 8, label="master")
         if _lite:
             # Lite: phone-safe lightbeat renderer instead of the V68 engine,
             # capped at 32 bars then tiled to cover long vocals.
@@ -2060,7 +2061,8 @@ def run_mix_job(job_id, genre, style, seed):
         _bars = 8 if _lite else 16
         _segs = 2 if _lite else 4
         check_audio_budget(int(240 / 140 * _bars * _segs * SR),
-                           channels=2, copies=8, label="DJ mix")
+                           channels=2, copies=4 if _lite else 8,
+                           label="DJ mix")
         prog(2, "Planning mix…" + (" (lite)" if _lite else ""))
         audio, meta = mixgen.generate_mix(
             genre=genre, style=style, seed=seed, progress_cb=prog,
