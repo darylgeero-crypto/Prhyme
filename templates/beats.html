@@ -244,7 +244,7 @@
 {% endblock %}
 {% block scripts %}
 <script>
-bindJobForm("beatsForm", "/api/beats", false);
+document.getElementById("beatsForm").addEventListener("submit", async function(e){e.preventDefault(); var out=document.getElementById("jobResult"); if(out) out.innerHTML="<p>Generating...</p>"; var fd=new FormData(this); var obj={}; fd.forEach(function(v,k){obj[k]=v}); try{var r=await fetch("/api/beats",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(obj)}); var j=await r.json(); if(out) out.innerHTML=j.ok?"<p style=color:green>Job started: "+j.job_id+"</p>":"<p style=color:red>Error: "+(j.error||"Unknown")+"</p>";}catch(err){if(out) out.innerHTML="<p style=color:red>Failed: "+err.message+"</p>";}});
 // Lite Mode: full songs cap at 2:30, loops cap at 16 bars; lock fast mode
 // on (server enforces too).
 (function () {

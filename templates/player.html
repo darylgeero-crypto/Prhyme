@@ -1,36 +1,41 @@
 {% extends "base.html" %}
 {% block content %}
 <style>
-.pl-tools{display:flex;gap:10px;margin-bottom:6px}
-.pl-tools .txt{background:var(--panel);border:1px solid rgba(255,255,255,.12);border-radius:12px;color:var(--txt);padding:10px 12px;font-size:15px}
-.pl-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:var(--panel);border:1px solid rgba(255,255,255,.07);margin-bottom:8px;cursor:pointer}
+/* Spotify-style redesign - keep all functionality, change visuals */
+.pl-tools{display:flex;gap:10px;margin-bottom:16px}
+.pl-tools .txt{background:#242424;border:1px solid transparent;border-radius:24px;color:#fff;padding:12px 16px;font-size:14px;flex:1}
+.pl-tools .txt:focus{outline:none;border-color:#fff}
+.pl-tools .btn{background:transparent;border:1px solid #727272;color:#fff;border-radius:50%;width:44px;height:44px;font-size:18px}
+.pl-row{display:flex;align-items:center;gap:12px;padding:8px;border-radius:8px;background:transparent;border:none;margin-bottom:2px;cursor:pointer;transition:background .2s}
+.pl-row:hover{background:#2a2a2a}
 .pl-row:active{transform:scale(.99)}
-.pl-row.playing{border-color:var(--cyan);box-shadow:0 0 18px rgba(0,229,255,.18)}
-.pl-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14.5px}
-.pl-src{flex:none;font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(0,229,255,.12);color:#bff3ff;border:1px solid rgba(0,229,255,.3)}
-.pl-meta{flex:none;font-size:11px;color:var(--dim)}
-.pl-queue .qrow{display:flex;gap:8px;align-items:center;padding:7px 10px;border-radius:10px;background:rgba(255,255,255,.03);margin-bottom:6px;font-size:13.5px}
-.pl-queue .qn{flex:none;width:22px;height:22px;border-radius:50%;background:var(--panel2);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--dim)}
-.pl-bar{position:fixed;left:0;right:0;bottom:calc(84px + env(safe-area-inset-bottom));z-index:9;background:rgba(14,14,24,.97);backdrop-filter:blur(14px);border-top:1px solid rgba(255,255,255,.1);padding:10px 14px calc(10px + env(safe-area-inset-bottom));transform:translateY(160%);transition:transform .25s ease}
+.pl-row.playing{background:#2a2a2a}
+.pl-row.playing .pl-name{color:#1db954}
+.pl-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:16px;color:#fff;font-weight:400}
+.pl-src{flex:none;font-size:11px;padding:4px 10px;border-radius:12px;background:#2a2a2a;color:#b3b3b3;border:none}
+.pl-meta{flex:none;font-size:14px;color:#b3b3b3}
+.pl-queue .qrow{display:flex;gap:12px;align-items:center;padding:8px;border-radius:8px;background:transparent;margin-bottom:2px;font-size:14px;color:#fff}
+.pl-queue .qrow:hover{background:#2a2a2a}
+.pl-queue .qn{flex:none;width:32px;height:32px;border-radius:4px;background:#2a2a2a;display:flex;align-items:center;justify-content:center;font-size:13px;color:#b3b3b3}
+.pl-bar{position:fixed;left:0;right:0;bottom:calc(84px + env(safe-area-inset-bottom));z-index:9;background:#181818;border-top:1px solid #282828;padding:12px 16px;transform:translateY(160%);transition:transform .25s ease}
 .pl-bar.show{transform:none}
-.pl-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:4px}
-.pl-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;font-size:14.5px}
-.pl-times{flex:none;font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
-.pl-seek{width:100%;margin:2px 0 8px}
-.pl-controls{display:flex;align-items:center;gap:8px}
-.pl-controls .btn{flex:none}
-#plPlay{min-width:52px;font-size:18px}
-.pl-vol{flex:1;min-width:60px}
-.eq-drawer{position:fixed;left:0;right:0;bottom:calc(84px + env(safe-area-inset-bottom));z-index:8;background:rgba(14,14,24,.98);border-top:1px solid rgba(255,255,255,.1);padding:14px 16px;transform:translateY(120%);transition:transform .25s ease;max-height:62vh;overflow-y:auto}
-.eq-drawer.show{transform:none}
-.pl-bar.eq-open{transform:translateY(160%)}
-.eq-band{display:flex;align-items:center;gap:10px;margin-bottom:8px}
-.eq-band .fl{flex:none;width:64px;font-size:13px;color:var(--dim)}
-.eq-band input{flex:1}
-.eq-band .fv{flex:none;width:64px;text-align:right;font-size:13px;font-variant-numeric:tabular-nums}
-.eq-presets{display:flex;gap:10px;margin-bottom:12px}
-.eq-presets select{flex:1;background:var(--panel);border:1px solid rgba(255,255,255,.12);border-radius:12px;color:var(--txt);padding:10px 12px;font-size:14px}
-body.pl-open .page{padding-bottom:170px}
+.pl-top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px}
+.pl-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;font-size:16px;color:#fff}
+.pl-times{flex:none;font-size:12px;color:#b3b3b3;font-variant-numeric:tabular-nums}
+.pl-seek{width:100%;margin:4px 0 12px;-webkit-appearance:none;appearance:none;height:4px;border-radius:2px;background:#535353;outline:none}
+.pl-seek::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:12px;height:12px;border-radius:50%;background:#fff;cursor:pointer;opacity:0;transition:opacity .2s}
+.pl-seek:hover::-webkit-slider-thumb{opacity:1}
+.pl-seek::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:#fff;cursor:pointer;border:none;opacity:0}
+.pl-seek:hover::-moz-range-thumb{opacity:1}
+.pl-controls{display:flex;align-items:center;justify-content:center;gap:16px}
+.pl-controls .btn{background:transparent;border:none;color:#b3b3b3;font-size:20px;min-width:40px;min-height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;transition:color .2s,transform .2s}
+.pl-controls .btn:hover{color:#fff}
+.pl-controls .btn:active{transform:scale(.95)}
+#plPlay{background:#fff;color:#000;width:56px;height:56px;font-size:24px;min-width:56px}
+#plPlay:hover{transform:scale(1.05);color:#000}
+.pl-vol{flex:1;min-width:80px;max-width:120px;-webkit-appearance:none;appearance:none;height:4px;border-radius:2px;background:#535353}
+.pl-vol::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:12px;height:12px;border-radius:50%;background:#fff;cursor:pointer}
+
 </style>
 
 <div class="phead">
