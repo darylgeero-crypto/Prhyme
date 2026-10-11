@@ -17,10 +17,10 @@ BILLING_ENFORCE = True
 
 # Pricing (USD) — from DJRILL_Ad_Campaigns.md. Adjust freely.
 TRIAL_DAYS = 3
-MONTHLY_PRICE = 9.00            # $9/mo subscription
-PLATINUM_PRICE = 499.00         # $499/yr — Prhyme Platinum, all-access annual
-LIFETIME_PRICE = 99.00          # $99 one-time, forever
-PRELAUNCH_LIFETIME_PRICE = 49.00  # $49 for users 101-500 (50% off launch deal)
+MONTHLY_PRICE = 25.00           # $25/mo subscription
+PLATINUM_PRICE = 100.00        # $100/yr — annual, all-access
+LIFETIME_PRICE = 499.00         # $499 one-time, forever
+PRELAUNCH_LIFETIME_PRICE = 249.00  # $249 for users 101-500 (50% off launch deal)
 FOUNDING_SPOTS = 100            # first 100 signups: free lifetime
 PRELAUNCH_SPOTS = 500           # users 101-500: $49 lifetime price
 
