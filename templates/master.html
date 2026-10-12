@@ -1,250 +1,167 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="phead">
-  <span class="pico pulse">◉</span>
-  <div>
-    <div class="ptitle-row"><h2 class="ptitle">Master a Track</h2><a class="help-link" href="{{ url_for('help_page') }}#master" aria-label="Help">?</a></div>
-    <p class="plead">Upload your recording — the engine renders a beat locked to its tempo, polishes your vocal, mixes voice-forward, and masters to <strong>-14 LUFS / -1.0 dBTP</strong>.</p>
+<h2>Master</h2>
+<form id="f" enctype="multipart/form-data">
+  <div style="background:#e8f5e9; padding:15px; border-radius:8px; margin-bottom:20px;">
+    <label style="font-size:18px; font-weight:bold;">
+      <input type="checkbox" id="autoMode" name="auto_mode" value="1" checked>
+      Fully Automated Mode
+    </label>
+    <p style="margin:5px 0 0 0; color:#555;">Prhyme detects genre, BPM, and optimal settings. Uncheck for manual control.</p>
   </div>
-</div>
-
-<form id="masterForm" class="form" enctype="multipart/form-data">
-  <label class="field">
-    <span>Your recording (WAV, MP3, M4A…)</span>
-    <input type="file" name="file" accept="audio/*,video/*" required class="fileinput">
-  </label>
-  <label class="field">
-    <span>Track title</span>
-    <input type="text" name="title" placeholder="My Track (Prhyme™ Master)" maxlength="60">
-  </label>
-  <div class="row2">
-    <label class="field">
-      <span>Genre</span>
-      <select name="genre">
-        {% for g in genres %}<option value="{{ g }}" {% if g=='Drill' %}selected{% endif %}>{{ g }}</option>{% endfor %}
-      </select>
-    </label>
-    <label class="field">
-      <span>BPM (blank = auto-detect)</span>
-      <input type="number" name="bpm" min="50" max="200" step="0.1" placeholder="auto">
-    </label>
+  <h3>Input</h3>
+  <input type="file" name="file" accept="audio/*" required><br><br>
+  <input type="text" name="title" placeholder="Track title"><br><br>
+  <div id="manualOptions">
+  <label>Genre: <input type="text" name="genre" value="HipHop"></label><br><br>
+  <label>BPM: <input type="number" name="bpm" value="90"></label><br><br>
+  
+  <h3>Mastering Chain</h3>
+  <label>Chain: 
+    <select name="chain">
+      <option value="standard">Standard</option>
+      <option value="aggressive">Aggressive</option>
+      <option value="vintage">Vintage</option>
+      <option value="modern">Modern</option>
+    </select>
+  </label><br><br>
+  <label>Output Format:
+    <select name="output_format">
+      <option value="mp3">MP3</option>
+      <option value="wav">WAV</option>
+      <option value="flac">FLAC</option>
+    </select>
+  </label><br><br>
+  
+  <h3>Levels</h3>
+  <label>Target LUFS: <input type="number" name="target_lufs" value="-14" step="0.5"></label><br><br>
+  <label>Ceiling dB: <input type="number" name="ceiling_db" value="-1.0" step="0.1"></label><br><br>
+  <label><input type="checkbox" name="dither" value="1"> Dither</label><br><br>
+  <label><input type="checkbox" name="multiband" value="1"> Multiband</label><br><br>
+  <label><input type="checkbox" name="deess" value="1"> De-ess</label><br><br>
+  
+  <h3>Fades</h3>
+  <label>Fade In (s): <input type="number" name="fade_in" value="0" step="0.1"></label><br><br>
+  <label>Fade Out (s): <input type="number" name="fade_out" value="0" step="0.1"></label><br><br>
+  
+  <h3>Vocal FX</h3>
+  <label><input type="checkbox" name="fx_radio" value="1"> Radio</label><br>
+  <label><input type="checkbox" name="fx_tv" value="1"> TV</label><br>
+  <label><input type="checkbox" name="fx_vinyl" value="1"> Vinyl</label><br><br>
+  <label><input type="checkbox" name="fx_hp_on" value="1"> High-pass</label>
+  <input type="number" name="fx_hp_cut" value="80" placeholder="Hz"><br>
+  <label><input type="checkbox" name="fx_lp_on" value="1"> Low-pass</label>
+  <input type="number" name="fx_lp_cut" value="18000" placeholder="Hz"><br><br>
+  <label><input type="checkbox" name="fx_echo_on" value="1"> Echo</label><br>
+  <label>Echo MS: <input type="number" name="fx_echo_ms" value="250"></label><br>
+  <label>Echo Mix: <input type="number" name="fx_echo_mix" value="0.3" step="0.1"></label><br>
+  <label>Echo FB: <input type="number" name="fx_echo_fb" value="0.4" step="0.1"></label><br>
+  <label><input type="checkbox" name="fx_echo_sync" value="1"> Sync to BPM</label><br><br>
+  <label>FX Target:
+    <select name="fx_target">
+      <option value="vocal">Vocal</option>
+      <option value="mix">Full Mix</option>
+    </select>
+  </label><br><br>
+  
+  <h3>Advanced</h3>
+  <label>Reference Track: <input type="file" name="reference" accept="audio/*"></label><br><br>
+  <label>Beat Source: <input type="text" name="beat_source" placeholder="Optional"></label><br><br>
+  <label>Seed: <input type="number" name="seed" placeholder="Random"></label><br><br>
+  <label><input type="checkbox" name="timing_fix" value="1"> Timing Fix</label><br><br>
+  <label><input type="checkbox" name="stems" value="1"> Export Stems</label><br><br>
+  
   </div>
-  <label class="field">
-    <span>Seed (blank = random)</span>
-    <input type="number" name="seed" min="1" placeholder="random">
-  </label>
+  <button type="submit">Master it</button>
 
-  <details class="fxbox">
-    <summary>⚙️ Mastering options</summary>
-    <div class="row2">
-      <label class="field">
-        <span>Master chain</span>
-        <select name="chain">
-          <option>Streaming</option>
-          <option>Club</option>
-          <option>Radio</option>
-          <option>V8 Reference</option>
-          <option>LoFi Tape</option>
-          <option>Dynamic</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>Loudness target (LUFS, blank = chain)</span>
-        <input type="number" name="target_lufs" min="-24" max="-6" step="0.5" placeholder="auto">
-      </label>
-    </div>
-    <div class="row2">
-      <label class="field">
-        <span>True-peak ceiling (dB)</span>
-        <input type="number" name="ceiling_db" min="-3" max="-0.3" step="0.1" value="-1.0">
-      </label>
-      <label class="field">
-        <span>Vocal boost (dB)</span>
-        <input type="number" name="vocal_boost_db" min="-6" max="12" step="0.5" value="1.5">
-      </label>
-    </div>
-    <div class="row2">
-      <label class="field">
-        <span>Fade in (s)</span>
-        <input type="number" name="fade_in" min="0" max="5" step="0.1" value="0.5">
-      </label>
-      <label class="field">
-        <span>Fade out (s)</span>
-        <input type="number" name="fade_out" min="0" max="10" step="0.5" value="3.0">
-      </label>
-    </div>
-    <div class="fxgrid">
-      <label class="check"><input type="checkbox" name="vocal_polish" checked> ✨ Vocal polish</label>
-      <label class="check"><input type="checkbox" name="timing_fix" checked> 🎯 Timing fix</label>
-      <label class="check"><input type="checkbox" name="dither" checked> Dither</label>
-      <label class="check"><input type="checkbox" name="multiband"> Multiband polish</label>
-    </div>
-    <div class="row2">
-      <label class="field">
-        <span>De-esser (0–1)</span>
-        <input type="number" name="deess" min="0" max="1" step="0.1" value="0">
-      </label>
-      <label class="field">
-        <span>Reference track (optional — match its sound)</span>
-        <input type="file" name="reference" accept="audio/*" class="fileinput">
-      </label>
-    </div>
-
-    <div class="fxsec">
-      <div class="fx-title">🎛 Creative FX <span class="fx-sub">character &amp; space — never touches your words</span></div>
-      <div class="chips">
-        <button type="button" class="chip" data-preset="clean">✨ Clean</button>
-        <button type="button" class="chip" data-preset="lofi">💿 Lo-Fi</button>
-        <button type="button" class="chip" data-preset="radiohit">📻 Radio Hit</button>
-        <button type="button" class="chip" data-preset="phonecall">📞 Phone Call</button>
-        <button type="button" class="chip" data-preset="bigspace">🌌 Big Space</button>
-      </div>
-      <div class="fxgrid">
-        <label class="check"><input type="checkbox" name="fx_radio"> 📻 Radio</label>
-        <label class="check"><input type="checkbox" name="fx_tv"> 📺 Television</label>
-        <label class="check"><input type="checkbox" name="fx_vinyl"> 💿 Old vinyl</label>
-        <label class="check"><input type="checkbox" name="fx_hp_on"> High-pass</label>
-        <label class="check"><input type="checkbox" name="fx_lp_on"> Low-pass</label>
-        <label class="check"><input type="checkbox" name="fx_echo_on"> 🔊 Echo</label>
-      </div>
-      <div class="row2">
-        <label class="field">
-          <span>High-pass cutoff (Hz)</span>
-          <input type="number" name="fx_hp_cut" min="20" max="20000" step="10" value="120">
-        </label>
-        <label class="field">
-          <span>Low-pass cutoff (Hz)</span>
-          <input type="number" name="fx_lp_cut" min="20" max="20000" step="100" value="8000">
-        </label>
-      </div>
-      <div class="row2">
-        <label class="field">
-          <span>Echo time (ms)</span>
-          <input type="number" name="fx_echo_ms" min="50" max="2000" step="25" value="375">
-        </label>
-        <label class="field">
-          <span>Echo feedback</span>
-          <input type="number" name="fx_echo_fb" min="0" max="0.6" step="0.05" value="0.35">
-        </label>
-      </div>
-      <div class="row2">
-        <label class="field">
-          <span>Echo mix</span>
-          <input type="number" name="fx_echo_mix" min="0" max="0.5" step="0.05" value="0.3">
-        </label>
-        <label class="field">
-          <span>Apply FX to</span>
-          <select name="fx_target">
-            <option value="vocal">Vocal only</option>
-            <option value="mix">Full mix</option>
-          </select>
-        </label>
-      </div>
-      <div class="fxgrid">
-        <label class="check"><input type="checkbox" name="fx_echo_sync"> 🎵 Sync echo to BPM (dotted 8th)</label>
-      </div>
-    </div>
-  </details>
-
-  <button type="submit" class="btn big">⚡ Master it</button>
-</form>
-
-<div id="jobBox" class="jobbox hidden">
-  <div class="jobmsg" id="jobMsg">Starting…</div>
-  <div class="pbar"><div class="pfill" id="jobFill"></div></div>
-  <div class="jobpct" id="jobPct">0%</div>
-  <div id="jobResult" class="result"></div>
-</div>
-
-<h2 class="ptitle" style="margin-top:2rem">Stem Mastering</h2>
-<p class="plead">Upload 2–8 stems — each gets gentle polish, then they're glued and limited together.</p>
-<form id="stemForm" class="form" enctype="multipart/form-data">
-  <label class="field">
-    <span>Stems (2–8 audio files)</span>
-    <input type="file" name="stems" accept="audio/*" multiple required class="fileinput">
-  </label>
-  <div class="row2">
-    <label class="field">
-      <span>Loudness target (LUFS)</span>
-      <input type="number" name="target_lufs" min="-24" max="-6" step="0.5" value="-14">
-    </label>
-    <label class="field">
-      <span>True-peak ceiling (dB)</span>
-      <input type="number" name="ceiling_db" min="-3" max="-0.3" step="0.1" value="-1.0">
-    </label>
-  </div>
-  <button type="submit" class="btn big">🎚 Master stems</button>
-</form>
-
-<div id="jobBox2" class="jobbox hidden">
-  <div class="jobmsg" id="jobMsg2">Starting…</div>
-  <div class="pbar"><div class="pfill" id="jobFill2"></div></div>
-  <div class="jobpct" id="jobPct2">0%</div>
-  <div id="jobResult2" class="result"></div>
-</div>
-{% endblock %}
-{% block scripts %}
+<h3>🎚️ Stem Mastering</h3>
+<p>Upload 2-8 stems (vocals, drums, bass, etc.) to master them together as a mix.</p>
+<input type="file" id="stemFiles" multiple accept="audio/*" style="margin:10px 0;"><br>
+<button type="button" onclick="uploadStems()" class="btn">Master Stems</button>
+<div id="stemProgress" style="margin-top:10px;"></div>
 <script>
-bindJobForm("masterForm", "/api/master", true);
-bindJobForm2("stemForm", "/api/master/stems", "2");
-
-(function () {
-  var form = document.getElementById("masterForm");
-  if (!form) return;
-
-  // ---- FX preset chips: one tap sets a whole character chain
-  var PRESETS = {
-    clean:     {},
-    lofi:      { fx_vinyl: 1, fx_lp_on: 1, fx_lp_cut: 6000 },
-    radiohit:  { fx_radio: 1, fx_echo_on: 1, fx_echo_sync: 1, fx_echo_mix: 0.25 },
-    phonecall: { fx_radio: 1 },
-    bigspace:  { fx_echo_on: 1, fx_echo_ms: 520, fx_echo_fb: 0.5,
-                 fx_echo_mix: 0.4, fx_hp_on: 1, fx_hp_cut: 200 }
-  };
-  var FX_NAMES = ["fx_radio", "fx_tv", "fx_vinyl", "fx_hp_on", "fx_lp_on",
-                  "fx_echo_on", "fx_echo_sync"];
-  function setField(name, val) {
-    var el = form.elements[name];
-    if (!el) return;
-    if (el.type === "checkbox") el.checked = !!val;
-    else el.value = val;
+async function uploadStems() {
+  const files = document.getElementById('stemFiles').files;
+  if (files.length < 2 || files.length > 8) { alert('Select 2-8 stem files'); return; }
+  const fd = new FormData();
+  for (const f of files) fd.append('stems', f);
+  // Add current mastering options
+  const form = document.getElementById('masterForm');
+  new FormData(form).forEach((v,k) => fd.append(k,v));
+  document.getElementById('stemProgress').innerHTML = 'Uploading and mastering stems...';
+  try {
+    const r = await fetch('/api/master/stems', {method:'POST', body:fd});
+    const j = await r.json();
+    if (j.job_id) {
+      document.getElementById('stemProgress').innerHTML = 'Job: '+j.job_id+' - <a href="/api/jobs/'+j.job_id+'">Check status</a>';
+    } else {
+      document.getElementById('stemProgress').innerHTML = 'Error: '+(j.error||'unknown');
+    }
+  } catch(e) {
+    document.getElementById('stemProgress').innerHTML = 'Error: '+e.message;
   }
-  document.querySelectorAll(".chip[data-preset]").forEach(function (chip) {
-    chip.addEventListener("click", function () {
-      var p = PRESETS[chip.dataset.preset] || {};
-      FX_NAMES.forEach(function (n) { setField(n, 0); });
-      Object.keys(p).forEach(function (n) { setField(n, p[n]); });
-      document.querySelectorAll(".chip[data-preset]").forEach(function (c) {
-        c.classList.toggle("on", c === chip);
-      });
-      saveForm();
-    });
-  });
-
-  // ---- remember settings between visits (never file inputs)
-  var KEY = "djrill-master-form-v1";
-  var t = null;
-  function saveForm() {
-    try {
-      var d = {};
-      Array.prototype.forEach.call(form.elements, function (el) {
-        if (!el.name || el.type === "file") return;
-        d[el.name] = el.type === "checkbox" ? (el.checked ? 1 : 0) : el.value;
-      });
-      localStorage.setItem(KEY, JSON.stringify(d));
-    } catch (e) {}
-  }
-  function loadForm() {
-    try {
-      var d = JSON.parse(localStorage.getItem(KEY) || "null");
-      if (!d) return;
-      Object.keys(d).forEach(function (n) { setField(n, d[n]); });
-    } catch (e) {}
-  }
-  form.addEventListener("change", function () {
-    clearTimeout(t); t = setTimeout(saveForm, 400);
-  });
-  loadForm();
-})();
+}
 </script>
+<hr>
+
+</form>
+<div id="out"></div>
+<div id="progress" style="display:none;">
+  <div style="background:#eee; height:20px; border-radius:10px; overflow:hidden;">
+    <div id="bar" style="background:#4CAF50; height:100%; width:0%; transition:width 0.3s;"></div>
+  </div>
+  <p id="msg"></p>
+</div>
+<script>
+document.getElementById('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const out = document.getElementById('out');
+  const prog = document.getElementById('progress');
+  const bar = document.getElementById('bar');
+  const msg = document.getElementById('msg');
+  out.textContent = 'Uploading...';
+  prog.style.display = 'none';
+  const fd = new FormData(e.target);
+  try {
+    const r = await fetch('/api/master', {method:'POST', body:fd});
+    const j = await r.json();
+    if (!j.ok) {
+      out.textContent = 'Error: ' + (j.error || 'Unknown');
+      return;
+    }
+    const jobId = j.job_id;
+    out.textContent = 'Job started: ' + jobId;
+    prog.style.display = 'block';
+    // Poll for progress
+    const poll = setInterval(async () => {
+      try {
+        const pr = await fetch('/api/job/' + jobId);
+        const pj = await pr.json();
+        if (pj.progress !== undefined) {
+          bar.style.width = pj.progress + '%';
+          msg.textContent = pj.message || (pj.progress + '%');
+        }
+        if (pj.status === 'done') {
+          clearInterval(poll);
+          bar.style.width = '100%';
+          msg.textContent = 'Complete!';
+          if (pj.download_url) {
+            out.innerHTML = 'Done! <a href="' + pj.download_url + '">Download</a>';
+          } else {
+            out.textContent = 'Done! Job: ' + jobId;
+          }
+        } else if (pj.status === 'error') {
+          clearInterval(poll);
+          out.textContent = 'Error: ' + (pj.error || 'Failed');
+        }
+      } catch(err) {
+        // Continue polling
+      }
+    }, 2000);
+  } catch(err) {
+    out.textContent = 'Failed: ' + err;
+  }
+});
+</script>
+<script>document.getElementById("autoMode").addEventListener("change", function(){document.getElementById("manualOptions").style.display=this.checked?"none":"block";});document.getElementById("manualOptions").style.display="none";</script>
 {% endblock %}

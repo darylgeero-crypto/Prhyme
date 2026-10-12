@@ -21,6 +21,38 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   });
 }
 </script>
+
+<style>
+.bill-banner {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: #1a1a2e;
+  color: #fff;
+  padding: 12px 20px;
+  text-align: center;
+  z-index: 1000;
+  border-top: 1px solid #333;
+  font-size: 14px;
+}
+.bill-banner a {
+  color: #4CAF50;
+  font-weight: bold;
+  text-decoration: none;
+}
+.bill-banner a:hover {
+  text-decoration: underline;
+}
+/* Prevent content from being hidden behind banner */
+body {
+  padding-bottom: 60px;
+}
+body.no-banner {
+  padding-bottom: 0;
+}
+</style>
+
 </head>
 <body data-page="{{ active|default('home') }}">
 <div class="bg-orbs"><span class="orb o1"></span><span class="orb o2"></span><span class="orb o3"></span></div>
@@ -191,6 +223,25 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     document.getElementById('cookieBanner').hidden = true;
   };
 })();
+
+// Wake Lock: keep screen on during long operations (mastering, rendering).
+// Uses the Wake Lock API when available; silent no-op otherwise.
+let _wakeLock = null;
+async function keepScreenOn() {
+  try {
+    if ('wakeLock' in navigator && !_wakeLock) {
+      _wakeLock = await navigator.wakeLock.request('screen');
+      _wakeLock.addEventListener('release', () => { _wakeLock = null; });
+    }
+  } catch(e) {}
+}
+function releaseScreenOn() {
+  try { if (_wakeLock) { _wakeLock.release(); _wakeLock = null; } } catch(e) {}
+}
+// Re-acquire on visibility change (OS may release it when hidden).
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && window._wantWakeLock) keepScreenOn();
+});
 </script>
 </body>
 </html>
