@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <!-- Prhyme™ cinematic intro v2: particles → turntable materialize → vinyl spin-up → Rockdabus burst → title -->
-<div id="prhymeIntro" class="prhyme-intro" role="dialog" aria-label="Welcome to Prhyme">
+<div id="prhymeIntro" class="prhyme-intro" role="dialog" aria-label="Welcome to Prhyme" style="position:fixed;inset:0;z-index:1000;background:#0a0a12;display:flex;align-items:center;justify-content:center;flex-direction:column;"><div style="font-size:42px;font-weight:bold;color:#fff;letter-spacing:2px;"><span class="prhyming-flash">Prhyming</span></div>
   <canvas class="intro-particles" id="introParticles" aria-hidden="true"></canvas>
   <div class="intro-vignette" aria-hidden="true"></div>
   <div class="intro-stage intro-stage-tt" aria-hidden="true">
@@ -124,10 +124,6 @@
 <section class="note">
   <p>Your performance stays yours — the engine <strong>edits</strong> human recordings, it never synthesizes or replaces a voice.</p>
 </section>
-
-<a href="{{ url_for('rockdabus_page') }}" class="rb-fab" title="Chat with Rockdabus Prhyme" aria-label="Chat with Rockdabus Prhyme">
-  <img src="{{ url_for('static', filename='img/rockdabus.webp') }}" alt="Rockdabus Prhyme">
-</a>
 
 <script>
 (function(){
