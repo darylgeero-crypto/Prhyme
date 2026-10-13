@@ -4,7 +4,7 @@
 <form id="f" enctype="multipart/form-data">
   <div style="background:#e8f5e9; padding:15px; border-radius:8px; margin-bottom:20px;">
     <label style="font-size:18px; font-weight:bold;">
-      <input type="checkbox" id="autoMode" name="auto_mode" value="1" checked>
+      <input type="checkbox" id="autoMode" name="auto_mode" value="1">
       Fully Automated Mode
     </label>
     <p style="margin:5px 0 0 0; color:#555;">Prhyme detects genre, BPM, and optimal settings. Uncheck for manual control.</p>
@@ -66,7 +66,8 @@
   
   <h3>Advanced</h3>
   <label>Reference Track: <input type="file" name="reference" accept="audio/*"></label><br><br>
-  <label>Beat Source: <input type="text" name="beat_source" placeholder="Optional"></label><br><br>
+  <label><input type="checkbox" name="ab_compare" value="1" checked> Generate A/B compare previews (30s excerpts)</label><br><br>
+  <label><input type="checkbox" name="beat_source" value="keep" checked> Keep original beat (uncheck to generate new backing beat)</label><br><br>
   <label>Seed: <input type="number" name="seed" placeholder="Random"></label><br><br>
   <label><input type="checkbox" name="timing_fix" value="1"> Timing Fix</label><br><br>
   <label><input type="checkbox" name="stems" value="1"> Export Stems</label><br><br>
@@ -79,6 +80,24 @@
 <input type="file" id="stemFiles" multiple accept="audio/*" style="margin:10px 0;"><br>
 <button type="button" onclick="uploadStems()" class="btn">Master Stems</button>
 <div id="stemProgress" style="margin-top:10px;"></div>
+
+<style>
+.prhyming-flash {
+  animation: prhymeFlash 1.2s ease-in-out infinite;
+  font-weight: bold;
+  color: #7a5cff;
+}
+@keyframes prhymeFlash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.prhymed-done {
+  color: #00e5a0;
+  font-weight: bold;
+  font-size: 1.2em;
+}
+</style>
+
 <script>
 async function uploadStems() {
   const files = document.getElementById('stemFiles').files;
@@ -132,24 +151,62 @@ document.getElementById('f').addEventListener('submit', async (e) => {
     const jobId = j.job_id;
     out.textContent = 'Job started: ' + jobId;
     prog.style.display = 'block';
-    // Poll for progress
+    // Poll for progress (with still-working heartbeat)
+    var _lastProg = -1, _lastProgTime = Date.now(), _startTime = Date.now();
     const poll = setInterval(async () => {
       try {
         const pr = await fetch('/api/job/' + jobId);
         const pj = await pr.json();
         if (pj.progress !== undefined) {
           bar.style.width = pj.progress + '%';
-          msg.textContent = pj.message || (pj.progress + '%');
+          var _now = Date.now();
+          if (pj.progress !== _lastProg) { _lastProg = pj.progress; _lastProgTime = _now; }
+          var _elapsed = Math.floor((_now - _startTime) / 1000);
+          var _since = Math.floor((_now - _lastProgTime) / 1000);
+          var pmsg = pj.message || (pj.progress + '%');
+          var _sw = _since > 5 ? ' <span style="color:#00e5a0;font-size:0.8em;">● still working ('+_elapsed+'s)</span>' : '';
+          msg.innerHTML = '<span class="prhyming-flash">Prhyming...</span> <span style="font-size:0.85em;color:#888">'+pmsg+'</span>'+_sw;
         }
         if (pj.status === 'done') {
           clearInterval(poll);
           bar.style.width = '100%';
-          msg.textContent = 'Complete!';
-          if (pj.download_url) {
-            out.innerHTML = 'Done! <a href="' + pj.download_url + '">Download</a>';
-          } else {
-            out.textContent = 'Done! Job: ' + jobId;
+          msg.innerHTML = '<span class="prhymed-done">Prhymed!</span>';
+          var html = '';
+          var res = pj.result || {};
+          if (res.ab_source || res.ab_master) {
+            html += '<div style="background:#1a1a2e;border:1px solid #333;border-radius:8px;padding:12px;margin:10px 0;">';
+            html += '<div style="font-weight:bold;margin-bottom:8px;color:#00e5a0;">🎧 A/B Compare (30s previews)</div>';
+            if (res.ab_source) {
+              html += '<div style="margin:8px 0;"><div style="font-size:0.85em;color:#888;margin-bottom:4px;">BEFORE (original):</div><audio controls preload="metadata" src="/preview/' + res.ab_source + '" style="width:100%;height:32px;"></audio></div>';
+            }
+            if (res.ab_master) {
+              html += '<div style="margin:8px 0;"><div style="font-size:0.85em;color:#888;margin-bottom:4px;">AFTER (mastered):</div><audio controls preload="metadata" src="/preview/' + res.ab_master + '" style="width:100%;height:32px;"></audio></div>';
+            }
+            html += '</div>';
           }
+          if (res.file) {
+            var isTemp = !!res.temp;
+            var mUrl = isTemp
+              ? "/temp_master/" + jobId.substring(0,8) + "/" + encodeURIComponent(res.file)
+              : "/download/" + encodeURIComponent(res.file);
+            html += '<div style="background:#1a1a2e;border:1px solid #333;border-radius:8px;padding:12px;margin:10px 0;">';
+            html += '<div style="font-weight:bold;margin-bottom:8px;color:#00e5a0;">Master (' + (res.format||"").toUpperCase() + ')</div>';
+            html += '<audio controls preload="metadata" src="' + mUrl + '" style="width:100%;height:32px;"></audio>';
+            html += '</div>';
+            html += '<div style="margin:10px 0;">';
+            if (isTemp) {
+              html += '<button onclick="keepMaster(\'' + jobId + '\',this)" style="background:#00e5a0;color:#000;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;margin-right:10px;">⬇ Download Master</button>';
+              html += '<button onclick="discardMaster(\'' + jobId + '\')" style="background:#ff4444;color:#fff;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;">🗑 Discard</button>';
+              html += '</div>';
+              html += '<div style="font-size:0.8em;color:#888;">Temp master — Download saves it to your library, Discard deletes it right away.</div>';
+            } else {
+              html += '<a href="' + mUrl + '" download style="background:#00e5a0;color:#000;padding:8px 16px;border-radius:4px;text-decoration:none;margin-right:10px;">⬇ Download Master</a>';
+              html += '</div>';
+            }
+          } else {
+            html += 'Done! Job: ' + jobId;
+          }
+          out.innerHTML = html;
         } else if (pj.status === 'error') {
           clearInterval(poll);
           out.textContent = 'Error: ' + (pj.error || 'Failed');
@@ -158,10 +215,50 @@ document.getElementById('f').addEventListener('submit', async (e) => {
         // Continue polling
       }
     }, 2000);
+
+    async function keepMaster(jobId, btn) {
+      if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+      try {
+        const r = await fetch('/api/master/keep', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({job_id: jobId})
+        });
+        const d = await r.json();
+        if (d.ok && d.file) {
+          window.location = '/download/' + encodeURIComponent(d.file) + '?dl=1';
+          document.getElementById('out').innerHTML = '<span style="color:#00e5a0;">Saved to library.</span>';
+        } else {
+          alert('Save failed: ' + (d.error || 'unknown'));
+          if (btn) { btn.disabled = false; btn.textContent = '⬇ Download Master'; }
+        }
+      } catch(e) {
+        alert('Save failed');
+        if (btn) { btn.disabled = false; btn.textContent = '⬇ Download Master'; }
+      }
+    }
+    async function discardMaster(jobId) {
+      if (!confirm('Discard this temp master? It will be deleted immediately.')) return;
+      try {
+        const r = await fetch('/api/master/discard', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({job_id: jobId})
+        });
+        const d = await r.json();
+        if (d.ok) {
+          document.getElementById('out').innerHTML = '<span style="color:#888;">Temp master discarded.</span>';
+        } else {
+          alert('Discard failed: ' + (d.error || 'unknown'));
+        }
+      } catch(e) {
+        alert('Discard failed');
+      }
+    }
   } catch(err) {
     out.textContent = 'Failed: ' + err;
   }
 });
 </script>
-<script>document.getElementById("autoMode").addEventListener("change", function(){document.getElementById("manualOptions").style.display=this.checked?"none":"block";});document.getElementById("manualOptions").style.display="none";</script>
+<script>document.getElementById("autoMode").addEventListener("change", function(){document.getElementById("manualOptions").style.display=this.checked?"none":"block";});document.getElementById("manualOptions").style.display="block";</script>
 {% endblock %}

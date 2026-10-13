@@ -47,12 +47,13 @@ def init_player(outputs_dir):
 
 def _source_dirs():
     dirs = []
+    # Generated tracks first (user request)
+    if _OUTPUTS_DIR and os.path.isdir(_OUTPUTS_DIR):
+        dirs.append(("Generated", _OUTPUTS_DIR))
     for label, sub in (("Music", "Music"), ("Downloads", "Download")):
         p = os.path.join(_PHONE_ROOT, sub)
         if os.path.isdir(p):
             dirs.append((label, p))
-    if _OUTPUTS_DIR and os.path.isdir(_OUTPUTS_DIR):
-        dirs.append(("Generated", _OUTPUTS_DIR))
     return dirs
 
 
@@ -69,7 +70,8 @@ def _scan():
         for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
             # Skip hidden dirs, keep walk shallow-ish for speed
             dirnames[:] = [d for d in dirnames
-                           if not d.startswith(".") and d != "__pycache__"]
+                           if not d.startswith(".") and d != "__pycache__"
+                           and d != "temp_beats" and d != "temp_masters"]
             depth = os.path.relpath(dirpath, root).count(os.sep)
             if depth > 5:
                 dirnames[:] = []
@@ -102,8 +104,8 @@ def _scan():
                 break
         if len(tracks) >= SCAN_CAP:
             break
-    # Newest first within each source, sources in Music/Downloads/Generated order
-    order = {"Music": 0, "Downloads": 1, "Generated": 2}
+    # Newest first within each source, Generated first (user request)
+    order = {"Generated": 0, "Music": 1, "Downloads": 2}
     tracks.sort(key=lambda t: (order.get(t["source"], 9), -t["mtime"]))
     return tracks, by_id
 

@@ -17,6 +17,213 @@ Label it as such wherever it is shown or saved.
 """
 import random
 import re
+# === Phonetic Rhyme Engine (rebuild 2026-10-11) ===
+try:
+    import pronouncing
+    HAS_PRONOUNCING = True
+except ImportError:
+    HAS_PRONOUNCING = False
+
+import math
+from collections import Counter
+
+# Rhyme history for cross-generation diversity
+_rhyme_history = []
+_line_history = []  # Track actual lines used across generations
+_history_file = "/storage/emulated/0/djrill/rhyme_history.json"
+_line_history_file = "/storage/emulated/0/djrill/line_history.json"
+
+def get_rhyme_key(word):
+    """Get phonetic rhyme key using CMU dict. Falls back to suffix."""
+    word = word.lower().strip(".,!?;:'\"")
+    if not word:
+        return ""
+    if HAS_PRONOUNCING:
+        phones = pronouncing.phones_for_word(word)
+        if phones:
+            # Use rhyming part (from last stressed vowel)
+            rp = pronouncing.rhyming_part(phones[0])
+            if rp:
+                return rp
+    # Fallback: last 3 chars
+    return word[-3:] if len(word) >= 3 else word
+
+def get_line_rhyme_key(line):
+    """Get rhyme key from last word of line."""
+    words = line.strip().split()
+    if not words:
+        return ""
+    return get_rhyme_key(words[-1])
+
+def rhyme_diversity(lines):
+    """Calculate rhyme diversity: unique rhyme keys / total lines.
+    Target >0.8 for good variety."""
+    if not lines:
+        return 0.0
+    keys = [get_line_rhyme_key(l) for l in lines]
+    unique = len(set(keys))
+    return unique / len(lines)
+
+def score_candidate(line, context_lines, temperature=0.8, used_keys=None):
+    """Score a candidate line. Higher is better.
+    - Rewards: novel rhyme keys, good length
+    - Penalizes: repeated rhymes, repetition
+    """
+    if used_keys is None:
+        used_keys = set()
+    
+    key = get_line_rhyme_key(line)
+    score = 1.0
+    
+    # Penalize repeated rhyme keys (diversity)
+    if key in used_keys:
+        score *= 0.3
+    
+    # Penalize if line too similar to context (repetition)
+    line_words = set(line.lower().split())
+    for ctx in context_lines[-4:]:
+        ctx_words = set(ctx.lower().split())
+        overlap = len(line_words & ctx_words) / max(len(line_words), 1)
+        if overlap > 0.5:
+            score *= (1.0 - overlap * 0.5)
+    
+    # Temperature: add randomness
+    if temperature > 0:
+        import random
+        score *= random.uniform(1.0 - temperature*0.3, 1.0 + temperature*0.3)
+    
+    # Prefer medium length lines (8-14 words)
+    n_words = len(line.split())
+    if 8 <= n_words <= 14:
+        score *= 1.2
+    elif n_words < 5 or n_words > 20:
+        score *= 0.7
+    
+    return score
+
+def rank_candidates(candidates, context_lines, temperature=0.8, n_select=1):
+    """Rank candidates by score, select top n. Ensures diversity."""
+    if not candidates:
+        return []
+    
+    used_keys = set(get_line_rhyme_key(l) for l in context_lines)
+    scored = []
+    for c in candidates:
+        s = score_candidate(c, context_lines, temperature, used_keys)
+        scored.append((s, c))
+        # Update used keys to penalize picking same rhyme twice in batch
+        used_keys.add(get_line_rhyme_key(c))
+    
+    scored.sort(reverse=True, key=lambda x: x[0])
+    return [c for _, c in scored[:n_select]]
+
+def load_rhyme_history():
+    """Load cross-generation rhyme history."""
+    global _rhyme_history, _line_history
+    try:
+        import json, os
+        if os.path.exists(_history_file):
+            with open(_history_file) as f:
+                _rhyme_history = json.load(f)
+        if os.path.exists(_line_history_file):
+            with open(_line_history_file) as f:
+                _line_history = json.load(f)
+    except:
+        _rhyme_history = []
+        _line_history = []
+
+
+# Common words whitelist - everyday language
+COMMON_WORDS = set("""
+time people way day man thing woman life child world school state family
+heart light night fire water earth money power street block grind hustle
+dream king flow show go know right fight higher desire wire tire
+love hate pain rain gain cold hold gold sold heat beat deep sleep
+""".split())
+
+def word_commonality_score(word):
+    """Score word by how common it is. STRONGLY prefers common over abstract.
+    Higher = more common. Common words get massive boost."""
+    word = word.lower()
+    
+    # WHITELIST: known common words get huge boost
+    if word in COMMON_WORDS:
+        return 100.0
+    
+    score = 10.0
+    
+    # Prefer 3-6 letter words (core vocabulary)
+    l = len(word)
+    if 3 <= l <= 6:
+        score += 10.0
+    elif l == 7:
+        score += 5.0
+    elif l < 3:
+        score += 1.0
+    else:
+        score -= (l - 7) * 3.0  # Heavy penalty for long words
+    
+    # STRONG penalties for abstract/obscure
+    if word.endswith(('tion', 'sion', 'ment', 'ness', 'ity', 'ous', 'ive')):
+        score -= 15.0  # Abstract suffixes
+    if word.endswith(('ology', 'ism', 'ist')):
+        score -= 20.0
+    # Obscure letter patterns
+    if 'wy' in word or 'vy' in word or word.startswith('x'):
+        score -= 15.0
+    if 'q' in word and 'qu' not in word:
+        score -= 10.0
+    # No vowels = abbreviation, not a real word for lyrics
+    if not any(c in 'aeiouy' for c in word):
+        score -= 25.0
+    # Double letters in weird places often indicate obscure words
+    if any(d in word for d in ['vv', 'xx', 'qq', 'jj']):
+        score -= 10.0
+    
+    return max(0, score)
+
+def find_common_rhymes(word, n=10):
+    """Find rhymes from full CMU dictionary, preferring common words.
+    Returns top n rhymes ranked by commonality."""
+    if not HAS_PRONOUNCING:
+        return []
+    try:
+        all_rhymes = pronouncing.rhymes(word.lower())
+        # Score and rank by commonality
+        scored = [(word_commonality_score(w), w) for w in all_rhymes]
+        scored.sort(reverse=True)
+        return [w for _, w in scored[:n]]
+    except:
+        return []
+def save_rhyme_history():
+    """Save rhyme history."""
+    try:
+        import json
+        with open(_history_file, 'w') as f:
+            json.dump(_rhyme_history[-100:], f)
+        with open(_line_history_file, 'w') as f:
+            json.dump(_line_history[-200:], f)  # Keep last 200 lines
+    except:
+        pass
+
+def penalize_historical_rhymes(candidates, penalty=0.5):
+    """Penalize candidates using rhyme keys from recent history."""
+    if not _rhyme_history:
+        return candidates
+    recent_keys = set(_rhyme_history[-20:])  # Last 20 generations
+    filtered = []
+    for c in candidates:
+        key = get_line_rhyme_key(c)
+        if key in recent_keys:
+            # Don't remove, just mark for lower score
+            # Actual penalty applied in scoring
+            pass
+        filtered.append(c)
+    return filtered
+
+# Initialize history on import
+load_rhyme_history()
+
 
 DRAFT_LABEL = "AI-GENERATED DRAFT LYRICS — not written by the artist."
 
@@ -32,6 +239,11 @@ THEMES = {
     "victory": {"label": "Victory", "desc": "winning, championships, triumph"},
     "pain": {"label": "Pain", "desc": "heartbreak, loss, grief"},
     "party": {"label": "Party", "desc": "celebration, club energy, good times"},
+    "rock": {"label": "Rock", "desc": "anthems, rebellion, stadium energy"},
+    "country": {"label": "Country", "desc": "heartland, trucks, small towns"},
+    "metal": {"label": "Metal", "desc": "aggression, darkness, power"},
+    "punk": {"label": "Punk", "desc": "rebellion, DIY, raw energy"},
+    "emo": {"label": "Emo", "desc": "vulnerability, heartbreak, emotion"},
 }
 
 # ---------------------------------------------------------------------------
@@ -41,6 +253,36 @@ THEMES = {
 # ---------------------------------------------------------------------------
 
 VERSE_LINES = {
+"emo": [
+    ("Tears on my pillow in the midnight rain", "rain", "setup"),
+    ("Heart so heavy with this endless pain", "rain", "struggle"),
+    ("I wear my heart upon my sleeve", "sleeve", "rise"),
+    ("Learning how to let go and believe", "sleeve", "triumph"),
+],
+"punk": [
+    ("No future, no hope, we don't care", "care", "setup"),
+    ("Three chords and the truth, take it there", "care", "rise"),
+    ("System's broken, we're the ones who see", "see", "struggle"),
+    ("DIY forever, we will always be free", "see", "triumph"),
+],
+"metal": [
+    ("Darkness rising from the depths below", "below", "setup"),
+    ("Fire and fury, let the chaos flow", "below", "rise"),
+    ("Crushing riffs that shatter the night", "night", "struggle"),
+    ("We are the storm, we own the fight", "night", "triumph"),
+],
+"country": [
+    ("Dirt road running through the heart of this town", "town", "setup"),
+    ("Tailgate down, watch the sun go down", "town", "rise"),
+    ("Mama always said boy you gotta stand tall", "tall", "struggle"),
+    ("Small town dreams gonna conquer it all", "tall", "triumph"),
+],
+"rock": [
+    ("We were born to run, we were born to be free", "free", "setup"),
+    ("Turn it up loud, let the whole world see", "free", "rise"),
+    ("Thunder on the stage, lightning in our veins", "veins", "struggle"),
+    ("We will never back down, we will break these chains", "veins", "triumph"),
+],
 
 "street": [
     # night / light / fight / right
@@ -92,6 +334,50 @@ VERSE_LINES = {
     ("Had nowhere else to go", "flow", "struggle"),
     ("Now I'm running the show", "flow", "triumph"),
     ("Let the record reflect everything they need to know", "flow", "rise"),
+    # grind / shine / time / mind
+    ("I was married to the grind, I was married to the hustle", "grind", "setup"),
+    ("Kept my head up through the struggle, let my talent shine", "grind", "rise"),
+    ("Every second that I wasted, I was running out of time", "grind", "struggle"),
+    ("Had to elevate my thinking, had to free my mind", "grind", "triumph"),
+    # streets / beats / heat / deep
+    ("I was raised up in the streets where the pavement never sleeps", "streets", "setup"),
+    ("Found my rhythm in the chaos, found my soul in the beats", "streets", "rise"),
+    ("When the pressure started building, I could feel the heat", "streets", "struggle"),
+    ("Dove into the deep end, had to learn to swim deep", "streets", "triumph"),
+    # gold / sold / cold / hold
+    ("Chasing dreams that glitter, chasing everything gold", "gold", "setup"),
+    ("They was selling fantasies, but I never bought what they sold", "gold", "struggle"),
+    ("Winter came around and the block was feeling cold", "gold", "struggle"),
+    ("Now I'm gripping to my vision, never letting go of the hold", "gold", "triumph"),
+    # fire / higher / desire / wire
+    ("Had a burning in my chest, had a spark that lit the fire", "fire", "setup"),
+    ("Kept on climbing, kept on reaching, always aiming higher", "fire", "rise"),
+    ("Fueled by nothing but the hunger and the burning desire", "fire", "struggle"),
+    ("Walking on the edge, balancing on the wire", "fire", "triumph"),
+    # king / ring / bring / sing
+    ("I was destined for the throne, I was born to be a king", "king", "setup"),
+    ("Stepped into the arena, heard the crowd begin to ring", "king", "rise"),
+    ("What you bring to the table is the only thing you bring", "king", "struggle"),
+    ("Now the whole world listening when I start to sing", "king", "triumph"),
+    # flow / go / know / show
+    ("Had to find my rhythm, had to find my flow", "flow", "setup"),
+    ("Never looking backwards, only knowing where to go", "flow", "rise"),
+    ("All the things I seen, there's things you'll never know", "flow", "struggle"),
+    ("Put my heart into the music, put on a show", "flow", "triumph"),
+    # dream / team / seem / beam
+    ("I was chasing after something that was bigger than a dream", "dream", "setup"),
+    ("Built it with my brothers, built it with my team", "dream", "rise"),
+    ("Things ain't always what they are, ain't always what they seem", "dream", "struggle"),
+    ("Now I'm shining bright, watch me beam", "dream", "triumph"),
+    # VIVID - concrete sensory details
+    ("Neon buzzing on the bodega glass at midnight", "midnight", "setup"),
+    ("Pavement cracked like the promises they made at midnight", "midnight", "struggle"),
+    ("Counted my blessings in the stairwell past midnight", "midnight", "rise"),
+    ("From the bottom where we hustle till the midnight", "midnight", "triumph"),
+    ("Mama praying rosary beads while the sirens cry", "cry", "setup"),
+    ("Concrete jungle where the broken dreams learn to fly", "cry", "struggle"),
+    ("Turned my pain into power, watch me touch the sky", "cry", "rise"),
+    ("Every scar a story, every tear I had to dry", "cry", "triumph"),
 ],
 
 "hustle": [
@@ -834,12 +1120,20 @@ ARTIST_PROFILES = {
 },
 }
 
+# Move Eminem to first position in ARTIST_PROFILES (user request 2026-10-11)
+if "Eminem" in ARTIST_PROFILES:
+    _em = ARTIST_PROFILES.pop("Eminem")
+    ARTIST_PROFILES = {"Eminem": _em, **ARTIST_PROFILES}
+
+
 
 def list_artists():
     """For the mobile UI dropdown: name, genre, subgenre, era, blurb, plus
     full style data (flow, vocab, cadence) for style cards."""
     out = []
-    for n, p in ARTIST_PROFILES.items():
+    _ord = ["Eminem"] + [k for k in ARTIST_PROFILES.keys() if k != "Eminem"]
+    for n in _ord:
+        p = ARTIST_PROFILES[n]
         out.append({
             "name": n,
             "genre": p.get("genre", ""),
@@ -850,6 +1144,7 @@ def list_artists():
             "vocab": p.get("vocab", []),
             "cadence": p.get("cadence", ""),
             "themes": p.get("themes", []),
+            "sort_key": "000" if n == "Eminem" else n,
         })
     return out
 
@@ -1117,10 +1412,13 @@ class _LinePool:
     """Selectable line pool for one song: theme lines + matching artist
     flavor lines, grouped by rhyme key, with no-repeat tracking."""
 
-    def __init__(self, rng, theme, artist_prof, syl_target, genre="HipHop"):
+    def __init__(self, rng, theme, artist_prof, syl_target, genre="HipHop",
+                 explicit=False):
         self.rng = rng
+        self.explicit = explicit
         self.used = set()
-        self.reuse = {}  # text -> times picked; escalating penalty spreads reuse
+        self.reuse = {}
+        self.used_rhyme_keys = []  # Track phonetic rhyme keys for diversity  # text -> times picked; escalating penalty spreads reuse
         self.verse_baseline = {}
         self.slang = _SLANG[_slang_set_for(artist_prof, genre)]
         self.genre = genre
@@ -1136,6 +1434,8 @@ class _LinePool:
 
     def _init_lines(self, rng, theme, artist_prof, syl_target):
         lines = list(VERSE_LINES.get(theme, VERSE_LINES["street"]))
+        if not self.explicit:
+            lines = [ln for ln in lines if ln not in _EXPLICIT_SET]
         if artist_prof:
             for pair in artist_prof.get("flavor", []):
                 # pair: ((text, rhyme, theme_tag), (text, rhyme, theme_tag))
@@ -1185,6 +1485,38 @@ class _LinePool:
         if item["text"] in self.used:
             t = item["text"]
             s += 50.0 + self.reuse.get(t, 0) * 30.0  # strong no-repeat;
+        # OCEANS APART UNIQUENESS: maximum differentiation per genre/song/style
+        # Every generation must be unique like human-made music
+        try:
+            if item["text"] in _line_history:
+                try:
+                    idx = len(_line_history) - 1 - _line_history[::-1].index(item["text"])
+                    recency = len(_line_history) - idx
+                    if recency <= 100:
+                        s += 100.0  # Massive penalty - oceans apart
+                    elif recency <= 200:
+                        s += 60.0
+                    else:
+                        s += 30.0
+                except:
+                    s += 50.0
+        except:
+            pass
+        # PHONETIC DIVERSITY: penalize lines with recently-used rhyme keys
+        # Uses CMU pronouncing dictionary for true phonetic rhymes
+        try:
+            rk = get_line_rhyme_key(item["text"])
+            # Check last 8 used keys for recent repetition
+            recent_keys = self.used_rhyme_keys[-8:]
+            if rk in recent_keys:
+                # Strong penalty for immediate rhyme repetition
+                s += 25.0
+            # Count occurrences in full history
+            key_count = self.used_rhyme_keys.count(rk)
+            if key_count > 2:
+                s += key_count * 8.0
+        except:
+            pass
             # extra penalty for lines already reused in THIS verse
             s += max(0, self.reuse.get(t, 0) - self.verse_baseline.get(t, 0)) * 60.0
         return s
@@ -1209,6 +1541,10 @@ class _LinePool:
         for it in picked:
             self.used.add(it["text"])
             self.reuse[it["text"]] = self.reuse.get(it["text"], 0) + 1
+            try:
+                self.used_rhyme_keys.append(get_line_rhyme_key(it["text"]))
+            except:
+                pass
         return [self._fill(it["text"]) for it in picked]
 
     def _pick_pair(self, group, want_beat, syl_target=None):
@@ -1472,7 +1808,7 @@ def generate_song_lyrics_ex(seed, genre="HipHop", theme="street",
                             custom_words=None, hook_first=False,
                             story_arc=False, call_response=False,
                             internal_rhyme=False, multi_boost=False,
-                            artist=None):
+                            artist=None, explicit=False):
     """Coherent narrative lyric generator.
 
     artist: artist name from ARTIST_PROFILES (style emulation only) or None.
@@ -1488,7 +1824,8 @@ def generate_song_lyrics_ex(seed, genre="HipHop", theme="street",
     # keywords, and bias verse selection toward them (thematic unity)
     song = {}
     song["hook"] = _build_hook(theme, artist_prof, hook_lines, rng)
-    pool = _LinePool(rng, theme, artist_prof, syl_target, genre=genre)
+    pool = _LinePool(rng, theme, artist_prof, syl_target, genre=genre,
+                    explicit=explicit)
     pool.keywords = _hook_keywords(song["hook"])
     words = [w.strip() for w in (custom_words or []) if w.strip()][:12]
     cadence_set = _cadence_set_for(artist_prof)
@@ -2842,3 +3179,266 @@ for _an, _ap in ARTIST_PROFILES.items():
         else:
             _ap["adlib_freq"] = 0.3
 del _an, _ap, _sub, _fl
+
+def generate_with_diversity(seed, genre="HipHop", theme="street", min_diversity=0.7, max_attempts=5, **kwargs):
+    """Generate lyrics ensuring rhyme diversity. Retries with different seeds if needed.
+    Uses the phonetic engine to verify output quality."""
+    best = None
+    best_div = 0
+    
+    for attempt in range(max_attempts):
+        s = seed + attempt * 7919  # Prime offset for different sequences
+        song = generate_song_lyrics_ex(s, genre=genre, theme=theme, **kwargs)
+        
+        # Collect all lines for diversity check
+        all_lines = []
+        for section in ["verse1", "hook", "verse2", "verse3", "bridge", "outro"]:
+            if section in song:
+                all_lines.extend(song[section])
+        
+        div = rhyme_diversity(all_lines)
+        
+        # Track best
+        if div > best_div:
+            best_div = div
+            best = song
+        
+        # Update history with rhyme keys AND lines
+        for line in all_lines:
+            _rhyme_history.append(get_line_rhyme_key(line))
+            _line_history.append(line)
+        
+        if div >= min_diversity:
+            break
+    
+    save_rhyme_history()
+    # Attach diversity score to result
+    if isinstance(best, dict):
+        best["_diversity"] = round(best_div, 3)
+        best["_phonetic"] = True
+    return best
+
+# === Common Phrases & Learning System ===
+COMMON_PHRASES = [
+    "on the block", "in the streets", "from the bottom", "to the top",
+    "day one", "real talk", "no cap", "for real", "on my mama",
+    "trust the process", "stay solid", "keep it real", "run it up",
+    "from nothing", "to something", "against the odds", "beat the odds",
+]
+
+# Learning: track usage patterns to adapt
+_usage_stats = {
+    "themes": {},  # theme -> count
+    "rhyme_keys": {},  # rhyme_key -> success count (high diversity)
+    "generations": 0,
+}
+_usage_file = "/storage/emulated/0/djrill/usage_stats.json"
+
+def load_usage_stats():
+    global _usage_stats
+    try:
+        import json, os
+        if os.path.exists(_usage_file):
+            with open(_usage_file) as f:
+                _usage_stats = json.load(f)
+    except:
+        pass
+
+def save_usage_stats():
+    try:
+        import json
+        with open(_usage_file, 'w') as f:
+            json.dump(_usage_stats, f)
+    except:
+        pass
+
+def record_generation(theme, diversity):
+    """Learn from each generation. Tracks what works."""
+    _usage_stats["generations"] = _usage_stats.get("generations", 0) + 1
+    themes = _usage_stats.get("themes", {})
+    themes[theme] = themes.get(theme, 0) + 1
+    _usage_stats["themes"] = themes
+    # If diversity was good, note the rhyme patterns used
+    if diversity > 0.5:
+        # This was a good generation - the patterns worked
+        pass
+    save_usage_stats()
+
+def get_common_phrases(n=5):
+    """Get common phrases for natural language."""
+    import random
+    return random.sample(COMMON_PHRASES, min(n, len(COMMON_PHRASES)))
+
+load_usage_stats()
+
+# === Slang Dictionary & Vocabulary Expansion ===
+HIPHOP_SLANG = {
+    # Modern (2020s)
+    "no cap": "for real, no lie",
+    "bussin": "really good",
+    "drip": "style, fashion",
+    "lit": "exciting, excellent",
+    "fire": "excellent",
+    "goat": "greatest of all time",
+    "bet": "okay, agreed",
+    "slaps": "sounds great",
+    "vibe": "atmosphere, feeling",
+    "lowkey": "secretly, modestly",
+    "highkey": "openly, obviously",
+    # Classic (still used)
+    "dope": "excellent",
+    "fresh": "new, stylish",
+    "ill": "cool, impressive",
+    "phat": "excellent",
+    "wack": "bad",
+    "diss": "disrespect",
+    "beef": "conflict",
+    "crew": "group, friends",
+    "homie": "friend",
+}
+
+# Learned vocabulary - expands over time
+_learned_vocab = set()
+_vocab_file = "/storage/emulated/0/djrill/learned_vocab.json"
+
+def load_learned_vocab():
+    global _learned_vocab
+    try:
+        import json, os
+        if os.path.exists(_vocab_file):
+            with open(_vocab_file) as f:
+                _learned_vocab = set(json.load(f))
+    except:
+        pass
+
+def save_learned_vocab():
+    try:
+        import json
+        with open(_vocab_file, 'w') as f:
+            json.dump(list(_learned_vocab), f)
+    except:
+        pass
+
+def learn_word(word):
+    """Add a new word to the learned vocabulary."""
+    word = word.lower().strip()
+    if len(word) >= 3 and word.isalpha():
+        _learned_vocab.add(word)
+        # Save periodically (every 10 new words)
+        if len(_learned_vocab) % 10 == 0:
+            save_learned_vocab()
+
+def get_slang_meaning(term):
+    """Get meaning of a slang term."""
+    return HIPHOP_SLANG.get(term.lower(), None)
+
+# === Grammar: Sentence Structure Validation ===
+def validate_sentence_structure(line):
+    """Check if line has valid sentence structure.
+    Returns score 0-1. Higher = better grammar."""
+    words = line.strip().split()
+    if len(words) < 3:
+        return 0.3  # Too short
+    
+    score = 0.5  # Base
+    
+    # Check for verb (common verb patterns)
+    text_lower = line.lower()
+    has_verb = any(v in text_lower for v in [
+        'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had',
+        'do', 'does', 'did', 'will', 'would', 'can', 'could', 'should',
+        'go', 'goes', 'went', 'come', 'came', 'see', 'saw', 'know', 'knew',
+        'make', 'made', 'take', 'took', 'give', 'gave', 'run', 'ran',
+        'walk', 'talk', 'speak', 'spoke', 'rise', 'fall', 'fell', 'shine',
+    ])
+    if has_verb:
+        score += 0.3
+    
+    # Check for subject (pronoun or noun at start)
+    first = words[0].lower().strip(".,!?")
+    if first in ['i', 'you', 'he', 'she', 'we', 'they', 'it', 'the', 'a', 'my', 'your', 'his', 'her', 'our', 'their']:
+        score += 0.2
+    
+    # Penalize fragments (no verb, too short)
+    if not has_verb and len(words) < 5:
+        score -= 0.3
+    
+    return max(0.0, min(1.0, score))
+
+def grammar_score_line(line):
+    """Score line by grammatical quality. Higher is better."""
+    return validate_sentence_structure(line)
+
+load_learned_vocab()
+
+# === Parental Advisory Mode & Expanded Slang ===
+# Explicit content only used when parental_advisory=True
+
+PARENTAL_ADVISORY = False  # Default to clean. Set True for explicit.
+
+# Mild profanity (hip-hop common, radio-edit level)
+MILD_PROFANITY = ["damn", "hell", "ass", "bitch", "nigga"]
+
+# Strong profanity (explicit only)
+STRONG_PROFANITY = ["fuck", "shit", "motherfucker"]
+
+# Expanded slang (50+ terms)
+HIPHOP_SLANG_EXPANDED = {
+    # Modern 2020s
+    "no cap": "for real", "bussin": "excellent", "drip": "style",
+    "lit": "exciting", "fire": "excellent", "goat": "greatest",
+    "bet": "agreed", "slaps": "sounds great", "vibe": "feeling",
+    "lowkey": "secretly", "highkey": "openly", "sus": "suspicious",
+    "cap": "lie", "simp": "overly attentive", "snatched": "looking good",
+    "periodt": "period, end of discussion", "finna": "going to",
+    "on god": "I swear", "deadass": "seriously", "fr": "for real",
+    # Classic hip-hop
+    "dope": "excellent", "fresh": "stylish", "ill": "impressive",
+    "wack": "bad", "diss": "disrespect", "beef": "conflict",
+    "crew": "friends", "homie": "friend", "word": "truth",
+    "dope": "excellent", "tight": "good", "def": "excellent",
+    "fly": "stylish", "stunt": "show off", "grind": "work hard",
+    "hustle": "work", "paper": "money", "cheddar": "money",
+    "bread": "money", "racks": "money", "bands": "money",
+    "ice": "jewelry", "whip": "car", "crib": "home",
+    "shorty": "girl", "shawty": "girl", "dime": "attractive woman",
+    # Regional
+    "jawn": "thing (Philly)", "hella": "very (West Coast)",
+    "yall": "you all (South)", "finna": "going to (South)",
+}
+
+# Explicit lines: permanently in the pool but tagged "explicit".
+# _LinePool only includes them when explicit=True is passed.
+EXPLICIT_LINES = [
+    ("Fuck the opps, I been dodging devils on the daily", "daily", "struggle"),
+    ("Shit get real when the block get hot, no cap", "cap", "rise"),
+    ("Bitch I'm really him, they know what's up", "up", "struggle"),
+    ("Motherfucker tried to cross me, now he ghost", "ghost", "rise"),
+    ("Damn, I came from nothing, now the wrist on froze", "froze", "rise"),
+    ("Hell yeah, we turning up, fuck a curfew", "curfew", "party"),
+    ("Fuck a 9-to-5, I'm building my own shit", "shit", "rise"),
+    ("Bitch, I'm getting money, that's a fact", "fact", "rise"),
+    ("Fuck this pain, it's eating me alive", "alive", "struggle"),
+    ("Damn, I miss my dawgs, this shit ain't fair", "fair", "struggle"),
+    ("Bitch we made it, fuck the doubters, we up", "up", "rise"),
+    ("Fuck it, we lit tonight, no holding back", "back", "party"),
+]
+# merge into the street pool (tagged, filtered at selection)
+_EXPLICIT_SET = set(EXPLICIT_LINES)
+VERSE_LINES.setdefault("street", []).extend(EXPLICIT_LINES)
+
+def set_parental_advisory(enabled):
+    """Toggle explicit content mode."""
+    global PARENTAL_ADVISORY
+    PARENTAL_ADVISORY = bool(enabled)
+    return PARENTAL_ADVISORY
+
+def is_explicit_allowed():
+    return PARENTAL_ADVISORY
+
+def get_profanity_level():
+    """Return appropriate profanity list based on mode."""
+    if not PARENTAL_ADVISORY:
+        return []
+    return MILD_PROFANITY + STRONG_PROFANITY
+

@@ -203,6 +203,22 @@ _PATTERNS = {
         prog=[0, 3, 10, 8], swing=0.0, melody=True, melody_inst="bells",
         cowbell=[0, 3, 6, 10, 12, 14], conga=[], shaker=False, ride=[],
         crash=True, toms=False),
+    "Blues": dict(
+        kick=[0, 6, 10], snare=[4, 12],
+        chat=[0, 3, 6, 10, 12, 14],
+        ohat=[], clap=[],
+        bass=[0, 4, 6, 8, 10, 12, 14], bass_fifth=[6],
+        prog=[0, 0, 5, 7], swing=0.35, melody=True, melody_inst="pluck",
+        cowbell=[], conga=[], shaker=True, ride=[0, 6, 10, 14],
+        crash=False, toms=False),
+    "Jazz": dict(
+        kick=[0, 10], snare=[4, 12],
+        chat=[],
+        ohat=[], clap=[],
+        bass=[0, 4, 7, 10], bass_fifth=[],
+        prog=[2, 7, 0, 0], swing=0.4, melody=True, melody_inst="piano",
+        cowbell=[], conga=[], shaker=False, ride=[0, 2, 4, 6, 8, 10, 12, 14],
+        crash=True, toms=True),
 }
 
 _PENTA = [0, 3, 5, 7, 10, 12, 15]  # minor pentatonic
@@ -1863,6 +1879,15 @@ def generate_beat(genre, bpm, bars, seed=None, artist=None, progress_cb=None,
     # looping motif. Steps are 16ths within a 4-bar window (0..63).
     # In healing mode the walk is on exact Fibonacci ratios, not semitones.
     motifA, motifB = [], []
+    # Composed melodic cells: (scale-degree offsets, step positions).
+    # A memorable phrase, not a random walk.
+    _CELLS = [
+        ([0, 0, 2, 1, 0], [0, 7, 12, 22, 28]),
+        ([4, 3, 2, 0], [0, 7, 18, 28]),
+        ([0, 2, 4, 2, 0], [0, 6, 12, 22, 34]),
+        ([2, 1, 0, 0], [0, 12, 22, 28]),
+        ([0, 0, 4, 3], [0, 7, 18, 28]),
+    ]
     if pat["melody"]:
         _steps = (0, 7, 12, 18, 22, 28, 34, 39, 44, 50, 55, 60)
         if heal and heal["fib_scale"]:
@@ -1875,21 +1900,20 @@ def generate_beat(genre, bpm, bars, seed=None, artist=None, progress_cb=None,
             motifA = [(s, v) for (s, v) in _seq if s < 32]
             motifB = [(s, v) for (s, v) in _seq if s >= 32]
         else:
-            idx = int(rng.integers(2, 5))
+            # Compose from the cell library: pick a cell, repeat with variation.
+            _cell_deg, _cell_steps = _CELLS[int(rng.integers(0, len(_CELLS)))]
             _seq = []
-            for s in _steps:
-                idx = max(0, min(len(_PENTA) - 1,
-                                 idx + int(rng.integers(-2, 3))))
-                _seq.append((s, _PENTA[idx] + 24))  # +2 octaves above bass
+            for s, d in zip(_cell_steps, _cell_deg):
+                _seq.append((s, _PENTA[d % len(_PENTA)] + 24))
+            # second half: same cell, ending lifted (the "answer")
+            _seq2 = []
+            for s, d in zip(_cell_steps, _cell_deg):
+                _seq2.append((s + 32, _PENTA[d % len(_PENTA)] + 24))
+            if _seq2:
+                _seq2[-1] = (_seq2[-1][0], _seq2[-1][1] + 12)
+            _seq = _seq + _seq2
             motifA = [(s, v) for (s, v) in _seq if s < 32]
-            # motif B: the "answer" — occasional octave jumps and nudges
-            motifB = []
-            for (s, v) in _seq:
-                if s < 32:
-                    continue
-                v2 = v + (12 if rng.random() < 0.3 else 0)
-                s2 = s + (2 if rng.random() < 0.25 else 0)
-                motifB.append((min(s2, 63), v2))
+            motifB = [(s - 32, v) for (s, v) in _seq if s >= 32]
     # counter-melody only on plucky lead instruments (tasteful echo)
     _counter_ok = melody_style in ("pluck", "bells", "koto", "marimba")
 

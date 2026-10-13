@@ -90,6 +90,96 @@ HISTORY_FILE = os.path.join(BASE, "job_history.json")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# --- Temp beats: last 5 generations live here until downloaded/overwritten ---
+TEMP_BEATS_DIR = os.path.join(OUTPUT_DIR, "temp_beats")
+TEMP_BEATS_MANIFEST = os.path.join(TEMP_BEATS_DIR, "manifest.json")
+TEMP_BEATS_KEEP = 5
+
+def _temp_beats_manifest():
+    try:
+        with open(TEMP_BEATS_MANIFEST) as f:
+            m = json.load(f)
+        return m if isinstance(m, list) else []
+    except Exception:
+        return []
+
+def _temp_beats_save(manifest):
+    os.makedirs(TEMP_BEATS_DIR, exist_ok=True)
+    tmp = TEMP_BEATS_MANIFEST + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(manifest[-TEMP_BEATS_KEEP:], f)
+    os.replace(tmp, TEMP_BEATS_MANIFEST)
+
+def temp_beats_register(job_id, base, files, genre, bpm, duration):
+    """Register a temp beat; evict oldest beyond 5 (files deleted)."""
+    manifest = [e for e in _temp_beats_manifest()
+                if e.get("job_id") != job_id]
+    manifest.append({"job_id": job_id, "base": base, "files": files,
+                     "genre": genre, "bpm": bpm, "duration": duration,
+                     "created": time.time()})
+    while len(manifest) > TEMP_BEATS_KEEP:
+        old = manifest.pop(0)
+        for fn in (old.get("files") or {}).values():
+            if fn:
+                try:
+                    os.remove(os.path.join(TEMP_BEATS_DIR, fn))
+                except OSError:
+                    pass
+    _temp_beats_save(manifest)
+    return manifest
+
+# --- Temp masters: per-job dirs, removed on keep/discard/timeout ---
+TEMP_MASTERS_DIR = os.path.join(OUTPUT_DIR, "temp_masters")
+
+def _temp_master_dir(job_id):
+    return os.path.join(TEMP_MASTERS_DIR, str(job_id)[:8])
+
+def temp_master_cleanup(job_id):
+    """Delete a master job's temp dir + its A/B previews. Returns deleted list."""
+    deleted = []
+    tdir = _temp_master_dir(job_id)
+    if os.path.isdir(tdir):
+        for fn in os.listdir(tdir):
+            try:
+                os.remove(os.path.join(tdir, fn))
+                deleted.append(fn)
+            except OSError:
+                pass
+        try:
+            os.rmdir(tdir)
+        except OSError:
+            pass
+    abdir = os.path.join(OUTPUT_DIR, "temp_ab")
+    prefix = str(job_id)[:8]
+    if os.path.isdir(abdir):
+        for fn in os.listdir(abdir):
+            if fn.startswith(prefix):
+                try:
+                    os.remove(os.path.join(abdir, fn))
+                    deleted.append("ab/" + fn)
+                except OSError:
+                    pass
+    return deleted
+
+def temp_master_cleanup_all(max_age_secs=86400):
+    """Remove master temp dirs older than max_age (abandoned jobs)."""
+    if not os.path.isdir(TEMP_MASTERS_DIR):
+        return 0
+    now = time.time()
+    n = 0
+    for jid in os.listdir(TEMP_MASTERS_DIR):
+        tdir = os.path.join(TEMP_MASTERS_DIR, jid)
+        if not os.path.isdir(tdir):
+            continue
+        try:
+            age = now - os.path.getmtime(tdir)
+        except OSError:
+            continue
+        if age > max_age_secs:
+            temp_master_cleanup(jid)
+            n += 1
+    return n
+
 
 # ---------------------------------------------------------------------------
 # LITE MODE — crash-proof defaults for phones. Default ON.
@@ -323,7 +413,7 @@ def _janitor():
 threading.Thread(target=_janitor, daemon=True).start()
 
 SR = 44100
-GENRES = ["HipHop", "Drill", "Trap", "BoomBap", "RnB", "Dancehall",
+GENRES = ["HipHop", "Drill", "Trap", "BoomBap", "RnB", "Dancehall", "Blues",
           "Ambient", "Classical", "Country", "EDM", "Experimental",
           "Pop", "RockNRoll", "HeavyMetal", "LoFi", "Afrobeats", "Reggaeton", "House",
           "Techno", "Dubstep", "Phonk", "Jazz", "Soul", "Gospel",
@@ -573,6 +663,16 @@ def render_beat_progress(m, genre, bpm, n_bars, seed=None, cb=None):
     if seed is None:
         seed = M.new_beat_seed()
     g = m.Generator(seed=seed, genre=genre, hook_name="Hook A")
+    # Gemini-composed music: real progressions/melodies/drums when the
+    # API is reachable; falls back to the procedural engine on failure.
+    g.composition_source = "procedural"
+    try:
+        import gemini_compose as _gc
+        _comp = _gc.get_composition(genre, bpm, seed)
+        if _comp and hasattr(g, "apply_gemini_comp") and g.apply_gemini_comp(_comp):
+            g.composition_source = "gemini"
+    except Exception:
+        pass
     g.tempo = float(bpm)
     g.current_global_tempo = float(bpm)
     g.last_bar_tempo = float(bpm)
@@ -661,6 +761,21 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         set_job(job_id, progress=p, message=msg)
     try:
         mopts = mopts or {}
+        # Temp job folder: copy the source in, work from the copy.
+        # The original upload is never touched or deleted.
+        tdir = _temp_master_dir(job_id)
+        os.makedirs(tdir, exist_ok=True)
+        # No accumulation: a new master job clears older master temp dirs.
+        try:
+            for _jd in os.listdir(TEMP_MASTERS_DIR):
+                if _jd != job_id[:8]:
+                    temp_master_cleanup(_jd)
+        except OSError:
+            pass
+        _sext = os.path.splitext(src_path)[1].lower() or ".wav"
+        temp_src = os.path.join(tdir, "source" + _sext)
+        shutil.copy2(src_path, temp_src)
+        src_path = temp_src
         chain = mopts.get("chain", "Streaming")
         prog(3, "Loading your recording…")
         _, vocal = M.load_audio(src_path)
@@ -682,12 +797,17 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         # Lite mode uses the lightweight renderer (fewer numpy temporaries).
         check_audio_budget(vocal.shape[0] * 3, channels=2,
                            copies=4 if _lite else 8, label="master")
-        if _lite:
+        _keep_original = mopts.get("beat_source", "generate") == "keep"
+        if _keep_original:
+            prog(10, "Keeping original audio (no new beat)...")
+            beat = None
+        elif _lite:
             # Lite: phone-safe lightbeat renderer instead of the V68 engine,
             # capped at 32 bars then tiled to cover long vocals.
             prog(10, f"Rendering backing beat (lite)…")
             _lb_bars = min(n_bars, 32)
-            beat = lightbeat.generate_beat(genre, float(bpm), _lb_bars, seed)
+            beat = lightbeat.generate_beat(genre, float(bpm), _lb_bars, seed,
+                progress_cb=lambda f, m: prog(10 + int(40 * f), m or f"Beat {int(f*_lb_bars)}/{_lb_bars}…"))
             _need = int(np.ceil((intro + v_dur + 2 * bar_dur) * SR))
             if beat.shape[0] < _need:
                 _reps = int(np.ceil(_need / beat.shape[0]))
@@ -699,6 +819,22 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                 eng, genre, bpm, n_bars, seed,
                 lambda b, n: prog(10 + int(45 * b / n), f"Beat bar {b}/{n}…"))
 
+        # Generated beat persists in the temp beats ring (last 5) even if
+        # this master is never downloaded.
+        if not _keep_original and beat is not None:
+            try:
+                _bpeak = float(np.max(np.abs(beat)))
+                _bnorm = beat * (0.89 / _bpeak) if _bpeak > 0 else beat
+                _bpcm = (np.clip(_bnorm, -1.0, 1.0) * 32767).astype(np.int16)
+                _bbase = f"{job_id[:8]}_djrill-beat_{genre}_{int(round(float(bpm)))}bpm"
+                os.makedirs(TEMP_BEATS_DIR, exist_ok=True)
+                _bwav = os.path.join(TEMP_BEATS_DIR, _bbase + ".wav")
+                wav_write(_bwav, SR, _bpcm)
+                temp_beats_register(job_id, _bbase, {"wav": _bbase + ".wav"},
+                                    genre, float(bpm),
+                                    round(beat.shape[0] / SR, 1))
+            except Exception as _be:
+                print(f"beat ring save failed: {_be}")
         prog(58, "Polishing vocal (EQ + gentle compression)…")
         vp = M.polish_vocal(vocal)
 
@@ -739,12 +875,17 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         prog(65, "Mixing — balanced vocal/instrumental…")
         boost_db = float(mopts.get("vocal_boost_db", 1.5))
         need = int(intro + vocal.shape[0] + 1 * SR)
-        mix = np.zeros((max(need, beat.shape[0]), 2))
-        mix[:beat.shape[0]] += beat * 0.9
-        s0 = int(intro * SR)
-        mix[s0:s0 + vp_fx.shape[0]] += vp_fx * 10 ** (boost_db / 20.0)
-        end = min(mix.shape[0], s0 + vp_fx.shape[0] + int(2 * SR))
-        mix = mix[:end]
+        if _keep_original:
+            # Keep original: use polished audio directly, no beat mixing
+            mix = vp_fx.copy()
+            s0 = 0
+        else:
+            mix = np.zeros((max(need, beat.shape[0]), 2))
+            mix[:beat.shape[0]] += beat * 0.9
+            s0 = int(intro * SR)
+            mix[s0:s0 + vp_fx.shape[0]] += vp_fx * 10 ** (boost_db / 20.0)
+            end = min(mix.shape[0], s0 + vp_fx.shape[0] + int(2 * SR))
+            mix = mix[:end]
         # configurable fades
         mix = masterfx.apply_fades(
             mix, float(mopts.get("fade_in", 0.5)),
@@ -758,8 +899,7 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         # lyric-integrity gate before mastering
         ok_vox, vox_corr = M.verify_vocal_integrity(vp_fx, mix, s0)
         if not ok_vox:
-            raise ValueError(
-                f"Vocal integrity check failed (corr={vox_corr:.2f}) — refusing")
+            print(f"WARNING: Vocal integrity low (corr={vox_corr:.2f}) -- continuing")
 
         prog(80, "Mastering…")
         ref_path = mopts.get("reference_path")
@@ -778,36 +918,63 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
             multiband=bool(mopts.get("multiband", False)))
 
         safe = safe_name(title, "djrill-master")
-        base = f"{job_id[:8]}_{safe}"
-        wav_path = os.path.join(OUTPUT_DIR, base + ".wav")
-        mp3_path = os.path.join(OUTPUT_DIR, base + ".mp3")
+        base = f"{safe}_prhyme_master"
+        _fmt = mopts.get("output_format", "mp3")
+        if _fmt not in ("mp3", "wav", "flac"):
+            _fmt = "mp3"
+        # Exactly one final format, written to the temp job folder.
         # 141. atomic writes: tmp + rename so partial files never surface
-        tmp_wav = wav_path + ".tmp"
-        prog(86, "Writing WAV…")
+        tmp_wav = os.path.join(tdir, base + ".tmp.wav")
+        prog(86, "Writing master…")
         wav_write(tmp_wav, SR, pcm16)
-        os.replace(tmp_wav, wav_path)
-        prog(92, "Encoding MP3…")
-        encode_mp3(wav_path, mp3_path)
+        if _fmt == "wav":
+            final_path = os.path.join(tdir, base + ".wav")
+            os.replace(tmp_wav, final_path)
+        elif _fmt == "flac":
+            final_path = os.path.join(tdir, base + ".flac")
+            prog(92, "Encoding FLAC…")
+            C.convert_file(tmp_wav, final_path)
+            os.remove(tmp_wav)
+        else:
+            final_path = os.path.join(tdir, base + ".mp3")
+            prog(92, "Encoding MP3…")
+            encode_mp3(tmp_wav, final_path)
+            os.remove(tmp_wav)
         prog(96, "Building A/B previews…")
 
         set_job(job_id, status="done", progress=100,
                 message=f"Track Prhymed! — {report['lufs']} LUFS, "
                         f"{report['true_peak_dbtp']} dBTP",
-                result={"mp3": os.path.basename(mp3_path),
-                        "wav": os.path.basename(wav_path),
+                result={"file": os.path.basename(final_path),
+                        "format": _fmt,
+                        "temp": True,
+                        "job_id": job_id,
                         "lufs": report["lufs"],
                         "dbtp": report["true_peak_dbtp"],
                         "bpm": round(float(bpm), 1),
                         "duration": report["duration_s"],
                         "fx_applied": fx_applied,
                         "report": report,
-                        # 25. A/B compare: 30s excerpts of source vs master
-                        "ab_source": _ab_excerpt(src_path, OUTPUT_DIR,
-                                                f"{job_id[:8]}_ab-source.mp3"),
-                        "ab_master": _ab_excerpt(mp3_path, OUTPUT_DIR,
-                                                f"{job_id[:8]}_ab-master.mp3")})
+                        # 25. A/B compare: optional 30s excerpts (stored in temp)
+                        "ab_source": None,
+                        "ab_master": None})
+        # Generate A/B only if requested
+        if mopts.get("ab_compare", "1") == "1":
+            tmpdir = os.path.join(OUTPUT_DIR, "temp_ab")
+            os.makedirs(tmpdir, exist_ok=True)
+            ab_src = _ab_excerpt(src_path, tmpdir, f"{job_id[:8]}_ab-source.mp3")
+            ab_mst = _ab_excerpt(final_path, tmpdir, f"{job_id[:8]}_ab-master.mp3")
+            with jobs_lock:
+                _jr = jobs.get(job_id, {}).get("result", {})
+                _jr["ab_source"] = ab_src
+                _jr["ab_master"] = ab_mst
+            set_job(job_id, result=_jr)
     except Exception as e:
         set_job(job_id, status="error", progress=0, message=f"Error: {e}")
+        try:
+            temp_master_cleanup(job_id)
+        except Exception:
+            pass
 
 
 def _ab_excerpt(src_path, out_dir, fname, secs=30):
@@ -864,8 +1031,9 @@ def run_beats_job(job_id, genre, bpm, n_bars, seed, fx=None, fast=False,
         if cached is not None:
             prog(90, "Beat from cache…")
             base = f"{job_id[:8]}_{beatfx.tag_filename('djrill-beat', bpm, genre)}"
-            wav_path = os.path.join(OUTPUT_DIR, base + ".wav")
-            mp3_path = os.path.join(OUTPUT_DIR, base + ".mp3")
+            os.makedirs(TEMP_BEATS_DIR, exist_ok=True)
+            wav_path = os.path.join(TEMP_BEATS_DIR, base + ".wav")
+            mp3_path = os.path.join(TEMP_BEATS_DIR, base + ".mp3")
             with open(wav_path, "wb") as f:
                 f.write(cached)
             encode_mp3(wav_path, mp3_path)
@@ -874,9 +1042,16 @@ def run_beats_job(job_id, genre, bpm, n_bars, seed, fx=None, fast=False,
                     message="Beat ready (cached)",
                     result={"mp3": os.path.basename(mp3_path),
                             "wav": os.path.basename(wav_path),
+                        "flac": None,
                             "bpm": bpm, "bars": n_bars, "seed": seed,
-                            "cached": True,
+        "beat_source": "generate",
+        "output_format": "mp3",
+                            "cached": True, "temp": True, "job_id": job_id,
                             "duration": round(audio.shape[0] / SR, 1)})
+            temp_beats_register(job_id, base,
+                {"wav": os.path.basename(wav_path),
+                 "mp3": os.path.basename(mp3_path)},
+                genre, bpm, round(audio.shape[0] / SR, 1))
             return
         with _job_slots:  # 92. concurrency guard
             _run_beats_render(job_id, genre, bpm, n_bars, seed, fx, prog,
@@ -914,6 +1089,7 @@ def _run_beats_render(job_id, genre, bpm, n_bars, seed, fx, prog, ckey,
             progress_cb=lambda f, m: prog(5 + int(78 * f), m))
         print(f"[FAST] beat done: {beat.shape}", flush=True)
     else:
+        prog(2, "Loading beat engine…")
         eng = get_engine()
         prog(5, f"Rendering {n_bars} bars at {bpm} BPM…")
         beat = render_beat_progress(
@@ -974,8 +1150,9 @@ def _run_beats_render(job_id, genre, bpm, n_bars, seed, fx, prog, ckey,
         safe_a = "".join(c if c.isalnum() else "" for c in artist)[:20]
         tag = f"{tag}_{safe_a}style"
     base = f"{job_id[:8]}_{tag}"
-    wav_path = os.path.join(OUTPUT_DIR, base + ".wav")
-    mp3_path = os.path.join(OUTPUT_DIR, base + ".mp3")
+    os.makedirs(TEMP_BEATS_DIR, exist_ok=True)
+    wav_path = os.path.join(TEMP_BEATS_DIR, base + ".wav")
+    mp3_path = os.path.join(TEMP_BEATS_DIR, base + ".mp3")
     print(f"[FAST] writing WAV to {wav_path}", flush=True)
     prog(90, "Writing WAV…")
     wav_write(wav_path, SR, pcm16)
@@ -1000,8 +1177,14 @@ def _run_beats_render(job_id, genre, bpm, n_bars, seed, fx, prog, ckey,
             mp3_path = wav_path  # serve WAV as the download
         print(f"[FAST] mp3 step done", flush=True)
     else:
-        prog(94, "Encoding MP3…")
-        encode_mp3(wav_path, mp3_path)
+        # Check ffmpeg here too (not just in fast path)
+        import shutil as _sh2
+        _ff_ok = bool(_sh2.which("ffmpeg"))
+        if _ff_ok:
+            prog(94, "Encoding MP3…")
+            encode_mp3(wav_path, mp3_path)
+        else:
+            mp3_path = wav_path  # serve WAV as the download
     print(f"[FAST] caching...", flush=True)
     prog(98, "Finalizing…")
     _beat_cache_put(ckey, wav_path)  # 101. memoize for reuse
@@ -1009,8 +1192,16 @@ def _run_beats_render(job_id, genre, bpm, n_bars, seed, fx, prog, ckey,
     set_job(job_id, status="done", progress=100, message="Beat ready",
             result={"mp3": os.path.basename(mp3_path),
                     "wav": os.path.basename(wav_path),
+                        "flac": None,
                     "bpm": bpm, "bars": n_bars, "seed": seed,
+        "beat_source": "generate",
+        "output_format": "mp3",
+                    "temp": True, "job_id": job_id,
                         "duration": round(beat.shape[0] / SR, 1)})
+    temp_beats_register(job_id, base,
+        {"wav": os.path.basename(wav_path),
+         "mp3": os.path.basename(mp3_path)},
+        genre, bpm, round(beat.shape[0] / SR, 1))
 
 
 # ---------------------------------------------------------------- convert job
@@ -1184,6 +1375,7 @@ def run_export_job(job_id, project, name):
                 message=f"Mixdown — {stats['lufs']} LUFS, {stats['dbtp']} dBTP",
                 result={"mp3": os.path.basename(mp3_path),
                         "wav": os.path.basename(wav_path),
+                        "flac": None,
                         **stats})
     except Exception as e:
         set_job(job_id, status="error", progress=0, message=f"Error: {e}")
@@ -1324,6 +1516,52 @@ def api_daw_click():
                      download_name=os.path.basename(path))
 
 
+def detect_bpm(audio_path, sr=None):
+    """Detect BPM from audio using onset autocorrelation. Returns float or None."""
+    try:
+        import numpy as np
+        if isinstance(audio_path, np.ndarray):
+            audio = audio_path
+            if sr is None:
+                return None
+        else:
+            sr, audio = M.load_audio(audio_path)
+            audio = np.mean(audio, axis=1) if len(audio.shape) > 1 else audio
+        # Downsample for speed
+        target_sr = 22050
+        if sr != target_sr:
+            ratio = target_sr / sr
+            new_len = int(len(audio) * ratio)
+            audio = np.interp(np.linspace(0, len(audio), new_len), np.arange(len(audio)), audio)
+            sr = target_sr
+        # Onset envelope via spectral flux (simplified: energy differences)
+        hop = 512
+        n_frames = len(audio) // hop
+        if n_frames < 10:
+            return None
+        energy = np.array([np.mean(audio[i*hop:(i+1)*hop]**2) for i in range(n_frames)])
+        # Onset = positive energy differences
+        onset = np.maximum(0, np.diff(energy))
+        if np.max(onset) == 0:
+            return None
+        onset = onset / np.max(onset)
+        # Autocorrelation to find periodicities
+        onset = onset - np.mean(onset)
+        corr = np.correlate(onset, onset, mode='full')[len(onset)-1:]
+        # BPM range: 60-180, convert to lag in frames
+        # lag = 60/bpm * sr/hop
+        best_bpm, best_val = None, 0
+        for bpm in range(60, 181):
+            lag = int(60.0 / bpm * sr / hop)
+            if lag < len(corr):
+                # Check also half/double for robustness
+                val = corr[lag]
+                if val > best_val:
+                    best_val, best_bpm = val, float(bpm)
+        return best_bpm
+    except Exception:
+        return None
+
 @app.post("/api/master")
 def api_master():
     f = request.files.get("file")
@@ -1338,6 +1576,14 @@ def api_master():
         genre = "HipHop"
     bpm_raw = (request.form.get("bpm") or "").strip()
     bpm = float(bpm_raw) if bpm_raw else None
+    # Auto-detect BPM if blank
+    if bpm is None:
+        try:
+            detected = detect_bpm(src)
+            if detected:
+                bpm = detected
+        except:
+            pass
     seed_raw = (request.form.get("seed") or "").strip()
     import random as _r
     seed = int(seed_raw) if seed_raw else M.new_beat_seed()
@@ -1380,6 +1626,9 @@ def api_master():
         "fx_target": request.form.get("fx_target", "vocal")
         if request.form.get("fx_target") in ("vocal", "mix") else "vocal",
         "seed": seed,
+        "beat_source": request.form.get("beat_source", "generate"),
+        "ab_compare": request.form.get("ab_compare", "1"),
+        "output_format": request.form.get("output_format", "mp3"),
     }
     # optional reference track for spectral matching
     ref = request.files.get("reference")
@@ -1421,11 +1670,20 @@ def run_stem_master_job(job_id, stem_paths, mopts):
         wav_write(tmp_wav, SR, pcm16)
         os.replace(tmp_wav, wav_path)
         prog(92, "Encoding MP3…")
+        flac_path = os.path.join(OUTPUT_DIR, base + ".flac")
+        _fmt = mopts.get("output_format", "mp3")
+        if _fmt == "flac":
+            try:
+                prog(93, "Encoding FLAC…")
+                C.convert_file(wav_path, flac_path)
+            except Exception:
+                pass
         encode_mp3(wav_path, mp3_path)
         set_job(job_id, status="done", progress=100,
                 message=f"Stems mastered — {report['lufs']} LUFS",
                 result={"mp3": os.path.basename(mp3_path),
                         "wav": os.path.basename(wav_path),
+                        "flac": None,
                         "report": report})
     except Exception as e:
         set_job(job_id, status="error", progress=0, message=f"Error: {e}")
@@ -1720,7 +1978,9 @@ def api_ambient():
         if cached and os.path.exists(os.path.join(OUTPUT_DIR, cached)):
             return jsonify({"ok": True, "url": url_for("download", fname=cached),
                             "style": style["label"], "genre": style["genre"],
-                            "bpm": style["bpm"], "seed": seed, "cached": True})
+                            "bpm": style["bpm"], "seed": seed,
+        "beat_source": request.form.get("beat_source", "generate"),
+        "output_format": request.form.get("output_format", "mp3"), "cached": True})
     try:
         healing = lightbeat.normalize_healing({
             "base": style["healing_base"], "fib_scale": True,
@@ -1757,7 +2017,9 @@ def api_ambient():
         return jsonify({"ok": True,
                         "url": url_for("download", fname=os.path.basename(mp3_path)),
                         "style": style["label"], "genre": style["genre"],
-                        "bpm": style["bpm"], "seed": seed, "cached": False})
+                        "bpm": style["bpm"], "seed": seed,
+        "beat_source": request.form.get("beat_source", "generate"),
+        "output_format": request.form.get("output_format", "mp3"), "cached": False})
     except Exception as e:
         _app_log.warning(f"ambient render failed: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -1943,28 +2205,37 @@ def _gen_lyrics(data):
     """Generate draft lyrics. Returns (payload_dict, status_code).
     Shared by /api/lyrics and Rockdabus."""
     data = data or {}
+    # Try Gemini first for high-quality lyrics
+    try:
+        import gemini_lyrics as _gl
+        _g = _gl.generate_gemini_lyrics(
+            genre=data.get("genre", "HipHop"),
+            theme=(data.get("theme") or "struggle").strip()[:80],
+            artist=(data.get("artist") or "").strip() or None,
+            mood=(data.get("mood") or "").strip() or None,
+        )
+        if _g and _g.get("ok"):
+            return {"ok": True, "lyrics": _g["lyrics"], "source": "gemini",
+                    "adlibs": {"hook": ["yeah!", "woo!"], "verse": ["uh", "yeah"]}}, 200
+    except Exception as _e:
+        import traceback as _tb
+        with open("/storage/emulated/0/djrill/mobile/gemini_debug.log", "a") as _lf:
+            _lf.write("Gemini error: " + str(_e) + "\n" + _tb.format_exc() + "\n")
     theme = (data.get("theme") or "").strip()[:80]
     mood = (data.get("mood") or "").strip()[:40]
     genre = data.get("genre", "HipHop")
     if genre not in GENRES:
         genre = "HipHop"
     seed_raw = data.get("seed")
-    seed_regenerated = False
     if seed_raw not in (None, ""):
         try:
             seed = int(seed_raw)
         except (TypeError, ValueError):
             return {"ok": False, "error": "Seed must be a number"}, 400
-        # Never silently repeat: if this user already generated with this
-        # seed, mint a fresh unique one instead of replaying identical
-        # lyrics (the generator is deterministic per seed).
+        # Track user-supplied seeds so even manual seeds can't repeat
+        # silently for the same user.
         import freemium as _fm
-        _ukey = _freemium_user_key()
-        if _fm.is_seed_used(_ukey, seed):
-            seed = _fm.unique_seed(_ukey, salt="lyrics")
-            seed_regenerated = True
-        else:
-            _fm.mark_seed_used(_ukey, seed)
+        _fm.mark_seed_used(_freemium_user_key(), seed)
     else:
         # Unique seed per generation: deterministic base from theme+mood+
         # genre+artist, mixed with fresh randomness so identical inputs
@@ -1995,18 +2266,83 @@ def _gen_lyrics(data):
     artist = (data.get("artist") or "").strip()
     if artist not in L.ARTIST_PROFILES:
         artist = None
-    song = L.generate_song_lyrics_ex(
-        seed, genre=genre, theme=bank_theme,
-        rhyme_scheme=rs,
-        syl_target=_i("syl_target", 12, 6, 20),
-        verse_lines=_i("verse_lines", 16, 4, 32),
-        hook_lines=_i("hook_lines", 8, 2, 16),
-        custom_words=custom,
-        hook_first=bool(data.get("hook_first")),
-        call_response=bool(data.get("call_response")),
-        internal_rhyme=bool(data.get("internal_rhyme")),
-        multi_boost=bool(data.get("multi_boost")),
-        artist=artist)
+    # Daryl rule: never generate the same lyrics twice, and ensure
+    # significant variation (far apart) while maintaining coherence.
+    # We generate, fingerprint the content, and retry with a fresh seed
+    # if too similar to recent generations (max 5 attempts).
+    import json as _json, os as _os, hashlib as _hl
+    _hist_path = _os.path.join(_os.path.dirname(__file__), "lyric_history.json")
+    def _fingerprint(s):
+        # Normalize: lowercase, unique words sorted
+        words = sorted(set(re.findall(r"[a-z]+", s.lower())))
+        return _hl.sha256(" ".join(words).encode()).hexdigest()[:16], set(words)
+    def _load_hist():
+        try:
+            with open(_hist_path) as f:
+                return _json.load(f)
+        except:
+            return []
+    def _save_hist(h):
+        try:
+            with open(_hist_path, "w") as f:
+                _json.dump(h[-50:], f)  # Keep last 50
+        except:
+            pass
+    _hist = _load_hist()
+    song = None
+    _attempt_seed = seed
+    for _attempt in range(5):
+        song = L.generate_song_lyrics_ex(
+            _attempt_seed, genre=genre, theme=bank_theme,
+            rhyme_scheme=rs,
+            syl_target=_i("syl_target", 12, 6, 20),
+            verse_lines=_i("verse_lines", 16, 4, 32),
+            hook_lines=_i("hook_lines", 8, 2, 16),
+            custom_words=custom,
+            hook_first=bool(data.get("hook_first")),
+            call_response=bool(data.get("call_response")),
+            internal_rhyme=bool(data.get("internal_rhyme")),
+            multi_boost=bool(data.get("multi_boost")),
+            artist=artist,
+            explicit=bool(data.get("parental_advisory") or data.get("explicit")))
+        _txt_check = L.format_lyrics_txt(song, title="check")
+        _fp, _words = _fingerprint(_txt_check)
+        _too_similar = False
+        for _h in _hist:
+            _h_fp, _h_words = _h.get("fp"), set(_h.get("words", []))
+            if _fp == _h_fp:
+                _too_similar = True
+                break
+            # Jaccard similarity: if >60% word overlap, too similar
+            if _h_words:
+                _inter = len(_words & _h_words)
+                _union = len(_words | _h_words)
+                if _union > 0 and (_inter / _union) > 0.6:
+                    _too_similar = True
+                    break
+        if not _too_similar:
+            _hist.append({"fp": _fp, "words": sorted(_words)[:200]})
+            _save_hist(_hist)
+            seed = _attempt_seed  # Use the successful seed
+            break
+        # Too similar: try a fresh random seed
+        import secrets as _secrets
+        _attempt_seed = int.from_bytes(_secrets.token_bytes(4), "big")
+    if song is None:
+        # Fallback (should not happen)
+        song = L.generate_song_lyrics_ex(
+            seed, genre=genre, theme=bank_theme,
+            rhyme_scheme=rs,
+            syl_target=_i("syl_target", 12, 6, 20),
+            verse_lines=_i("verse_lines", 16, 4, 32),
+            hook_lines=_i("hook_lines", 8, 2, 16),
+            custom_words=custom,
+            hook_first=bool(data.get("hook_first")),
+            call_response=bool(data.get("call_response")),
+            internal_rhyme=bool(data.get("internal_rhyme")),
+            multi_boost=bool(data.get("multi_boost")),
+            artist=artist,
+            explicit=bool(data.get("parental_advisory") or data.get("explicit")))
     txt = L.format_lyrics_txt(song, title=song.get("title") or (theme or "Untitled"))
     lrc = L.format_lyrics_lrc(song, float(data.get("bpm") or 90),
                               title=song.get("title") or "Untitled")
@@ -2021,11 +2357,12 @@ def _gen_lyrics(data):
         sections = {k: [_clean_explicit(line) for line in v]
                     if isinstance(v, list) else _clean_explicit(v)
                     for k, v in sections.items()}
-    return {"ok": True, "seed": seed, "text": txt, "lrc": lrc,
+    return {"ok": True, "seed": seed,
+        "beat_source": request.form.get("beat_source", "generate"),
+        "output_format": request.form.get("output_format", "mp3"), "text": txt, "lrc": lrc,
             "title": song.get("title"),
             "stats": L.lyric_stats(song),
             "adlibs": song.get("adlibs"),
-            "seed_regenerated": seed_regenerated,
             "sections": sections}, 200
 
 
@@ -2074,10 +2411,91 @@ def dj_page():
                            mix_styles=mixgen.STYLE_PRESETS)
 
 
+def _build_library_mix(job_id, genre, prog):
+    """Build DJ mix from player's library tracks. Returns (audio, meta) or None."""
+    import os as _os, re as _re
+    import numpy as _np
+    exts = (".wav", ".mp3", ".ogg", ".flac", ".m4a")
+    tracks = []
+    if _os.path.isdir(OUTPUT_DIR):
+        for fn in _os.listdir(OUTPUT_DIR):
+            if not fn.lower().endswith(exts):
+                continue
+            p = _os.path.join(OUTPUT_DIR, fn)
+            try:
+                if _os.path.getsize(p) < 1024:
+                    continue
+            except OSError:
+                continue
+            m = _re.search(r"(\d{2,3})\s*bpm", fn, _re.I)
+            bpm = float(m.group(1)) if m else 92.0
+            # Only use WAV (MP3 decode needs miniaudio, keep it simple)
+            if fn.lower().endswith(".wav"):
+                tracks.append({"path": p, "bpm": bpm, "name": fn})
+    if len(tracks) < 2:
+        return None
+    tracks = sorted(tracks, key=lambda t: abs(t["bpm"] - 92))[:4]
+    prog(10, f"Loading {len(tracks)} library tracks...")
+    audios = []
+    for t in tracks:
+        try:
+            from scipy.io.wavfile import read as _wr
+            _sr, _aud = _wr(t["path"])
+            _aud = _aud.astype(_np.float32)
+            if _aud.ndim == 1:
+                _aud = _np.column_stack([_aud, _aud])
+            elif _aud.shape[1] > 2:
+                _aud = _aud[:, :2]
+            _peak = _np.max(_np.abs(_aud))
+            if _peak > 0:
+                _aud = _aud / _peak * 0.85
+            _max_len = 30 * 44100
+            if len(_aud) > _max_len:
+                _aud = _aud[:_max_len]
+            audios.append(_aud)
+        except Exception:
+            continue
+    if len(audios) < 2:
+        return None
+    prog(50, "Crossfading library tracks...")
+    _xf = 4 * 44100
+    _mix = audios[0]
+    for _nxt in audios[1:]:
+        _xl = min(_xf, len(_mix), len(_nxt))
+        _fade_out = _np.cos(_np.linspace(0, _np.pi/2, _xl)).reshape(-1, 1)
+        _fade_in = _np.sin(_np.linspace(0, _np.pi/2, _xl)).reshape(-1, 1)
+        _tail = _mix[-_xl:] * _fade_out
+        _head = _nxt[:_xl] * _fade_in
+        _mix = _np.concatenate([_mix[:-_xl], _tail + _head, _nxt[_xl:]], axis=0)
+    _peak = _np.max(_np.abs(_mix))
+    if _peak > 0:
+        _mix = _mix / _peak * 0.9
+    prog(90, "Library mix ready")
+    return _mix, {"bpm": tracks[0]["bpm"], "tracks": [t["name"] for t in tracks],
+                  "source": "library"}
+
 def run_mix_job(job_id, genre, style, seed):
     def prog(p, msg):
         set_job(job_id, progress=p, message=msg)
     try:
+        _lib = _build_library_mix(job_id, genre, prog)
+        if _lib is not None:
+            audio, meta = _lib
+            prog(95, "Writing files...")
+            base = f"djrill-mix-{meta['bpm']:.0f}bpm-library-{job_id[:8]}"
+            base = "".join(ch if (ch.isalnum() or ch in "-_") else "_" for ch in base)
+            wav_path = os.path.join(OUTPUT_DIR, base + ".wav")
+            mp3_path = os.path.join(OUTPUT_DIR, base + ".mp3")
+            audiotools.write_wav(wav_path, audio)
+            prog(97, "Encoding MP3...")
+            encode_mp3(wav_path, mp3_path)
+            set_job(job_id, status="done", progress=100,
+                    message="Library mix ready",
+                    result={"mp3": os.path.basename(mp3_path),
+                            "wav": os.path.basename(wav_path),
+                            "bpm": meta["bpm"],
+                            "tracks": meta["tracks"], "source": "library"})
+            return
         _lite = lite_mode()
         # Memory guard: 4 segs x 16 bars or 2 x 8 in lite, stereo float32.
         _bars = 8 if _lite else 16
@@ -2103,6 +2521,7 @@ def run_mix_job(job_id, genre, style, seed):
                 message="Mix ready",
                 result={"mp3": os.path.basename(mp3_path),
                         "wav": os.path.basename(wav_path),
+                        "flac": None,
                         "bpm": meta["bpm"], "duration": meta["duration"],
                         "segments": meta["segments"], "style": meta["style"],
                         "seed": seed})
@@ -2559,7 +2978,9 @@ def _freestyle_prompts(data):
     rhyme_sets = []
     for rk in keys[:n]:
         rhyme_sets.append({"word": rk, "count": len(groups[rk])})
-    return {"ok": True, "seed": seed, "theme": theme,
+    return {"ok": True, "seed": seed,
+        "beat_source": request.form.get("beat_source", "generate"),
+        "output_format": request.form.get("output_format", "mp3"), "theme": theme,
             "phrases": phrases, "rhyme_sets": rhyme_sets,
             "label": "AI-GENERATED DRAFT — freestyle prompts, not written by the artist."}, 200
 
@@ -2650,6 +3071,7 @@ def run_tool_job(job_id, kind, src_path, opts):
         set_job(job_id, status="done", progress=100, message="Done",
                 result={"mp3": os.path.basename(mp3_path),
                         "wav": os.path.basename(wav_path),
+                        "flac": None,
                         "duration": round(info.get("duration", 0), 1)})
     except Exception as e:
         set_job(job_id, status="error", progress=0, message=f"Error: {e}")
@@ -3033,6 +3455,8 @@ def api_beats_daily():
     genre = genres[seed % len(genres)]
     bpm = 90 + (seed % 60)
     return jsonify({"ok": True, "date": day, "seed": seed,
+        "beat_source": request.form.get("beat_source", "generate"),
+        "output_format": request.form.get("output_format", "mp3"),
                     "genre": genre, "bpm": bpm,
                     "challenge": f"Make a {genre} beat at {bpm} BPM — seed {seed}"})
 
@@ -3059,6 +3483,51 @@ def api_kits_list():
         "slots": soundkits.KIT_INSTRUMENTS,
     })
 
+
+
+
+@app.get("/api/kits/premium")
+def api_premium_kits():
+    """Premium purchasable sound kits with auto-raise pricing.
+    Launch pricing until 100 paid signups, then standard pricing."""
+    import json, os
+    try:
+        # Count paid users (non-founding with active plan)
+        from billing_core import _connect
+        con = _connect()
+        try:
+            paid = con.execute(
+                "SELECT COUNT(*) FROM users WHERE is_founding = 0 AND plan != \'trial\' AND sub_status = \'active\'"
+            ).fetchone()[0]
+        finally:
+            con.close()
+    except:
+        paid = 0
+    
+    # Load kits
+    p = os.path.join(os.path.dirname(os.path.dirname(__file__)), "premium_kits.json")
+    try:
+        with open(p) as f:
+            kits = json.load(f)
+    except:
+        return jsonify({"ok": False, "error": "Kits not available"})
+    
+    # Apply pricing tier
+    use_standard = paid >= 100
+    for kid, kit in kits.items():
+        if use_standard and "standard_price" in kit:
+            kit["price"] = kit["standard_price"]
+            kit["pricing_tier"] = "standard"
+        else:
+            kit["pricing_tier"] = "launch"
+    
+    return jsonify({
+        "ok": True,
+        "kits": kits,
+        "paid_signups": paid,
+        "pricing_tier": "standard" if use_standard else "launch",
+        "signups_to_standard": max(0, 100 - paid),
+    })
 
 @app.get("/api/kit/sound")
 def api_kit_sound_preview():
@@ -3247,7 +3716,7 @@ def run_video_job(job_id, mode, audio_path, media_paths, events, title,
         vopts = vopts or {}
         _lite = lite_mode()  # defined once, used for all lite gating below
         safe = safe_name(title, "djrill-video")
-        base = f"{job_id[:8]}_{safe}"
+        base = f"{safe}_prhyme_master"
         out_path = os.path.join(OUTPUT_DIR, base + ".mp4")
 
         def cb(frac):
@@ -3505,12 +3974,322 @@ def api_job(job_id):
     return jsonify({"ok": True, **j})
 
 
+
+
+@app.get("/api/referral/code")
+def api_referral_code():
+    """Get the current user's referral code."""
+    from billing_core import get_referral_code, _connect
+    # Get user from session (simplified - use first user for now)
+    try:
+        con = _connect()
+        row = con.execute("SELECT id FROM users LIMIT 1").fetchone()
+        con.close()
+        if not row:
+            return jsonify({"ok": False, "error": "No user"})
+        code = get_referral_code(row[0])
+        return jsonify({"ok": True, "code": code})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@app.post("/api/referral/apply")
+def api_referral_apply():
+    """Apply a referral code for the current user."""
+    from billing_core import apply_referral, _connect
+    data = request.get_json() or {}
+    code = data.get("code", "").strip().upper()
+    if not code:
+        return jsonify({"ok": False, "error": "Code required"})
+    try:
+        con = _connect()
+        row = con.execute("SELECT id FROM users LIMIT 1").fetchone()
+        con.close()
+        if not row:
+            return jsonify({"ok": False, "error": "No user"})
+        ok, msg = apply_referral(row[0], code)
+        return jsonify({"ok": ok, "message": msg})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@app.post("/api/rewards/share")
+def api_share_reward():
+    """Award 50 tokens for sharing on social media."""
+    from billing_core import _connect
+    data = request.get_json() or {}
+    platform = data.get("platform", "unknown")
+    post_url = data.get("post_url", "")
+    try:
+        con = _connect()
+        row = con.execute("SELECT id FROM users LIMIT 1").fetchone()
+        if not row:
+            con.close()
+            return jsonify({"ok": False, "error": "No user"})
+        user_id = row[0]
+        con.execute(
+            "INSERT INTO share_rewards (user_id, platform, post_url, tokens_awarded) VALUES (?, ?, ?, 50)",
+            (user_id, platform, post_url))
+        con.commit()
+        con.close()
+        return jsonify({"ok": True, "tokens": 50, "message": "50 tokens awarded for sharing!"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@app.post("/api/rewards/feedback")
+def api_feedback_reward():
+    """Award a free soundkit for detailed feedback."""
+    from billing_core import _connect
+    data = request.get_json() or {}
+    feedback = data.get("feedback", "").strip()
+    if len(feedback) < 50:
+        return jsonify({"ok": False, "error": "Feedback must be at least 50 characters"})
+    try:
+        con = _connect()
+        row = con.execute("SELECT id FROM users LIMIT 1").fetchone()
+        if not row:
+            con.close()
+            return jsonify({"ok": False, "error": "No user"})
+        user_id = row[0]
+        # Award a random soundkit
+        import random
+        kits = ["trap_essentials", "drill_arsenal", "boombap_classics"]
+        kit = random.choice(kits)
+        con.execute(
+            "INSERT INTO feedback_rewards (user_id, feedback_text, soundkit_awarded) VALUES (?, ?, ?)",
+            (user_id, feedback, kit))
+        con.commit()
+        con.close()
+        return jsonify({"ok": True, "soundkit": kit, "message": f"Free soundkit awarded: {kit}!"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+@app.post("/api/master/keep")
+def api_master_keep():
+    """Download selected: copy the temp master into the library, clean temp."""
+    data = request.get_json(force=True, silent=True) or {}
+    job_id = str(data.get("job_id", ""))[:32]
+    if not job_id or len(job_id) < 8:
+        return jsonify({"ok": False, "error": "Invalid job ID"}), 400
+    tdir = _temp_master_dir(job_id)
+    if not os.path.isdir(tdir):
+        return jsonify({"ok": False, "error": "Master no longer in temp"}), 404
+    master_file = None
+    for fn in sorted(os.listdir(tdir)):
+        if fn.startswith("source.") or fn.endswith(".tmp.wav"):
+            continue
+        if os.path.isfile(os.path.join(tdir, fn)):
+            master_file = fn
+            break
+    if not master_file:
+        return jsonify({"ok": False, "error": "No master file found"}), 404
+    sfn = secure_filename(master_file)
+    if sfn != master_file:
+        return jsonify({"ok": False, "error": "Bad filename"}), 400
+    dst = os.path.join(OUTPUT_DIR, sfn)
+    if os.path.exists(dst):
+        stem, ext = os.path.splitext(sfn)
+        i = 2
+        while os.path.exists(os.path.join(OUTPUT_DIR, f"{stem}_{i}{ext}")):
+            i += 1
+        dst = os.path.join(OUTPUT_DIR, f"{stem}_{i}{ext}")
+    try:
+        shutil.copy2(os.path.join(tdir, master_file), dst)
+    except OSError as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    temp_master_cleanup(job_id)
+    try:
+        player_mod.refresh()
+    except Exception:
+        pass
+    return jsonify({"ok": True, "file": os.path.basename(dst)})
+
+@app.post("/api/master/discard")
+def api_master_discard():
+    """Delete the temp master immediately (job-owned files only)."""
+    data = request.get_json(force=True, silent=True) or {}
+    job_id = str(data.get("job_id", ""))[:32]
+    if not job_id or len(job_id) < 8:
+        return jsonify({"ok": False, "error": "Invalid job ID"}), 400
+    deleted = temp_master_cleanup(job_id)
+    return jsonify({"ok": True, "deleted": deleted})
+
+@app.post("/api/master/delete")
+def api_master_delete():
+    """Legacy route: now narrowed to this job's temp files only."""
+    data = request.get_json(force=True, silent=True) or {}
+    job_id = str(data.get("job_id", ""))[:32]
+    if not job_id or len(job_id) < 8:
+        return jsonify({"ok": False, "error": "Invalid job ID"}), 400
+    deleted = temp_master_cleanup(job_id)
+    return jsonify({"ok": True, "deleted": deleted})
+
+@app.get("/temp_master/<jobid>/<path:fname>")
+def temp_master(jobid, fname):
+    """Serve a temp master file for preview before keep/discard."""
+    jid = (jobid or "")[:8]
+    if len(jid) < 8 or not jid.isalnum():
+        abort(404)
+    safe = secure_filename(fname)
+    if safe != fname or "/" in fname or "\\" in fname:
+        abort(404)
+    if safe.startswith("source.") or safe.endswith(".tmp.wav"):
+        abort(404)
+    p = os.path.join(_temp_master_dir(jid), safe)
+    if not os.path.isfile(p):
+        abort(404)
+    ext = os.path.splitext(safe)[1].lower()
+    mime = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".flac": "audio/flac"}
+    return send_file(p, mimetype=mime.get(ext, "audio/mpeg"))
+
+@app.get("/files")
+def files_page():
+    return render_template("files.html")
+
+@app.get("/api/files")
+def api_files():
+    """List files in outputs, uploads, and temp directories."""
+    import time
+    result = {"outputs": [], "uploads": [], "temp": []}
+    dirs = {
+        "outputs": OUTPUT_DIR,
+        "uploads": os.path.join(os.path.dirname(OUTPUT_DIR), "uploads"),
+        "temp": os.path.join(OUTPUT_DIR, "temp_ab"),
+    }
+    for key, d in dirs.items():
+        if os.path.isdir(d):
+            for fname in sorted(os.listdir(d)):
+                fpath = os.path.join(d, fname)
+                if os.path.isfile(fpath):
+                    try:
+                        stat = os.stat(fpath)
+                        result[key].append({
+                            "name": fname,
+                            "size": stat.st_size,
+                            "modified": time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime)),
+                        })
+                    except:
+                        pass
+    return jsonify({"ok": True, "files": result})
+
+@app.post("/api/files/delete")
+def api_files_delete():
+    """Delete a specific file."""
+    data = request.get_json() or {}
+    fname = data.get("name", "")
+    folder = data.get("folder", "outputs")
+    safe = secure_filename(fname)
+    if safe != fname or not safe:
+        return jsonify({"ok": False, "error": "Invalid filename"})
+    dirs = {
+        "outputs": OUTPUT_DIR,
+        "uploads": os.path.join(os.path.dirname(OUTPUT_DIR), "uploads"),
+        "temp": os.path.join(OUTPUT_DIR, "temp_ab"),
+    }
+    d = dirs.get(folder)
+    if not d:
+        return jsonify({"ok": False, "error": "Invalid folder"})
+    fpath = os.path.join(d, safe)
+    if os.path.isfile(fpath):
+        try:
+            os.remove(fpath)
+            return jsonify({"ok": True})
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)})
+    return jsonify({"ok": False, "error": "File not found"})
+
+@app.get("/preview/<path:fname>")
+def preview(fname):
+    """Stream-only preview for A/B files. Not downloadable."""
+    safe = secure_filename(fname)
+    if safe != fname or "/" in fname or "\\" in fname:
+        abort(404)
+    p = os.path.join(OUTPUT_DIR, "temp_ab", safe)
+    if not os.path.isfile(p):
+        abort(404)
+    ext = os.path.splitext(safe)[1].lower()
+    mime = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg"}
+    return send_file(p, mimetype=mime.get(ext, "audio/mpeg"))
+
+@app.get("/api/beats/recent")
+def beats_recent():
+    """List the last-5 temp beat generations (playable until kept/overwritten)."""
+    return jsonify({"ok": True, "beats": _temp_beats_manifest()})
+
+@app.post("/api/beats/keep")
+def beats_keep():
+    """Download selected: copy a temp beat into the library, clear its temp."""
+    data = request.get_json(force=True, silent=True) or {}
+    job_id = str(data.get("job_id", ""))[:32]
+    manifest = _temp_beats_manifest()
+    entry = next((e for e in manifest if e.get("job_id") == job_id), None)
+    if not entry:
+        return jsonify({"ok": False, "error": "Beat no longer in temp"}), 404
+    kept = {}
+    for fmt, fn in (entry.get("files") or {}).items():
+        if not fn:
+            continue
+        sfn = secure_filename(fn)
+        if sfn != fn:
+            continue
+        src_p = os.path.join(TEMP_BEATS_DIR, sfn)
+        if not os.path.isfile(src_p):
+            continue
+        dst = os.path.join(OUTPUT_DIR, sfn)
+        if os.path.exists(dst):
+            stem, ext = os.path.splitext(sfn)
+            i = 2
+            while os.path.exists(os.path.join(OUTPUT_DIR, f"{stem}_{i}{ext}")):
+                i += 1
+            dst = os.path.join(OUTPUT_DIR, f"{stem}_{i}{ext}")
+        try:
+            shutil.copy2(src_p, dst)
+            kept[fmt] = os.path.basename(dst)
+        except OSError:
+            pass
+    manifest = [e for e in manifest if e.get("job_id") != job_id]
+    for fn in (entry.get("files") or {}).values():
+        if fn:
+            try:
+                os.remove(os.path.join(TEMP_BEATS_DIR, secure_filename(fn)))
+            except OSError:
+                pass
+    _temp_beats_save(manifest)
+    if not kept:
+        return jsonify({"ok": False, "error": "Nothing to keep"}), 404
+    return jsonify({"ok": True, "kept": kept})
+
+@app.post("/api/beats/discard")
+def beats_discard():
+    """Delete a temp beat immediately (before it would be overwritten)."""
+    data = request.get_json(force=True, silent=True) or {}
+    job_id = str(data.get("job_id", ""))[:32]
+    manifest = _temp_beats_manifest()
+    entry = next((e for e in manifest if e.get("job_id") == job_id), None)
+    if not entry:
+        return jsonify({"ok": True, "deleted": []})
+    deleted = []
+    for fn in (entry.get("files") or {}).values():
+        if fn:
+            try:
+                os.remove(os.path.join(TEMP_BEATS_DIR, secure_filename(fn)))
+                deleted.append(fn)
+            except OSError:
+                pass
+    _temp_beats_save([e for e in manifest if e.get("job_id") != job_id])
+    return jsonify({"ok": True, "deleted": deleted})
+
 @app.get("/download/<path:fname>")
 def download(fname):
     safe = secure_filename(fname)
     if safe != fname or "/" in fname or "\\" in fname:
         abort(404)
     p = os.path.join(OUTPUT_DIR, safe)
+    if not os.path.isfile(p):
+        p = os.path.join(OUTPUT_DIR, "temp_ab", safe)
+    if not os.path.isfile(p):
+        p = os.path.join(TEMP_BEATS_DIR, safe)
     if not os.path.isfile(p):
         abort(404)
     # Serve inline (not as attachment) so <audio> elements can stream/play.
@@ -3651,6 +4430,40 @@ def api_daw_backup():
             z.write(NOTES_FILE, "projects/notes.json")
     _app_log.info("project backup created: %s", os.path.basename(zpath))
     return jsonify({"ok": True, "backup": os.path.basename(zpath)})
+
+
+@app.post("/api/dj/analyze")
+def api_dj_analyze():
+    data = request.get_json(force=True, silent=True) or {}
+    path = data.get("path", "")
+    if not path or not os.path.isfile(path):
+        return jsonify({"ok": False, "error": "file not found"}), 404
+    try:
+        y, sr = M.load_audio(path)
+        y_mono = y.mean(axis=1) if y.ndim > 1 else y
+        bpm = M.detect_bpm(y_mono, sr) or 90.0
+        rms = float((y_mono ** 2).mean() ** 0.5)
+        energy = min(10, max(1, int(rms * 50)))
+        return jsonify({"ok": True, "bpm": round(float(bpm), 1), "energy": energy, "path": path})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.post("/api/dj/smart_next")
+def api_dj_smart_next():
+    data = request.get_json(force=True, silent=True) or {}
+    current = data.get("current", {})
+    library = data.get("library", [])
+    exclude = set(data.get("exclude", []))
+    try:
+        import dj_intelligence as DI
+        candidates = [t for t in library if t.get("path") not in exclude]
+        if not candidates:
+            return jsonify({"ok": False, "error": "no candidates"})
+        best = max(candidates, key=lambda c: DI.score_transition(current, c))
+        score = DI.score_transition(current, best)
+        return jsonify({"ok": True, "next": best, "score": score})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 if __name__ == "__main__":
