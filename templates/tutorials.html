@@ -4,63 +4,138 @@
   <span class="pico spin">🎬</span>
   <div>
     <div class="ptitle-row"><h2 class="ptitle">Tutorials</h2></div>
-    <p class="plead">Quick video-style guides for everything Prhyme™ does. Each card walks you through a feature step by step.</p>
+    <p class="plead">Short guides for everything Prhyme™ does — a few related tools per card, step by step.</p>
     <p><span class="prhyming-flash">Prhyming</span></p>
   </div>
 </div>
 
+<h3 class="tut-section">Create</h3>
 <div class="tut-grid">
   <div class="tut-card">
     <div class="tut-thumb">♫</div>
     <div class="tut-body">
       <h3>Make a Beat</h3>
       <ol>
-        <li>Pick a genre — Drill, Trap, BoomBap, Jersey Club, Afrobeats and more.</li>
-        <li>Or pick an artist — the engine matches their production style.</li>
-        <li>Set BPM and bars, choose a drum kit and lead instrument.</li>
-        <li>Hit Generate — your beat renders in about a second. Preview it right on the page.</li>
+        <li><b>Genre</b> sets the drum feel — Drill, Trap, BoomBap, Jersey Club, Afrobeats and more. <b>Artist</b> shapes it like a specific producer's style instead.</li>
+        <li><b>BPM</b> is the tempo; <b>Length</b> picks a 16/32-bar loop or a full 2:30–3:30 song with intro, verses, hooks and outro.</li>
+        <li><b>Kit</b> picks your drum sounds. Hit Generate, preview it right on the page.</li>
+        <li>Fresh beats land in <b>Recent Generations</b> below — play the last 5 anytime. Hit <b>Download</b> on the one you love to save it to your library; the rest rotate out as you make more.</li>
       </ol>
       <p><a class="help-try" href="{{ url_for('beats_page') }}">Try it →</a></p>
     </div>
   </div>
 
   <div class="tut-card">
-    <div class="tut-thumb">◉</div>
+    <div class="tut-thumb">🎚</div>
     <div class="tut-body">
-      <h3>Master a Track</h3>
+      <h3>Shape Your Beat</h3>
       <ol>
-        <li>Upload your vocal recording (WAV, MP3 or M4A).</li>
-        <li>Vocal polish cleans noise and adds clarity — timing fix nudges off-beat words onto the grid.</li>
-        <li>Add creative FX — radio, vinyl, TV, filters, BPM-synced echo.</li>
-        <li>Get a balanced mix mastered to -14 LUFS / -1.0 dBTP.</li>
+        <li><b>Melody</b> picks the lead instrument (pluck, keys, flute, choir pads and more). <b>Era</b> flavours the whole beat — 90s, 2000s, modern.</li>
+        <li><b>Fills</b>, <b>hat rolls</b>, <b>risers/builds</b>, <b>crash accents</b> and <b>intro/outro</b> add arrangement movement so loops don't feel static.</li>
+        <li><b>Swing</b> loosens the groove, <b>humanize</b> adds tiny timing/velocity imperfections, <b>808 glide</b> slides your bass notes.</li>
+        <li><b>Fast mode</b> renders lighter and quicker — handy on low battery. <b>🕉 Healing</b> swaps drums for Fibonacci melodies, 432 Hz tuning and binaural layers.</li>
       </ol>
-      <p><a class="help-try" href="{{ url_for('master_page') }}">Try it →</a></p>
+      <p><a class="help-try" href="{{ url_for('beats_page') }}">Try it →</a></p>
     </div>
   </div>
 
   <div class="tut-card">
     <div class="tut-thumb">✎</div>
     <div class="tut-body">
-      <h3>Draft Lyrics</h3>
+      <h3>Write Lyrics</h3>
       <ol>
-        <li>Pick a theme — street, hustle, faith, love, victory and more.</li>
-        <li>Pick an artist style for flow, vocabulary and cadence.</li>
-        <li>Generate a full song with verses, hook and bridge.</li>
-        <li>Send it to Freestyle to perform it on the teleprompter.</li>
+        <li><b>Theme</b> sets the subject — street, hustle, faith, love, victory and more.</li>
+        <li><b>Artist style</b> borrows a flow, vocabulary and cadence — you always get an original draft "in the style of," never their actual words.</li>
+        <li>Generate a full song: verses, hook and bridge with phonetic rhyme detection keeping the rhymes fresh.</li>
+        <li>Send any draft to <b>Freestyle</b> to perform it on the teleprompter.</li>
       </ol>
       <p><a class="help-try" href="{{ url_for('lyrics_page') }}">Try it →</a></p>
     </div>
   </div>
 
   <div class="tut-card">
+    <div class="tut-thumb">🎛</div>
+    <div class="tut-body">
+      <h3>Kits, Samples &amp; Presets</h3>
+      <ol>
+        <li><b>Soundkits</b> — 6 built-in drum kits (Classic, Punchy, Boomy, Street, Smooth, Hard). Preview every drum before you commit.</li>
+        <li>Upload your own WAV drums to build a <b>custom kit</b>, then select it on the Beats page.</li>
+        <li><b>Samples</b> — upload, tag and preview your own sounds and one-shots.</li>
+        <li><b>Presets</b> — one-tap starting points: curated beat and mastering chains when you don't want to start from zero.</li>
+      </ol>
+      <p><a class="help-try" href="{{ url_for('soundkits_page') }}">Try it →</a></p>
+    </div>
+  </div>
+</div>
+
+<h3 class="tut-section">Produce</h3>
+<div class="tut-grid">
+  <div class="tut-card">
+    <div class="tut-thumb">◉</div>
+    <div class="tut-body">
+      <h3>Master a Track</h3>
+      <ol>
+        <li>Upload your vocal or full track (WAV, MP3 or M4A) and name it.</li>
+        <li><b>Fully Automated Mode</b> (on by default) detects genre, BPM and settings for you — just hit Master. Turn it off for all 32 manual controls.</li>
+        <li><b>Keep original beat</b> is on by default so nothing gets generated behind your back — uncheck it to have a beat built for the track.</li>
+        <li>You get a balanced master at streaming loudness with a full report (LUFS, true peak, BPM, FX used).</li>
+      </ol>
+      <p><a class="help-try" href="{{ url_for('master_page') }}">Try it →</a></p>
+    </div>
+  </div>
+
+  <div class="tut-card">
+    <div class="tut-thumb">🎛</div>
+    <div class="tut-body">
+      <h3>Mastering Controls, Explained</h3>
+      <ol>
+        <li><b>Vocal chain</b> — vocal polish (noise cleanup + clarity), de-esser (tames harsh S sounds), timing fix (nudges off-beat words onto the grid).</li>
+        <li><b>Creative FX</b> — radio, vinyl and TV textures, high/low-pass filters, and BPM-synced echo with mix, feedback and timing controls.</li>
+        <li><b>Mastering</b> — chain preset, loudness target (LUFS), ceiling (dB), multiband compression, dither, fade in/out, and output format (MP3, WAV, FLAC).</li>
+        <li><b>A/B compare</b> (on by default) renders 30-second before/after previews so you can hear exactly what the master did.</li>
+      </ol>
+      <p><a class="help-try" href="{{ url_for('master_page') }}">Try it →</a></p>
+    </div>
+  </div>
+
+  <div class="tut-card">
+    <div class="tut-thumb">🎚</div>
+    <div class="tut-body">
+      <h3>Studio (DAW)</h3>
+      <ol>
+        <li>Stack beats, vocals and samples across <b>8 timeline tracks</b>. Drag clips to move them, drag edges to trim.</li>
+        <li>Mix with per-track volume, mute/solo and the master fader.</li>
+        <li>Hit record to lay vocals straight into the timeline over your beat.</li>
+        <li>Bounce the whole session to a finished mixdown file.</li>
+      </ol>
+      <p><a class="help-try" href="{{ url_for('studio_page') }}">Try it →</a></p>
+    </div>
+  </div>
+
+  <div class="tut-card">
+    <div class="tut-thumb">🎧</div>
+    <div class="tut-body">
+      <h3>Stems: Separate &amp; Master</h3>
+      <ol>
+        <li><b>Separate</b> — upload any track and split it into <b>Vocals</b>, <b>Instrumental</b>, plus an auto-generated <b>SFX</b> layer (risers, impacts and whooshes placed at section changes).</li>
+        <li>Download each layer on its own for remixes and edits.</li>
+        <li><b>Stem mastering</b> — upload 2–8 stems (vocals, drums, bass, synths…) and the Master page balances them into one polished stereo mix.</li>
+      </ol>
+      <p><a class="help-try" href="{{ url_for('separate_page') }}">Try it →</a></p>
+    </div>
+  </div>
+</div>
+
+<h3 class="tut-section">Perform</h3>
+<div class="tut-grid">
+  <div class="tut-card">
     <div class="tut-thumb">🎧</div>
     <div class="tut-body">
       <h3>Live DJ</h3>
       <ol>
-        <li>Load beats into Deck A and Deck B, or upload your own MP3s.</li>
-        <li>Use the crossfader, tempo sliders and 3-band EQ to blend.</li>
-        <li>Hit SYNC to match tempos, set cue points to jump around.</li>
-        <li>Or let Rockdabus Prhyme take over — generate a full beatmatched mix by genre or era.</li>
+        <li>Load tracks into <b>Deck A and Deck B</b> — your generated beats or your own uploads.</li>
+        <li>Blend with the <b>crossfader</b>, tempo sliders and 3-band EQ. <b>SYNC</b> beatmatches for you; set <b>cue points</b> to jump around a track.</li>
+        <li>Or hand it to <b>auto-mix</b>: it lines up the next track by BPM and blends with a crossfade transition.</li>
       </ol>
       <p><a class="help-try" href="{{ url_for('dj_page') }}">Try it →</a></p>
     </div>
@@ -71,26 +146,12 @@
     <div class="tut-body">
       <h3>Freestyle Assister</h3>
       <ol>
-        <li>Teleprompter highlights lyrics word-by-word on the beat.</li>
-        <li>Generate a full draft verse, or get phrase sparks every few bars.</li>
-        <li>Rhyme-word mode flashes one word per bar to keep your flow.</li>
-        <li>Pick a beat to freestyle over, or use the click track.</li>
+        <li>The <b>teleprompter</b> highlights your lyrics word-by-word on the beat while you perform.</li>
+        <li>Generate a full draft verse, or get <b>phrase sparks</b> — fresh lines fed to you every few bars.</li>
+        <li><b>Rhyme-word mode</b> flashes one rhyme word per bar to keep your flow going when you're stuck.</li>
+        <li>Pick any beat to freestyle over, or use the built-in click track.</li>
       </ol>
       <p><a class="help-try" href="{{ url_for('freestyle_page') }}">Try it →</a></p>
-    </div>
-  </div>
-
-  <div class="tut-card">
-    <div class="tut-thumb">🎚</div>
-    <div class="tut-body">
-      <h3>Studio (DAW)</h3>
-      <ol>
-        <li>Stack beats, vocals and samples on 8 timeline tracks.</li>
-        <li>Drag clips to move them, drag edges to trim.</li>
-        <li>Mix with per-track volume, mute/solo and the master fader.</li>
-        <li>Hit the record button to lay vocals straight in, then bounce your mixdown.</li>
-      </ol>
-      <p><a class="help-try" href="{{ url_for('studio_page') }}">Try it →</a></p>
     </div>
   </div>
 
@@ -99,124 +160,45 @@
     <div class="tut-body">
       <h3>Make a Video</h3>
       <ol>
-        <li>Lyric video — your track with animated lyrics on screen.</li>
-        <li>Selfie video — your footage synced to your audio.</li>
-        <li>Performance cut — edit-style cut of your clips to the track.</li>
+        <li><b>Lyric video</b> — your track with animated lyrics on screen, ready to post.</li>
+        <li><b>Selfie video</b> — your footage synced to your audio.</li>
+        <li><b>Performance cut</b> — an edit-style cut of your clips timed to the track.</li>
       </ol>
       <p><a class="help-try" href="{{ url_for('video_page') }}">Try it →</a></p>
     </div>
   </div>
+</div>
 
+<h3 class="tut-section">Library</h3>
+<div class="tut-grid">
   <div class="tut-card">
-    <div class="tut-thumb">🎛</div>
+    <div class="tut-thumb">♫</div>
     <div class="tut-body">
-      <h3>Soundkits</h3>
+      <h3>Player, Files &amp; Tools</h3>
       <ol>
-        <li>Browse 6 built-in drum kits — Classic, Punchy, Boomy, Street, Smooth, Hard.</li>
-        <li>Upload your own WAV drums and build a custom kit.</li>
-        <li>Pick 10 lead instruments from pluck to choir pads.</li>
-        <li>Select your kit on the Beats page before generating.</li>
+        <li><b>Player</b> — your generated tracks always list first, then Music, then Downloads. The Now Playing card gives you big artwork and controls; <b>Search Online</b> finds any song on Spotify, YouTube and SoundCloud.</li>
+        <li><b>Files</b> — every generated track, upload and temp file with inline players, downloads and deletes. <b>History</b> keeps every render re-downloadable.</li>
+        <li><b>Tools</b> — trim audio, normalize loudness, karaoke (vocal cut), make ringtones, detect key. <b>Convert</b> turns any audio file into WAV, MP3, OGG, FLAC or M4A.</li>
       </ol>
-      <p><a class="help-try" href="{{ url_for('soundkits_page') }}">Try it →</a></p>
+      <p><a class="help-try" href="{{ url_for('player_page') }}">Try it →</a></p>
     </div>
   </div>
+</div>
 
+<h3 class="tut-section">Assistant</h3>
+<div class="tut-grid">
   <div class="tut-card">
-    <div class="tut-thumb">🕉</div>
+    <div class="tut-thumb">🤖</div>
     <div class="tut-body">
-      <h3>Healing Mode</h3>
+      <h3>Rokdabus Prhyme</h3>
       <ol>
-        <li>On the Beats page, open the 🕉 Healing mode section.</li>
-        <li>Pick a preset — Deep Healing, Energy Cleanse, Meditation, Chakra Journey or Deep Sleep.</li>
-        <li>Fibonacci-ratio melodies, 432/440 Hz tuning, solfeggio / chakra / planetary drone.</li>
-        <li>Pick a binaural beat band (delta → gamma) for headphone listening.</li>
+        <li>Your in-app assistant — ask about production, songwriting, the music business, or how any Prhyme™ feature works.</li>
+        <li><b>Voice mode</b> talks back with natural pacing — good for hands-free in the studio.</li>
+        <li>On the DJ page he hypes your set with shout-outs and transition announcements.</li>
+        <li>He carries 10 producer wisdom tips plus genre-specific advice, so the answers stay practical.</li>
       </ol>
-      <p><a class="help-try" href="{{ url_for('beats_page') }}">Try it →</a></p>
-    </div>
-  </div>
-
-  <div class="tut-card">
-    <div class="tut-thumb">🛠</div>
-    <div class="tut-body">
-      <h3>Tools, Convert &amp; Samples</h3>
-      <ol>
-        <li><b>Tools</b> — trim, normalize, karaoke cut, ringtones, key detect.</li>
-        <li><b>Convert</b> — any audio format in, WAV / MP3 / OGG / FLAC / M4A out.</li>
-        <li><b>Samples</b> — upload, tag and preview your own sounds.</li>
-        <li><b>History</b> — every render you've made, re-downloadable anytime.</li>
-      </ol>
-      <p><a class="help-try" href="{{ url_for('tools_page') }}">Try it →</a></p>
+      <p><a class="help-try" href="{{ url_for('rockdabus_page') }}">Try it →</a></p>
     </div>
   </div>
 </div>
 {% endblock %}
-
-<div class="tutorial-card">
-<h3>🤖 Fully Automated Mastering</h3>
-<p>The Master page now has <b>Fully Automated Mode</b> (ON by default). Just upload your track and hit "Master it" — Prhyme detects genre, BPM, and optimal settings automatically.</p>
-<p>Uncheck the box to access all 32 manual controls: mastering chain presets, LUFS targets, multiband, de-essing, vocal FX (radio/TV/vinyl), echo, filters, fades, and stem export.</p>
-</div>
-
-<div class="tutorial-card">
-<h3>🎧 Smart DJ Selection</h3>
-<p>The DJ's auto-mix now uses <b>intelligent track selection</b>. Instead of just playing the next track, it picks the best transition based on:</p>
-<ul>
-<li><b>BPM matching</b> — within 6% for smooth beatmatching</li>
-<li><b>Harmonic mixing</b> — Camelot wheel key compatibility</li>
-<li><b>Energy curve</b> — builds energy gradually, avoids crashes</li>
-</ul>
-<p>Use the <b>/api/dj/smart_next</b> endpoint or enable auto-mix on the DJ page.</p>
-</div>
-
-<div class="tutorial-card">
-<h3>🎙️ Rokdabus Upgrades</h3>
-<p>Rokdabus Prhyme has three new enhancements:</p>
-<ul>
-<li><b>Smarter responses</b> — 10 producer wisdom tips + genre-specific advice</li>
-<li><b>Proactive DJ</b> — Hype phrases ("Let's go! This one's fire!") and transition announcements</li>
-<li><b>Voice upgrade</b> — Prefers Google US English voice, natural pacing with pauses</li>
-</ul>
-</div>
-
-<div class="tutorial-card">
-<h3>🎵 Player Now Playing</h3>
-<p>The Music Player now has a <b>Now Playing card</b> with large album art (200px), track title, and playback controls — Spotify-style. It appears when you start playing a track.</p>
-</div>
-
-<div class="tutorial-card">
-<h3>✍️ Lyric Engine v2</h3>
-<p>The lyric generator now uses <b>phonetic rhyme detection</b> (134k word dictionary) instead of hardcoded rhyme keys. It ensures:</p>
-<ul>
-<li>Rhyme diversity > 0.8 (no more "same rhymes")</li>
-<li>15 candidate lines ranked per position</li>
-<li>Temperature + repetition penalties for variety</li>
-</ul>
-</div>
-
-<div class="tutorial-card">
-<h3>🥁 Beat Humanization</h3>
-<p>Beats now have <b>human feel</b>:</p>
-<ul>
-<li>Per-instrument timing bias + Gaussian jitter (±10ms)</li>
-<li>Velocity variation for dynamics</li>
-<li>Round-robin drum samples (no machine-gun effect)</li>
-<li>Genre-specific swing presets</li>
-</ul>
-</div>
-
-<div class="tutorial-card">
-<h3>🌐 Online Music Search</h3>
-<p>The Player now has <b>Search Online</b>. Type a song name and get instant links to:</p>
-<ul>
-<li><b>🎵 Spotify</b> — Full catalog search, opens in Spotify app</li>
-<li><b>📺 YouTube</b> — Music videos and live performances</li>
-<li><b>☁️ SoundCloud</b> — Independent artists and remixes</li>
-</ul>
-<p>Find it in the Player page under the Now Playing card.</p>
-</div>
-
-<div class="tutorial-card">
-<h3>🎚️ Stem Mastering (2-8 Stems)</h3>
-<p>Upload 2-8 separate stems (vocals, drums, bass, synths, etc.) and master them together as a complete mix. Found on the Master page.</p>
-<p>The backend balances levels, applies your mastering chain, and exports a polished stereo master.</p>
-</div>
