@@ -1,5 +1,16 @@
 (function () {
 "use strict";
+
+// === Deduplicate buddy (prevent double render) ===
+(function() {
+  var buddies = document.querySelectorAll("#rbBuddy");
+  if (buddies.length > 1) {
+    for (var i = 1; i < buddies.length; i++) {
+      buddies[i].remove();
+    }
+  }
+})();
+
 var buddy = document.getElementById("rbBuddy");
 if (!buddy) return;
 var page = (document.body && document.body.getAttribute("data-page")) || "home";
@@ -274,4 +285,90 @@ bubble.addEventListener("click", function (e) {
 if (e.target.closest("button")) return;
 hideBubble();
 });
+})();
+
+// === Draggable buddy (touch and slide) ===
+(function() {
+  var disc = document.querySelector(".rb-buddy-disc");
+  var buddy = document.getElementById("rbBuddy");
+  if (!disc || !buddy) return;
+  
+  // Restore saved position
+  try {
+    var pos = JSON.parse(localStorage.getItem("rb_buddy_pos") || "null");
+    if (pos && pos.left !== undefined) {
+      buddy.style.left = pos.left + "px";
+      buddy.style.top = pos.top + "px";
+      buddy.style.right = "auto";
+      buddy.style.bottom = "auto";
+    }
+  } catch(e) {}
+  
+  var dragging = false, startX, startY, origX, origY, moved;
+  
+  function getPos(e) {
+    var t = e.touches ? e.touches[0] : e;
+    return {x: t.clientX, y: t.clientY};
+  }
+  
+  disc.addEventListener("touchstart", function(e) {
+    var p = getPos(e);
+    startX = p.x; startY = p.y;
+    var r = buddy.getBoundingClientRect();
+    origX = r.left; origY = r.top;
+    dragging = true; moved = false;
+  }, {passive: true});
+  
+  disc.addEventListener("touchmove", function(e) {
+    if (!dragging) return;
+    var p = getPos(e);
+    var dx = p.x - startX, dy = p.y - startY;
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) moved = true;
+    if (!moved) return;
+    var nx = Math.max(0, Math.min(window.innerWidth - 70, origX + dx));
+    var ny = Math.max(0, Math.min(window.innerHeight - 70, origY + dy));
+    buddy.style.left = nx + "px";
+    buddy.style.top = ny + "px";
+    buddy.style.right = "auto";
+    buddy.style.bottom = "auto";
+    e.preventDefault();
+  }, {passive: false});
+  
+  disc.addEventListener("touchend", function(e) {
+    if (dragging && moved) {
+      var r = buddy.getBoundingClientRect();
+      try { localStorage.setItem("rb_buddy_pos", JSON.stringify({left: r.left, top: r.top})); } catch(err) {}
+      // Prevent the tap/click after drag
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    dragging = false;
+  });
+  
+  // Mouse support
+  disc.addEventListener("mousedown", function(e) {
+    startX = e.clientX; startY = e.clientY;
+    var r = buddy.getBoundingClientRect();
+    origX = r.left; origY = r.top;
+    dragging = true; moved = false;
+  });
+  document.addEventListener("mousemove", function(e) {
+    if (!dragging) return;
+    var dx = e.clientX - startX, dy = e.clientY - startY;
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) moved = true;
+    if (!moved) return;
+    var nx = Math.max(0, Math.min(window.innerWidth - 70, origX + dx));
+    var ny = Math.max(0, Math.min(window.innerHeight - 70, origY + dy));
+    buddy.style.left = nx + "px";
+    buddy.style.top = ny + "px";
+    buddy.style.right = "auto";
+    buddy.style.bottom = "auto";
+  });
+  document.addEventListener("mouseup", function() {
+    if (dragging && moved) {
+      var r = buddy.getBoundingClientRect();
+      try { localStorage.setItem("rb_buddy_pos", JSON.stringify({left: r.left, top: r.top})); } catch(err) {}
+    }
+    dragging = false;
+  });
 })();

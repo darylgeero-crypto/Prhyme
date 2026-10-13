@@ -10,6 +10,10 @@
 
 <div class="draft-banner">AI-GENERATED DRAFT LYRICS — not written by the artist.</div>
 
+{% if not is_paid %}
+<div class="preview-banner">🔓 <b>Free preview</b> — lyric generations show the first 8 lines. <a href="/pricing" class="preview-upgrade">Upgrade for full lyrics &amp; unlimited generations</a></div>
+{% endif %}
+
 <form id="lyricsForm" class="form">
   <label class="field">
     <span>Theme / working title</span>
@@ -215,7 +219,7 @@ document.getElementById("lyricsForm").addEventListener("submit", async (e) => {
   txt.value = "Writing…";
   meta.textContent = "";
   try {
-    const r = await fetch("/api/lyrics", {
+    const r = await fetch("{{ '/api/lyrics' if is_paid else '/api/lyrics/preview' }}", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify(payload)
     });
@@ -233,6 +237,15 @@ document.getElementById("lyricsForm").addEventListener("submit", async (e) => {
       : "🔞 Clean";
     meta.textContent = "“" + (j.title || "Untitled") + "” · Seed " + j.seed +
       " · draft only — rewrite it in your voice";
+    {% if not is_paid %}if (j.is_lyric_preview) {
+      meta.textContent += " · free preview (first 8 lines)";
+      const upLink = document.createElement("a");
+      upLink.href = "/pricing";
+      upLink.className = "preview-upgrade";
+      upLink.style.marginLeft = "8px";
+      upLink.textContent = "🔓 Upgrade for full lyrics";
+      meta.appendChild(upLink);
+    }{% endif %}
     const st = j.stats || {};
     document.getElementById("lyricsStats").innerHTML =
       Object.entries(st).map(([k, v]) =>

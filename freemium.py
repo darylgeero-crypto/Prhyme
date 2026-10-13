@@ -13,16 +13,47 @@ Seed uniqueness:
 """
 
 import hashlib
+import json
+import os
 import secrets
 import threading
 import time
 
-# In-memory seed tracking: {user_key: set(seeds_used)}
+# Seed tracking: {user_key: set(seeds_used)}
 # user_key is "uid:<id>" for logged-in users, "sess:<session_id>" or
 # "ip:<addr>" for anonymous. Bounded to prevent memory bloat.
-_seen_seeds = {}
+# Persisted to disk so a server restart (phone reboot, process kill) does
+# not reset the never-repeat guarantee.
+_SEED_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "seed_history.json")
 _seen_lock = threading.Lock()
 _MAX_SEEDS_PER_USER = 500
+
+
+def _load_seeds():
+    try:
+        if os.path.isfile(_SEED_FILE):
+            with open(_SEED_FILE) as f:
+                data = json.load(f) or {}
+            return {k: set(v) for k, v in data.items()
+                    if isinstance(k, str) and isinstance(v, list)}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_seeds():
+    """Write the seed map to disk (call with _seen_lock held)."""
+    try:
+        tmp = _SEED_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({k: sorted(v) for k, v in _seen_seeds.items()}, f)
+        os.replace(tmp, _SEED_FILE)
+    except Exception:
+        pass
+
+
+_seen_seeds = _load_seeds()
 
 
 def _prune(user_key):
@@ -53,11 +84,13 @@ def unique_seed(user_key, salt=""):
             if seed not in seen:
                 seen.add(seed)
                 _prune(user_key)
+                _save_seeds()
                 return seed
         # Extremely unlikely fallback: timestamp-mixed seed.
         seed = (int(time.time() * 1000) ^ secrets.randbits(32)) & 0xFFFFFFFF
         seen.add(seed)
         _prune(user_key)
+        _save_seeds()
         return seed
 
 
@@ -67,6 +100,7 @@ def mark_seed_used(user_key, seed):
         seen = _seen_seeds.setdefault(user_key, set())
         seen.add(int(seed))
         _prune(user_key)
+        _save_seeds()
 
 
 def is_seed_used(user_key, seed):

@@ -59,7 +59,7 @@ const w = el("div", "dj-welcome", `
 <div class="dj-welcome-eq" aria-hidden="true">
 <span></span><span></span><span></span><span></span><span></span>
 </div>
-<h2>Thanks for downloading<br>Prhyme™!</h2>
+<h2>Welcome to<br>Prhyme™!</h2>
 <div><span class="prhyming-flash">Prhyming</span></div>
 <p>A full studio in your pocket.<br>Beats, mixing, mastering, lyrics, video & live DJ with Rockdabus Prhyme.</p>
 <div class="dj-welcome-btns">

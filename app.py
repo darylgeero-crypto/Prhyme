@@ -224,8 +224,22 @@ _integrity_check()
 
 @app.context_processor
 def _inject_lite():
-    """Make {{ lite }} available in every template (badge + toggles)."""
-    return {"lite": lite_mode()}
+    """Make {{ lite }} (badge + toggles) and {{ is_paid }} (freemium tier)
+    available in every template. is_paid drives the free-preview vs full
+    UI wiring: free users get snippet endpoints + upgrade nudges."""
+    paid = False
+    try:
+        from flask import session as _sess
+        _uid = _sess.get("uid")
+        if _uid:
+            import billing_core as _bc
+            _u = _bc.get_user(int(_uid))
+            if _u:
+                _active, _, _ = _bc.subscription_state(_u)
+                paid = bool(_active)
+    except Exception:
+        paid = False
+    return {"lite": lite_mode(), "is_paid": paid}
 
 
 @app.after_request
@@ -777,7 +791,7 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         prog(96, "Building A/B previews…")
 
         set_job(job_id, status="done", progress=100,
-                message=f"Done — {report['lufs']} LUFS, "
+                message=f"Track Prhymed! — {report['lufs']} LUFS, "
                         f"{report['true_peak_dbtp']} dBTP",
                 result={"mp3": os.path.basename(mp3_path),
                         "wav": os.path.basename(wav_path),
@@ -1935,15 +1949,22 @@ def _gen_lyrics(data):
     if genre not in GENRES:
         genre = "HipHop"
     seed_raw = data.get("seed")
+    seed_regenerated = False
     if seed_raw not in (None, ""):
         try:
             seed = int(seed_raw)
         except (TypeError, ValueError):
             return {"ok": False, "error": "Seed must be a number"}, 400
-        # Track user-supplied seeds so even manual seeds can't repeat
-        # silently for the same user.
+        # Never silently repeat: if this user already generated with this
+        # seed, mint a fresh unique one instead of replaying identical
+        # lyrics (the generator is deterministic per seed).
         import freemium as _fm
-        _fm.mark_seed_used(_freemium_user_key(), seed)
+        _ukey = _freemium_user_key()
+        if _fm.is_seed_used(_ukey, seed):
+            seed = _fm.unique_seed(_ukey, salt="lyrics")
+            seed_regenerated = True
+        else:
+            _fm.mark_seed_used(_ukey, seed)
     else:
         # Unique seed per generation: deterministic base from theme+mood+
         # genre+artist, mixed with fresh randomness so identical inputs
@@ -2004,6 +2025,7 @@ def _gen_lyrics(data):
             "title": song.get("title"),
             "stats": L.lyric_stats(song),
             "adlibs": song.get("adlibs"),
+            "seed_regenerated": seed_regenerated,
             "sections": sections}, 200
 
 

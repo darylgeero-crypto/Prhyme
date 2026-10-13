@@ -2,23 +2,166 @@
 {% block content %}
 <h2>Master</h2>
 <form id="f" enctype="multipart/form-data">
+  <div style="background:#e8f5e9; padding:15px; border-radius:8px; margin-bottom:20px;">
+    <label style="font-size:18px; font-weight:bold;">
+      <input type="checkbox" id="autoMode" name="auto_mode" value="1" checked>
+      Fully Automated Mode
+    </label>
+    <p style="margin:5px 0 0 0; color:#555;">Prhyme detects genre, BPM, and optimal settings. Uncheck for manual control.</p>
+  </div>
+  <h3>Input</h3>
   <input type="file" name="file" accept="audio/*" required><br><br>
   <input type="text" name="title" placeholder="Track title"><br><br>
+  <div id="manualOptions">
+  <label>Genre: <input type="text" name="genre" value="HipHop"></label><br><br>
+  <label>BPM: <input type="number" name="bpm" value="90"></label><br><br>
+  
+  <h3>Mastering Chain</h3>
+  <label>Chain: 
+    <select name="chain">
+      <option value="standard">Standard</option>
+      <option value="aggressive">Aggressive</option>
+      <option value="vintage">Vintage</option>
+      <option value="modern">Modern</option>
+    </select>
+  </label><br><br>
+  <label>Output Format:
+    <select name="output_format">
+      <option value="mp3">MP3</option>
+      <option value="wav">WAV</option>
+      <option value="flac">FLAC</option>
+    </select>
+  </label><br><br>
+  
+  <h3>Levels</h3>
+  <label>Target LUFS: <input type="number" name="target_lufs" value="-14" step="0.5"></label><br><br>
+  <label>Ceiling dB: <input type="number" name="ceiling_db" value="-1.0" step="0.1"></label><br><br>
+  <label><input type="checkbox" name="dither" value="1"> Dither</label><br><br>
+  <label><input type="checkbox" name="multiband" value="1"> Multiband</label><br><br>
+  <label><input type="checkbox" name="deess" value="1"> De-ess</label><br><br>
+  
+  <h3>Fades</h3>
+  <label>Fade In (s): <input type="number" name="fade_in" value="0" step="0.1"></label><br><br>
+  <label>Fade Out (s): <input type="number" name="fade_out" value="0" step="0.1"></label><br><br>
+  
+  <h3>Vocal FX</h3>
+  <label><input type="checkbox" name="fx_radio" value="1"> Radio</label><br>
+  <label><input type="checkbox" name="fx_tv" value="1"> TV</label><br>
+  <label><input type="checkbox" name="fx_vinyl" value="1"> Vinyl</label><br><br>
+  <label><input type="checkbox" name="fx_hp_on" value="1"> High-pass</label>
+  <input type="number" name="fx_hp_cut" value="80" placeholder="Hz"><br>
+  <label><input type="checkbox" name="fx_lp_on" value="1"> Low-pass</label>
+  <input type="number" name="fx_lp_cut" value="18000" placeholder="Hz"><br><br>
+  <label><input type="checkbox" name="fx_echo_on" value="1"> Echo</label><br>
+  <label>Echo MS: <input type="number" name="fx_echo_ms" value="250"></label><br>
+  <label>Echo Mix: <input type="number" name="fx_echo_mix" value="0.3" step="0.1"></label><br>
+  <label>Echo FB: <input type="number" name="fx_echo_fb" value="0.4" step="0.1"></label><br>
+  <label><input type="checkbox" name="fx_echo_sync" value="1"> Sync to BPM</label><br><br>
+  <label>FX Target:
+    <select name="fx_target">
+      <option value="vocal">Vocal</option>
+      <option value="mix">Full Mix</option>
+    </select>
+  </label><br><br>
+  
+  <h3>Advanced</h3>
+  <label>Reference Track: <input type="file" name="reference" accept="audio/*"></label><br><br>
+  <label>Beat Source: <input type="text" name="beat_source" placeholder="Optional"></label><br><br>
+  <label>Seed: <input type="number" name="seed" placeholder="Random"></label><br><br>
+  <label><input type="checkbox" name="timing_fix" value="1"> Timing Fix</label><br><br>
+  <label><input type="checkbox" name="stems" value="1"> Export Stems</label><br><br>
+  
+  </div>
   <button type="submit">Master it</button>
+
+<h3>🎚️ Stem Mastering</h3>
+<p>Upload 2-8 stems (vocals, drums, bass, etc.) to master them together as a mix.</p>
+<input type="file" id="stemFiles" multiple accept="audio/*" style="margin:10px 0;"><br>
+<button type="button" onclick="uploadStems()" class="btn">Master Stems</button>
+<div id="stemProgress" style="margin-top:10px;"></div>
+<script>
+async function uploadStems() {
+  const files = document.getElementById('stemFiles').files;
+  if (files.length < 2 || files.length > 8) { alert('Select 2-8 stem files'); return; }
+  const fd = new FormData();
+  for (const f of files) fd.append('stems', f);
+  // Add current mastering options
+  const form = document.getElementById('masterForm');
+  new FormData(form).forEach((v,k) => fd.append(k,v));
+  document.getElementById('stemProgress').innerHTML = 'Uploading and mastering stems...';
+  try {
+    const r = await fetch('/api/master/stems', {method:'POST', body:fd});
+    const j = await r.json();
+    if (j.job_id) {
+      document.getElementById('stemProgress').innerHTML = 'Job: '+j.job_id+' - <a href="/api/jobs/'+j.job_id+'">Check status</a>';
+    } else {
+      document.getElementById('stemProgress').innerHTML = 'Error: '+(j.error||'unknown');
+    }
+  } catch(e) {
+    document.getElementById('stemProgress').innerHTML = 'Error: '+e.message;
+  }
+}
+</script>
+<hr>
+
 </form>
 <div id="out"></div>
+<div id="progress" style="display:none;">
+  <div style="background:#eee; height:20px; border-radius:10px; overflow:hidden;">
+    <div id="bar" style="background:#4CAF50; height:100%; width:0%; transition:width 0.3s;"></div>
+  </div>
+  <p id="msg"></p>
+</div>
 <script>
 document.getElementById('f').addEventListener('submit', async (e) => {
   e.preventDefault();
-  document.getElementById('out').textContent = 'Uploading...';
+  const out = document.getElementById('out');
+  const prog = document.getElementById('progress');
+  const bar = document.getElementById('bar');
+  const msg = document.getElementById('msg');
+  out.textContent = 'Uploading...';
+  prog.style.display = 'none';
   const fd = new FormData(e.target);
   try {
     const r = await fetch('/api/master', {method:'POST', body:fd});
     const j = await r.json();
-    document.getElementById('out').textContent = j.ok ? 'Job started: '+j.job_id : 'Error: '+j.error;
+    if (!j.ok) {
+      out.textContent = 'Error: ' + (j.error || 'Unknown');
+      return;
+    }
+    const jobId = j.job_id;
+    out.textContent = 'Job started: ' + jobId;
+    prog.style.display = 'block';
+    // Poll for progress
+    const poll = setInterval(async () => {
+      try {
+        const pr = await fetch('/api/job/' + jobId);
+        const pj = await pr.json();
+        if (pj.progress !== undefined) {
+          bar.style.width = pj.progress + '%';
+          msg.textContent = pj.message || (pj.progress + '%');
+        }
+        if (pj.status === 'done') {
+          clearInterval(poll);
+          bar.style.width = '100%';
+          msg.textContent = 'Complete!';
+          if (pj.download_url) {
+            out.innerHTML = 'Done! <a href="' + pj.download_url + '">Download</a>';
+          } else {
+            out.textContent = 'Done! Job: ' + jobId;
+          }
+        } else if (pj.status === 'error') {
+          clearInterval(poll);
+          out.textContent = 'Error: ' + (pj.error || 'Failed');
+        }
+      } catch(err) {
+        // Continue polling
+      }
+    }, 2000);
   } catch(err) {
-    document.getElementById('out').textContent = 'Failed: '+err;
+    out.textContent = 'Failed: ' + err;
   }
 });
 </script>
+<script>document.getElementById("autoMode").addEventListener("change", function(){document.getElementById("manualOptions").style.display=this.checked?"none":"block";});document.getElementById("manualOptions").style.display="none";</script>
 {% endblock %}

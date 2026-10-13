@@ -52,7 +52,61 @@
 </div>
 <p class="muted" id="plCount"></p>
 
-<h3 class="sect">Up next</h3>
+<div id="nowPlaying" style="display:none; background:linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%); border-radius:16px; padding:20px; margin:16px 0; text-align:center;">
+  <div id="npArt" style="width:200px; height:200px; margin:0 auto 16px; border-radius:12px; background:#333; display:flex; align-items:center; justify-content:center; font-size:64px; box-shadow:0 8px 32px rgba(0,0,0,0.5);">🎵</div>
+  <div id="npTitle" style="font-size:20px; font-weight:700; color:#fff; margin-bottom:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">No track</div>
+  <div id="npArtist" style="font-size:14px; color:#b3b3b3; margin-bottom:12px;">—</div>
+  <div style="display:flex; justify-content:center; gap:12px; align-items:center;">
+    <button id="npPrev" class="btn" style="font-size:24px;">⏮</button>
+    <button id="npPlay" class="btn" style="width:64px; height:64px; border-radius:50%; background:#fff; color:#000; font-size:28px;">▶</button>
+    <button id="npNext" class="btn" style="font-size:24px;">⏭</button>
+  </div>
+</div>
+<h3 class="sect">
+<!-- Streaming Integration: Spotify, YouTube, SoundCloud -->
+<div id="streamingSection" style="margin:20px 0; padding:15px; background:#1a1a1a; border-radius:10px;">
+<h3>🌐 Search Online</h3>
+<input type="text" id="streamSearch" placeholder="Search songs..." style="width:70%; padding:10px; border-radius:5px; border:1px solid #333; background:#222; color:#fff;">
+<button onclick="searchStreaming()" class="btn" style="padding:10px 20px;">Search</button>
+<div id="streamResults" style="margin-top:15px;"></div>
+</div>
+
+<script>
+function searchStreaming() {
+  const q = document.getElementById('streamSearch').value.trim();
+  if (!q) return;
+  const resultsDiv = document.getElementById('streamResults');
+  const eq = encodeURIComponent(q);
+  
+  resultsDiv.innerHTML = `
+    <h4>Search "${q}" on:</h4>
+    <div style="display:grid; gap:10px; margin-top:10px;">
+      <a href="https://open.spotify.com/search/${eq}" target="_blank" class="btn" style="padding:12px; text-align:center; background:#1DB954; color:#000; font-weight:bold; border-radius:8px; text-decoration:none;">
+        🎵 Spotify
+      </a>
+      <a href="https://www.youtube.com/results?search_query=${eq}" target="_blank" class="btn" style="padding:12px; text-align:center; background:#FF0000; color:#fff; font-weight:bold; border-radius:8px; text-decoration:none;">
+        📺 YouTube (Videos)
+      </a>
+      <a href="https://soundcloud.com/search?q=${eq}" target="_blank" class="btn" style="padding:12px; text-align:center; background:#FF5500; color:#fff; font-weight:bold; border-radius:8px; text-decoration:none;">
+        ☁️ SoundCloud
+      </a>
+    </div>
+    <p style="color:#888; font-size:12px; margin-top:10px;">Tap to search on each platform. Full songs play in their apps.</p>
+  `;
+}
+
+function searchYouTube(query) {
+  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query + ' official music video')}`;
+  window.open(url, '_blank');
+}
+
+// Enter key triggers search
+document.getElementById('streamSearch')?.addEventListener('keypress', function(e) {
+  if (e.key === 'Enter') searchStreaming();
+});
+</script>
+
+Up next</h3>
 <div id="plQueue" class="pl-queue"><p class="muted">Nothing queued — tap a track below.</p></div>
 
 <h3 class="sect">Tracks</h3>
