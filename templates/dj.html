@@ -415,6 +415,60 @@ $("syncBtn").addEventListener("click", ()=>{
   toast("B synced to A ("+Math.round(a*deckA.rate)+" BPM)");
 });
 
+
+/* ---------- Gemini-quality smart track selection ---------- */
+function camelotCompatible(k1, k2) {
+  if (!k1 || !k2) return true;
+  if (k1 === k2) return true;
+  if (k1.slice(0,-1) === k2.slice(0,-1)) return true;
+  try {
+    const n1 = parseInt(k1.slice(0,-1)), n2 = parseInt(k2.slice(0,-1));
+    const diff = Math.abs(n1 - n2);
+    if ((diff === 1 || diff === 11) && k1.slice(-1) === k2.slice(-1)) return true;
+  } catch(e) {}
+  return false;
+}
+function scoreTransition(current, candidate) {
+  let score = 50;
+  if (current.bpm && candidate.bpm) {
+    const diff = Math.abs(current.bpm - candidate.bpm) / current.bpm;
+    if (diff <= 0.03) score += 30;
+    else if (diff <= 0.06) score += 20;
+    else if (diff <= 0.10) score += 10;
+  }
+  if (camelotCompatible(current.camelot, candidate.camelot)) score += 25;
+  const eDiff = (candidate.energy || 5) - (current.energy || 5);
+  if (eDiff === 0) score += 15;
+  else if (eDiff === 1) score += 20;
+  else if (eDiff === -1) score += 10;
+  if (current.path === candidate.path) score -= 25;
+  return Math.max(0, Math.min(100, score));
+}
+function selectNextTrack(current, library, excludePaths) {
+  excludePaths = excludePaths || new Set();
+  const candidates = library.filter(t => !excludePaths.has(t.path));
+  if (!candidates.length) return null;
+  let best = null, bestScore = -1;
+  for (const c of candidates) {
+    const s = scoreTransition(current, c);
+    if (s > bestScore) { bestScore = s; best = c; }
+  }
+  return best;
+}
+
+/* ---------- auto-mix track loader (was missing, broke smart mix) ---------- */
+function loadTrackToDeck(track, deck, btnEl){
+  if(!track || !track.url) { toast("⚠ No track to load"); return; }
+  const labelEl = deck===deckA ? $("trackA") : $("trackB");
+  const name = track.title || track.name || "Unknown";
+  loadInto(deck, labelEl, btnEl, track.url, name, track.bpm);
+  // store current track metadata for smart transition scoring
+  deck.currentPath = track.path || track.url;
+  deck.currentBpm = track.bpm || 0;
+  deck.currentKey = track.camelot || track.key || "";
+  deck.currentEnergy = track.energy || 5;
+}
+
 /* ---------- auto-mix ---------- */
 let autoMix=false, autoMixing=false;
 $("autoMixBtn").addEventListener("click", e=>{
@@ -426,8 +480,22 @@ const XF_SECS=8;
 function onDeckEnded(d){
   if(window.djrillAmbient) djrillAmbient.userAudioStop();
   if(!autoMix || autoMixing) return;
+  // Gemini-quality: smart track selection
+  const currentTrack = {
+    path: d===deckA ? deckA.currentPath : deckB.currentPath,
+    bpm: d===deckA ? deckA.currentBpm : deckB.currentBpm,
+    camelot: d===deckA ? deckA.currentKey : deckB.currentKey,
+    energy: d===deckA ? deckA.currentEnergy : deckB.currentEnergy
+  };
+  const exclude = new Set([currentTrack.path]);
+  const next = selectNextTrack(currentTrack, libCache, exclude);
   const other = d===deckA?deckB:deckA;
   const oBtn = d===deckA?$("playB"):$("playA");
+  if(next) {
+    // Load smart-selected track into other deck
+    loadTrackToDeck(next, other, oBtn);
+    toast("Smart mix → "+next.title);
+  }
   if(!other.buffer) return;
   autoMixing=true;
   playDeck(other, oBtn, 0);
@@ -566,7 +634,7 @@ $("djUploadFile").addEventListener("change", async e=>{
   const chk=$("djAutostart"), bar=$("djAutoBar"),
         playBtn=$("djAutoPlay"), label=$("djAutoLabel");
   if(!chk||!bar) return;
-  chk.checked = localStorage.getItem(AUTO_KEY)!=="0";
+  chk.checked = localStorage.getItem(AUTO_KEY)==="1"; // Default OFF for fast startup
   chk.addEventListener("change",()=>localStorage.setItem(AUTO_KEY, chk.checked?"1":"0"));
   if(!chk.checked) return;
 

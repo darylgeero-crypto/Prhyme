@@ -64,6 +64,10 @@
     </select>
   </label><br><br>
   
+  <h3>Vocal Level</h3>
+  <label>Vocal Gain: <input type="range" name="vocal_boost_db" min="-12" max="12" step="0.5" value="1.5" id="vocalGainSlider" oninput="document.getElementById('vocalGainVal').textContent=this.value+' dB'">
+  <span id="vocalGainVal">1.5 dB</span></label><br>
+  <div style="font-size:0.8em;color:#888;">Boost or cut the vocal level in the mix. Positive = louder vocals.</div><br><br>
   <h3>Advanced</h3>
   <label>Reference Track: <input type="file" name="reference" accept="audio/*"></label><br><br>
   <label><input type="checkbox" name="ab_compare" value="1" checked> Generate A/B compare previews (30s excerpts)</label><br><br>
@@ -195,6 +199,10 @@ document.getElementById('f').addEventListener('submit', async (e) => {
             html += '</div>';
             html += '<div style="margin:10px 0;">';
             if (isTemp) {
+              html += '<div style="margin:12px 0;padding:10px;background:#1a1a2e;border-radius:8px;">';
+              html += '<label style="color:#fff;">🎤 Vocal Gain: <input type="range" id="postVocalGain" min="-12" max="12" step="0.5" value="1.5" style="width:150px;vertical-align:middle;" oninput="document.getElementById(\'postVocalVal\').textContent=this.value+\' dB\'"> <span id="postVocalVal">1.5 dB</span></label> ';
+              html += '<button onclick="remasterWithGain(\'' + jobId + '\')" style="background:#9d4edd;color:#fff;padding:6px 12px;border:none;border-radius:4px;cursor:pointer;margin-left:8px;">🔄 Re-render</button>';
+              html += '<div style="font-size:0.8em;color:#888;margin-top:4px;">Adjust vocal level and re-render before downloading.</div></div>';
               html += '<button onclick="keepMaster(\'' + jobId + '\',this)" style="background:#00e5a0;color:#000;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;margin-right:10px;">⬇ Download Master</button>';
               html += '<button onclick="discardMaster(\'' + jobId + '\')" style="background:#ff4444;color:#fff;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;">🗑 Discard</button>';
               html += '</div>';
@@ -216,6 +224,18 @@ document.getElementById('f').addEventListener('submit', async (e) => {
       }
     }, 2000);
 
+    function remasterWithGain(jobId) {
+      var gainEl = document.getElementById('postVocalGain');
+      var gain = gainEl ? gainEl.value : "1.5";
+      var form = document.querySelector('form');
+      if (!form) return;
+      var fd = new FormData(form);
+      fd.set('vocal_boost_db', gain);
+      if (typeof toast === 'function') toast('Re-rendering with vocal gain ' + gain + ' dB...');
+      fetch('/api/master', {method:'POST', body:fd}).then(function(r){return r.json();}).then(function(j){
+        if(j.job_id && typeof pollMaster === 'function') pollMaster(j.job_id);
+      });
+    }
     async function keepMaster(jobId, btn) {
       if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
       try {

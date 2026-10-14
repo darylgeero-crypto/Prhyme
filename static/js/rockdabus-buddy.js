@@ -13,6 +13,19 @@
 
 var buddy = document.getElementById("rbBuddy");
 if (!buddy) return;
+try {
+  var savedPos = localStorage.getItem("rb_buddy_pos");
+  if (savedPos) {
+    var pos = JSON.parse(savedPos);
+    var vw = window.innerWidth, vh = window.innerHeight;
+    if (!pos || typeof pos.left !== "number" || typeof pos.top !== "number" ||
+        pos.left < -50 || pos.top < -50 || pos.left > vw - 20 || pos.top > vh - 20) {
+      localStorage.removeItem("rb_buddy_pos");
+    }
+  }
+  localStorage.removeItem("rb_buddy_min");
+  buddy.classList.remove("min");
+} catch(e) {}
 var page = (document.body && document.body.getAttribute("data-page")) || "home";
 var disc = document.getElementById("rbBuddyDisc");
 var dot = document.getElementById("rbBuddyDot");
@@ -48,47 +61,102 @@ help: "Need a hand? That's literally my job. 🤖",
 default: "Rockdabus in the building. Need a hand?"
 };
 var TIPS = {
+home: [
+"Tap any card to jump in — Beats cooks instrumentals, Lyrics writes bars, Master polishes tracks.",
+"New here? Start with Beats — pick a genre and hit generate. Your first instrumental in seconds.",
+"The DJ booth mixes your library tracks live with auto-mix. Load two tracks and let it blend.",
+"Tap me anytime — I give tips about whatever page you're on. The more you explore, the more you learn."
+],
 beats: [
-"Try 140 BPM with Drill — sliding 808s love that tempo.",
-"Layer a snare on the 3 with a clap underneath. Instant width.",
-"BoomBap at 92 BPM + a dusty piano = timeless.",
-"Stuck? Switch the drum kit — new sounds, new ideas.",
-"That 808 hits hard — try a counter-melody an octave up.",
-"Hi-hat rolls on the 1/16ths add urgency without clutter."
+"Genre picker sets the whole vibe — Drill, Trap, BoomBap, Blues, Jazz, and more. Each has its own drum patterns.",
+"BPM controls the tempo. Drill lives at 140, Trap at 150, BoomBap at 92. Match it to your flow.",
+"Length picker: Loop gives you 16 or 32 bars to vibe over. Full Song builds a complete 2:30-3:30 arrangement with intro, verses, hooks, and outro.",
+"Advanced options let you pick drum kits, musical key, and more. Tap it to fine-tune your sound.",
+"Your last 5 beats stay in Recent Generations — play them, download the ones you love, delete the rest.",
+"Beats sit in a temp holding area until you download them. Nothing hits your library until you say so.",
+"Uncheck 'Keep original beat' on the Master page to generate a fresh beat under your vocals."
 ],
 lyrics: [
-"Writer's block? Start with the hook — 4 bars, one big idea.",
-"AABB hits punchy, ABAB flows smooth. Pick your weapon.",
-"Write the truth first, make it rhyme second.",
-"Internal rhymes ('lightning / frightening') level up any verse.",
-"Read it out loud — if you stumble, the listener will too."
-],
-dj: [
-"Match energy, not just BPM — a 100 BPM banger beats a 128 BPM snoozer.",
-"Cut the lows on the outgoing track right before the drop.",
-"Tease the hook 8 bars early, then slam it in.",
-"Let the record breathe — don't rush the blend."
-],
-home: [
-"New here? Hit Beats and cook your first instrumental. 🎛️",
-"The DJ booth mixes your tracks live. Go wild. 🎧",
-"Tap me anytime — I live for this stuff."
-],
-freestyle: [
-"Set 60 seconds, pick a theme, don't stop. Flow over perfection.",
-"Breathe on the snare — your lungs will thank you."
-],
-studio: [
-"Mute half your tracks and listen. What's left is the song.",
-"Automate one thing per section — movement keeps ears hooked."
+"Type a theme or topic — the more specific, the better the bars. 'Late night drive' beats 'sad'.",
+"Artist style picker shapes the flow and vocabulary. Pick someone whose cadence matches your vision.",
+"Explicit toggle: ON weaves profanity into the lyrics, OFF keeps it clean. Your call.",
+"Generated lyrics are a starting point — edit any line. Your edits change the credit from AI draft to your name.",
+"Stuck? Generate 3-4 versions and cherry-pick the best bars from each. That's how pros write."
 ],
 master: [
-"-6dB of headroom on the mix bus. Always.",
-"Check your master on phone speakers — that's where fans live."
+"Upload your track first — MP3, WAV, whatever you've got. The original is never touched.",
+"'Keep original beat' is on by default — your beat stays intact. Uncheck it to generate a fresh one underneath.",
+"Automated mode picks all 32 settings for you. Turn it OFF to hand-tune every knob yourself.",
+"The 32 controls cover EQ, compression, stereo width, loudness, and more. Small moves — 1-2dB at a time.",
+"Vocal gain slider (coming) lets you boost or cut the vocal level before you download. Dial it to sit right in the mix.",
+"A/B compare plays your original vs the mastered version back-to-back. Trust your ears, not the meters.",
+"Pick your format: MP3 for sharing, WAV for quality, FLAC for both. Only one file is kept — no clutter.",
+"Preview plays the temp master. Download saves it to your library. Discard throws it away — the original stays safe."
+],
+player: [
+"Your library lives here — every beat and master you've downloaded. Temp files never show up.",
+"Tap any track to play it. Use the queue to line up your next few.",
+"Generated tracks show first so your freshest work is always on top."
+],
+files: [
+"Every file you've made or uploaded is here — beats, masters, uploads, everything.",
+"Tap the play button on any row to preview it right here without leaving the page.",
+"Download saves a copy to your phone. Delete removes it for good — no undo, so be sure.",
+"Temp A/B comparison files show here too but can't be downloaded — they're just for previewing."
+],
+studio: [
+"8-track DAW — layer vocals, beats, and effects. Tap a track to arm it for recording.",
+"Mixer controls volume, pan, mute, and solo per track. Solo isolates one track, mute kills it.",
+"Vocal FX rack: radio, vinyl, TV, echo, and filters. Stack them for wild textures.",
+"Record button captures your mic. Play it back, then mix it into the track.",
+"Less is more — mute half your tracks and listen. What's left is the song."
+],
+dj: [
+"Two decks, one crossfader. Load a track on each deck with the →A and →B buttons in the library.",
+"Auto-mix picks the next track for you using BPM, key, and energy matching. Turn it on and let it ride.",
+"Crossfader blends between decks — left is A, right is B, middle is both. Automate it during auto-mix.",
+"EQ knobs (low/mid/high) shape each deck. Cut the bass on the outgoing track for clean transitions.",
+"Tap the waveform to jump to any point in the track. Set cue points to mark your drop.",
+"Library button opens your tracks. The smart mixer scores every transition so the energy never dies."
+],
+freestyle: [
+"Pick a theme, set the timer, hit record. Don't stop flowing — perfection kills freestyle.",
+"60 seconds is the sweet spot. Long enough to lock in, short enough to stay sharp.",
+"Breathe on the snare hits — your lungs will thank you after 16 bars.",
+"Listen back and note your best lines. Those are your next song's hook."
+],
+video: [
+"Turn your track into a visual — pick a style and let it render.",
+"Longer tracks take longer to render. Plug in your phone for big jobs.",
+"Preview before you download — rendering twice wastes battery."
+],
+rockdabus: [
+"I'm Rokdabus — ask me anything about making music. Beats, lyrics, mixing, I know it all.",
+"Voice mode lets you talk to me hands-free. Great when you're cooking and can't type.",
+"I can also control the app — try 'make a drill beat at 140 BPM' and watch me work."
+],
+tutorials: [
+"13 guides covering every page — beats, lyrics, master, studio, DJ, and more.",
+"Each card has a 'Try it' button that jumps straight to that feature. Learn by doing.",
+"Stuck on something? This is the manual. I wrote it myself."
+],
+tools: [
+"Audio utilities — trim, merge, convert, and more. Quick fixes without opening the studio.",
+"Each tool shows you what it does before you run it. No surprises."
+],
+convert: [
+"Drop any audio file and pick your target format — MP3, WAV, FLAC.",
+"Converting doesn't touch the original. You get a fresh file in the new format.",
+"WAV to MP3 shrinks the file for sharing. MP3 to WAV doesn't add quality back — it just changes the container."
+],
+soundkits: [
+"Browse drum kits, samples, and presets. These are the sounds your beats are built from.",
+"Preview any sound before you use it. Tap to hear, tap again to stop.",
+"Your custom kits show up here too — anything you upload is ready to use in beats."
 ],
 default: [
-"Tap me if you need a hand — I'm always spinning. 🎧",
-"Every page has tricks. Explore, producer."
+"Tap me if you need a hand — I know every corner of this app.",
+"Each page has its own tips. The longer you explore, the more you'll learn."
 ]
 };
 var REACT_AUDIO = [
@@ -153,6 +221,19 @@ function toggleVoice() {
 voiceOn = !voiceOn;
 storeSet("rb_buddy_voice", voiceOn ? "1" : "0");
 paintVoice();
+var tipsToggle = document.getElementById("rbBuddyTipsToggle");
+function paintTipsToggle() {
+  if (tipsToggle) tipsToggle.textContent = tipsEnabled ? "🔔 Tips: on" : "🔕 Tips: off";
+}
+if (tipsToggle) {
+  paintTipsToggle();
+  tipsToggle.addEventListener("click", function() {
+    tipsEnabled = !tipsEnabled;
+    try { localStorage.setItem("rb_tips_on", tipsEnabled ? "1" : "0"); } catch(e) {}
+    paintTipsToggle();
+    toast(tipsEnabled ? "Tips on — I'll pop up every 5 min" : "Tips off");
+  });
+}
 if (!voiceOn && "speechSynthesis" in window) {
 try { speechSynthesis.cancel(); } catch (e) {}
 } else if (voiceOn) {
@@ -265,13 +346,14 @@ setTimeout(function () { showBubble(pick(REACT_DOWNLOAD)); }, 1200);
 });
 obs.observe(document.body, { childList: true, subtree: true });
 }
+var tipsEnabled = true;
+try { tipsEnabled = localStorage.getItem("rb_tips_on") !== "0"; } catch(e) {}
 setInterval(function () {
-if (minimized || !bubble.hidden || !panel.hidden) return;
-if (tipsShown >= 3) return;
+if (!tipsEnabled || minimized || !bubble.hidden || !panel.hidden) return;
 if (document.hidden) return;
 tipsShown++;
-showBubble(pick(tipsFor(page)), 6000);
-}, 50000);
+showBubble(pick(tipsFor(page)), 8000);
+}, 300000);
 buddy.classList.toggle("min", minimized);
 paintVoice();
 buildActions();
@@ -325,20 +407,24 @@ hideBubble();
     var dx = p.x - startX, dy = p.y - startY;
     if (Math.abs(dx) > 8 || Math.abs(dy) > 8) moved = true;
     if (!moved) return;
-    var nx = Math.max(0, Math.min(window.innerWidth - 70, origX + dx));
-    var ny = Math.max(0, Math.min(window.innerHeight - 70, origY + dy));
-    buddy.style.left = nx + "px";
-    buddy.style.top = ny + "px";
-    buddy.style.right = "auto";
-    buddy.style.bottom = "auto";
+    // Use transform for smooth ghost-free dragging
+    buddy.style.transform = "translate(" + dx + "px," + dy + "px)";
+    buddy.style.transition = "none";
     e.preventDefault();
   }, {passive: false});
   
   disc.addEventListener("touchend", function(e) {
     if (dragging && moved) {
       var r = buddy.getBoundingClientRect();
+      // Commit transform to left/top
+      buddy.style.transform = "";
+      buddy.style.transition = "";
+      buddy.style.position = "fixed";
+      buddy.style.left = r.left + "px";
+      buddy.style.top = r.top + "px";
+      buddy.style.right = "auto";
+      buddy.style.bottom = "auto";
       try { localStorage.setItem("rb_buddy_pos", JSON.stringify({left: r.left, top: r.top})); } catch(err) {}
-      // Prevent the tap/click after drag
       e.preventDefault();
       e.stopPropagation();
     }

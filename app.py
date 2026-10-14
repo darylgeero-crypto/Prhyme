@@ -918,7 +918,7 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
             multiband=bool(mopts.get("multiband", False)))
 
         safe = safe_name(title, "djrill-master")
-        base = f"{safe}_prhyme_master"
+        base = f"{safe}_prhymemaster"
         _fmt = mopts.get("output_format", "mp3")
         if _fmt not in ("mp3", "wav", "flac"):
             _fmt = "mp3"
@@ -1048,9 +1048,12 @@ def run_beats_job(job_id, genre, bpm, n_bars, seed, fx=None, fast=False,
         "output_format": "mp3",
                             "cached": True, "temp": True, "job_id": job_id,
                             "duration": round(audio.shape[0] / SR, 1)})
+            try:
+                os.remove(wav_path)
+            except OSError:
+                pass
             temp_beats_register(job_id, base,
-                {"wav": os.path.basename(wav_path),
-                 "mp3": os.path.basename(mp3_path)},
+                {"mp3": os.path.basename(mp3_path)},
                 genre, bpm, round(audio.shape[0] / SR, 1))
             return
         with _job_slots:  # 92. concurrency guard
@@ -1198,9 +1201,12 @@ def _run_beats_render(job_id, genre, bpm, n_bars, seed, fx, prog, ckey,
         "output_format": "mp3",
                     "temp": True, "job_id": job_id,
                         "duration": round(beat.shape[0] / SR, 1)})
+    try:
+        os.remove(wav_path)
+    except OSError:
+        pass
     temp_beats_register(job_id, base,
-        {"wav": os.path.basename(wav_path),
-         "mp3": os.path.basename(mp3_path)},
+                {"mp3": os.path.basename(mp3_path)},
         genre, bpm, round(beat.shape[0] / SR, 1))
 
 
