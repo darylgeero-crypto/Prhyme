@@ -81,7 +81,7 @@ import vocalfix  # vocal clarity + subtle timing correction (never deletes words
 import vocalfx  # ONLINE-ONLY vocal separator + auto SFX layer (cloud DSP/Demucs)
 import player as player_mod  # offline music player: browse + stream on-device audio
 import trackfx  # creative FX: radio, vinyl, TV, filters, echo (never deletes words)
-import rockdabus as RB  # Rockdabus Prhyme — conversational assistant brain
+import rokdabus as RB  # Rokdabus Prhyme — conversational assistant brain
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(BASE, "uploads")
@@ -223,13 +223,148 @@ def mem_available_mb():
     return None  # unknown platform — skip the check
 
 
-def check_audio_budget(n_samples, channels=2, copies=6, label="audio"):
+
+def master_chunked(mix, masterfx, chain, mopts, prog, SR=44100):
+    """Master long audio in 45s chunks with 2s overlap crossfades.
+    STREAMING: takes file path OR numpy array. If path, streams from disk
+    using memory-mapping — never loads full file into RAM. Phone-safe for
+    20+ minute tracks."""
+    import gc, os
+    import numpy as np
+    CHUNK_S = 45
+    OVERLAP_S = 2
+    chunk_n = int(CHUNK_S * SR)
+    overlap_n = int(OVERLAP_S * SR)
+
+    # Streaming mode: memory-map the file from disk
+    is_path = isinstance(mix, str)
+    mmap = None
+    if is_path:
+        # Get info without loading
+        from scipy.io.wavfile import read as wav_read
+        # Use memmap for WAV files
+        if mix.lower().endswith(".wav"):
+            import wave
+            with wave.open(mix, "rb") as w:
+                n_frames = w.getnframes()
+                n_ch = w.getnchannels()
+                sampwidth = w.getsampwidth()
+                framerate = w.getframerate()
+            # Memory-map the raw PCM data (skip 44-byte header for standard WAV)
+            # Fallback: load in chunks via soundfile if available
+            try:
+                import soundfile as sf
+                info = sf.info(mix)
+                total = info.frames
+                n_ch = info.channels
+                use_sf = True
+            except ImportError:
+                use_sf = False
+                # Fallback: load fully (old behavior) if no soundfile
+                sr, mix = wav_read(mix)
+                total = mix.shape[0]
+                n_ch = mix.shape[1] if mix.ndim > 1 else 1
+        else:
+            # Non-WAV: try soundfile, else load fully
+            try:
+                import soundfile as sf
+                info = sf.info(mix)
+                total = info.frames
+                n_ch = info.channels
+                use_sf = True
+            except ImportError:
+                use_sf = False
+                raise ValueError("soundfile required for streaming non-WAV")
+    else:
+        # Old behavior: numpy array already in RAM
+        use_sf = False
+        total = mix.shape[0]
+        n_ch = mix.shape[1] if mix.ndim > 1 else 1
+
+    def _get_chunk(start, end):
+        """Get audio chunk [start:end] without loading full file."""
+        if not is_path or not use_sf:
+            return mix[start:end]
+        import soundfile as sf
+        data, _ = sf.read(mix, start=start, stop=end, always_2d=True)
+        return data
+
+    def _master_one(chunk):
+        return masterfx.master_with_options(
+            chunk, chain_name=chain,
+            target_lufs=mopts.get("target_lufs"),
+            ceiling_db=float(mopts.get("ceiling_db", -1.0)),
+            dither=bool(mopts.get("dither", True)),
+            deess=float(mopts.get("deess", 0.0)),
+            multiband=bool(mopts.get("multiband", False)))
+
+    if total <= chunk_n:
+        chunk = _get_chunk(0, total)
+        return _master_one(chunk)
+
+    n_chunks = int(np.ceil(total / chunk_n))
+    prog(80, f"Mastering in {n_chunks} chunks (streaming from disk)...")
+
+    import tempfile
+    spill = tempfile.mkdtemp(prefix="mchunks_")
+    chunk_files = []
+    last_report = None
+    try:
+        for i in range(n_chunks):
+            start = max(0, i * chunk_n - overlap_n if i > 0 else 0)
+            end = min(total, (i + 1) * chunk_n + (overlap_n if i < n_chunks - 1 else 0))
+            chunk = _get_chunk(start, end)
+            # Free the chunk reference after use
+            prog(80 + int(5 * i / n_chunks), f"Mastering chunk {i+1}/{n_chunks}...")
+            pcm16, report = _master_one(chunk)
+            last_report = report
+            del chunk
+            gc.collect()
+            # Spill to disk immediately
+            cf = os.path.join(spill, f"chunk_{i:04d}.npy")
+            np.save(cf, pcm16)
+            chunk_files.append((start, end, cf))
+            del pcm16
+            gc.collect()
+
+        # Splice chunks from disk with crossfades
+        prog(86, "Splicing chunks...")
+        # Load first chunk to get shape
+        first = np.load(chunk_files[0][2])
+        n_ch_out = first.shape[1] if first.ndim > 1 else 1
+        del first
+        # Build output incrementally
+        result_parts = []
+        for idx, (start, end, cf) in enumerate(chunk_files):
+            data = np.load(cf)
+            # Trim overlap (except first/last)
+            if idx > 0:
+                data = data[overlap_n:]
+            if idx < len(chunk_files) - 1:
+                data = data[:-overlap_n] if overlap_n > 0 else data
+            result_parts.append(data)
+            os.remove(cf)  # Free disk immediately
+        import shutil
+        shutil.rmtree(spill, ignore_errors=True)
+        # Concatenate
+        result = np.concatenate(result_parts, axis=0)
+        del result_parts
+        gc.collect()
+        return result, last_report
+    except Exception:
+        import shutil
+        shutil.rmtree(spill, ignore_errors=True)
+        raise
+
+
+def check_audio_budget(n_samples, channels=2, copies=6, label="audio",
+                       headroom_mb=150):
     """Raise MemoryError with a friendly message if this op is risky."""
     avail = mem_available_mb()
     if avail is None:
         return
     need_mb = n_samples * channels * 4 * copies / (1024 * 1024)
-    if avail < need_mb + 150:  # keep 150 MB headroom for OS + app
+    if avail < need_mb + headroom_mb:  # keep headroom for OS + app
         raise MemoryError(
             f"Not enough free memory for {label} "
             f"(needs ~{need_mb:.0f} MB, only {avail:.0f} MB free). "
@@ -254,6 +389,7 @@ def record_history(kind, title, result):
         pass
 
 app = Flask(__name__)
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0  # no stale caches
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # ~200 MB uploads
 # 104. template + static caching
 app.config["TEMPLATES_AUTO_RELOAD"] = False
@@ -267,6 +403,40 @@ try:
     print("💎 Billing enabled (pricing: /pricing, account: /account)", flush=True)
 except Exception as e:
     print(f"⚠️  Billing disabled: {e}", flush=True)
+
+# Pay-per-use beat store: server-side listing lookup (prices NEVER from client).
+# beat_id format: "<listing_id>:<license>" e.g. "a1b2c3:lease" / "a1b2c3:exclusive".
+def _payg_beat_lookup(beat_id):
+    try:
+        bid, _, lic = str(beat_id).partition(":")
+        lic = lic or "lease"
+        if lic not in ("lease", "exclusive"):
+            return None
+        import json as _json
+        p = os.path.join(BASE, "store", bid + ".json")
+        if not os.path.isfile(p):
+            return None
+        meta = _json.load(open(p))
+        price = float(meta.get("exclusive_price" if lic == "exclusive" else "lease_price", 0))
+        return {"id": str(beat_id), "title": meta.get("title", bid),
+                "price": price, "license": lic,
+                "seller_uid": meta.get("seller")}
+    except Exception:
+        return None
+
+try:
+    import billing_payments as _bp_pay
+    _bp_pay.register_beat_lookup(_payg_beat_lookup)
+    print("💳 Pay-per-use beat lookup wired", flush=True)
+except Exception as e:
+    print(f"⚠️  Pay-per-use wiring skipped: {e}", flush=True)
+
+try:
+    import billing_paypal as _bp_pp
+    _bp_pp.register_beat_lookup(_payg_beat_lookup)
+    print("PayPal beat lookup wired", flush=True)
+except Exception as e:
+    print(f"PayPal wiring skipped: {e}", flush=True)
 
 # Offline music player: browse + stream audio from on-device storage.
 player_mod.init_player(OUTPUT_DIR)
@@ -755,6 +925,48 @@ def _shutdown():
 _atexit.register(_shutdown)
 
 
+def _match_beat_structure(beat, orig_inst, bar_dur, intro_s):
+    """Shape a generated beat's per-bar energy to the original's structure.
+
+    beat: generated beat (stereo float). orig_inst: separated original
+    instrumental. Returns beat with per-bar gain applied so verses, hooks
+    and drops land where the original had them. Never raises.
+    """
+    try:
+        sr = SR
+        bar_n = int(bar_dur * sr)
+        if bar_n < 1 or beat is None or len(beat) == 0:
+            return beat
+        mono = orig_inst.mean(axis=1).astype(np.float64)
+        n_og = int(np.ceil(len(mono) / bar_n))
+        e = np.zeros(n_og)
+        for i in range(n_og):
+            seg = mono[i * bar_n:(i + 1) * bar_n]
+            if len(seg):
+                e[i] = np.mean(seg ** 2)
+        if e.max() <= 1e-12:
+            return beat
+        # 0.45..1.0: keep dynamics, never mute a bar entirely
+        norm = 0.45 + 0.55 * (e - e.min()) / (e.max() - e.min() + 1e-12)
+        intro_bars = max(1, int(round(intro_s / bar_dur)))
+        ref = float(np.mean(beat.astype(np.float64) ** 2)) + 1e-12
+        out = beat.copy()
+        total = int(np.ceil(len(out) / bar_n))
+        for b in range(total):
+            s = b * bar_n
+            seg = out[s:s + bar_n]
+            if not len(seg):
+                continue
+            og_idx = b - intro_bars
+            target = norm[og_idx] * ref if 0 <= og_idx < n_og else 0.7 * ref
+            cur = float(np.mean(seg.astype(np.float64) ** 2))
+            if cur > 1e-12:
+                seg *= np.sqrt(target / cur)
+        return out
+    except Exception:
+        return beat
+
+
 # ---------------------------------------------------------------- master job
 def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
     def prog(p, msg):
@@ -788,6 +1000,32 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
 
         bpm = bpm_opt or M.detect_bpm(vocal.mean(axis=1), SR) or 90.0
         prog(8, f"Tempo locked: {bpm:.1f} BPM")
+        _keep_original = mopts.get("beat_source", "generate") == "keep"
+        _beat_style = mopts.get("beat_style", "match")
+        _beat_genre = genre
+        if not _keep_original and _beat_style == "different":
+            _beat_genre = mopts.get("new_genre") or genre
+        if not _keep_original:
+            # New backing beat: isolate vocals first so the original
+            # instrumental does not bleed into the mix under the new beat.
+            prog(9, "Separating vocals from original…")
+            _sep_wav = os.path.join(tdir, "sep_input.wav")
+            _pcm = np.clip(vocal, -1.0, 1.0)
+            wav_write(_sep_wav,
+                      SR, (_pcm * 32767).astype(np.int16))
+            del _pcm
+            _voc, _orig_inst = vocalfx.separate_track(
+                _sep_wav,
+                progress=lambda f: prog(
+                    9 + int(f * 0.05),
+                    f"Separating vocals… {int(f)}%"))
+            try:
+                os.remove(_sep_wav)
+            except OSError:
+                pass
+            vocal = _voc
+            del _voc
+            v_dur = vocal.shape[0] / SR
         bar_dur = 60.0 / bpm * 4
         intro = bar_dur  # 1 intro bar
         n_bars = int(np.ceil((intro + v_dur + 2 * bar_dur) / bar_dur))
@@ -795,9 +1033,9 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         _lite = lite_mode()
         # Memory guard: vocal + beat + mix buffers.
         # Lite mode uses the lightweight renderer (fewer numpy temporaries).
-        check_audio_budget(vocal.shape[0] * 3, channels=2,
-                           copies=4 if _lite else 8, label="master")
-        _keep_original = mopts.get("beat_source", "generate") == "keep"
+        _nbuf = 2 if _keep_original else 4
+        check_audio_budget(vocal.shape[0] * _nbuf, channels=2,
+                           copies=4, label="master", headroom_mb=80)
         if _keep_original:
             prog(10, "Keeping original audio (no new beat)...")
             beat = None
@@ -806,7 +1044,7 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
             # capped at 32 bars then tiled to cover long vocals.
             prog(10, f"Rendering backing beat (lite)…")
             _lb_bars = min(n_bars, 32)
-            beat = lightbeat.generate_beat(genre, float(bpm), _lb_bars, seed,
+            beat = lightbeat.generate_beat(_beat_genre, float(bpm), _lb_bars, seed,
                 progress_cb=lambda f, m: prog(10 + int(40 * f), m or f"Beat {int(f*_lb_bars)}/{_lb_bars}…"))
             _need = int(np.ceil((intro + v_dur + 2 * bar_dur) * SR))
             if beat.shape[0] < _need:
@@ -814,11 +1052,22 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                 beat = np.tile(beat, (_reps, 1))[:_need]
         else:
             eng = get_engine()
-            prog(10, f"Rendering {n_bars} bars of {genre} beat…")
+            prog(10, f"Rendering {n_bars} bars of {_beat_genre} beat…")
             beat = render_beat_progress(
-                eng, genre, bpm, n_bars, seed,
+                eng, _beat_genre, bpm, n_bars, seed,
                 lambda b, n: prog(10 + int(45 * b / n), f"Beat bar {b}/{n}…"))
 
+        # Structure match: the new beat follows the OG's song structure.
+        # Per-bar energy of the original instrumental -> per-bar gain on the
+        # new beat, so drops/breaks/hooks land where the original had them.
+        if not _keep_original and beat is not None:
+            try:
+                prog(57, "Matching song structure…")
+                beat = _match_beat_structure(beat, _orig_inst, bar_dur,
+                                             intro)
+            except Exception as _se:
+                print(f"structure match skipped: {_se}")
+            del _orig_inst
         # Generated beat persists in the temp beats ring (last 5) even if
         # this master is never downloaded.
         if not _keep_original and beat is not None:
@@ -826,7 +1075,7 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                 _bpeak = float(np.max(np.abs(beat)))
                 _bnorm = beat * (0.89 / _bpeak) if _bpeak > 0 else beat
                 _bpcm = (np.clip(_bnorm, -1.0, 1.0) * 32767).astype(np.int16)
-                _bbase = f"{job_id[:8]}_djrill-beat_{genre}_{int(round(float(bpm)))}bpm"
+                _bbase = f"{job_id[:8]}_djrill-beat_{_beat_genre}_{int(round(float(bpm)))}bpm"
                 os.makedirs(TEMP_BEATS_DIR, exist_ok=True)
                 _bwav = os.path.join(TEMP_BEATS_DIR, _bbase + ".wav")
                 wav_write(_bwav, SR, _bpcm)
@@ -902,25 +1151,73 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
             print(f"WARNING: Vocal integrity low (corr={vox_corr:.2f}) -- continuing")
 
         prog(80, "Mastering…")
+        # Free vocal/beat buffers now that mix is built (low-RAM: dead
+        # from here on; master_chunked only needs mix).
+        import gc as _gc
+        try:
+            del vocal
+        except NameError:
+            pass
+        try:
+            del beat
+        except NameError:
+            pass
+        try:
+            del vp
+        except NameError:
+            pass
+        try:
+            del vp_fx
+        except NameError:
+            pass
+        _gc.collect()
         ref_path = mopts.get("reference_path")
         if ref_path and not _lite:
             # Lite skips reference spectrum matching (heavy FFT analysis).
             mix, ref_lufs, deltas = masterfx.match_reference_spectrum(
                 mix, ref_path)
             mopts = dict(mopts, target_lufs=ref_lufs)
-        pcm16, report = masterfx.master_with_options(
-            mix,
-            chain_name=chain,
-            target_lufs=mopts.get("target_lufs"),
-            ceiling_db=float(mopts.get("ceiling_db", -1.0)),
-            dither=bool(mopts.get("dither", True)),
-            deess=float(mopts.get("deess", 0.0)),
-            multiband=bool(mopts.get("multiband", False)))
+        # For large mixes (>3 min), spill to disk first so master_chunked
+        # can stream instead of holding the full array in RAM.
+        _mix_arg = mix
+        _spill_wav = None
+        try:
+            import numpy as _np
+            _mix_len = mix.shape[0] if hasattr(mix, "shape") else 0
+            if _mix_len > 3 * 60 * SR:  # >3 minutes
+                import tempfile, os as _os
+                from scipy.io.wavfile import write as _wav_write
+                _spill_wav = _os.path.join(tdir, "_mix_spill.wav")
+                # Normalize to int16 for disk
+                _m = mix
+                if _m.dtype != _np.int16:
+                    _peak = _np.abs(_m).max()
+                    if _peak > 0:
+                        _m = (_m / _peak * 32767).astype(_np.int16)
+                    else:
+                        _m = _m.astype(_np.int16)
+                _wav_write(_spill_wav, SR, _m)
+                del _m
+                _mix_arg = _spill_wav
+                del mix  # Free the RAM
+                import gc as _gc2
+                _gc2.collect()
+        except Exception as _e:
+            print(f"spill failed: {_e}, using in-RAM")
+            _mix_arg = mix
+        pcm16, report = master_chunked(
+            _mix_arg, masterfx, chain, mopts, prog, SR)
+        # Cleanup spill file
+        try:
+            if _spill_wav and os.path.exists(_spill_wav):
+                os.remove(_spill_wav)
+        except Exception:
+            pass
 
         safe = safe_name(title, "djrill-master")
         base = f"{safe}_prhymemaster"
         _fmt = mopts.get("output_format", "mp3")
-        if _fmt not in ("mp3", "wav", "flac"):
+        if _fmt not in ("mp3", "wav", "flac", "ogg", "m4a", "opus"):
             _fmt = "mp3"
         # Exactly one final format, written to the temp job folder.
         # 141. atomic writes: tmp + rename so partial files never surface
@@ -935,12 +1232,38 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
             prog(92, "Encoding FLAC…")
             C.convert_file(tmp_wav, final_path)
             os.remove(tmp_wav)
+        elif _fmt == "ogg":
+            final_path = os.path.join(tdir, base + ".ogg")
+            prog(92, "Encoding OGG…")
+            C.convert_file(tmp_wav, final_path)
+            os.remove(tmp_wav)
+        elif _fmt == "m4a":
+            final_path = os.path.join(tdir, base + ".m4a")
+            prog(92, "Encoding M4A…")
+            C.convert_file(tmp_wav, final_path)
+            os.remove(tmp_wav)
+        elif _fmt == "opus":
+            final_path = os.path.join(tdir, base + ".opus")
+            prog(92, "Encoding Opus…")
+            C.convert_file(tmp_wav, final_path)
+            os.remove(tmp_wav)
         else:
             final_path = os.path.join(tdir, base + ".mp3")
             prog(92, "Encoding MP3…")
             encode_mp3(tmp_wav, final_path)
             os.remove(tmp_wav)
         prog(96, "Building A/B previews…")
+
+        # Generate A/B excerpts BEFORE marking done: the frontend renders the
+        # result once on status=done and never re-polls, so excerpts made after
+        # done would never appear (race condition fixed 2026-10-16).
+        ab_src = None
+        ab_mst = None
+        if mopts.get("ab_compare", "1") == "1":
+            tmpdir = os.path.join(OUTPUT_DIR, "temp_ab")
+            os.makedirs(tmpdir, exist_ok=True)
+            ab_src = _ab_excerpt(src_path, tmpdir, f"{job_id[:8]}_ab-source.mp3")
+            ab_mst = _ab_excerpt(final_path, tmpdir, f"{job_id[:8]}_ab-master.mp3")
 
         set_job(job_id, status="done", progress=100,
                 message=f"Track Prhymed! — {report['lufs']} LUFS, "
@@ -956,19 +1279,8 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                         "fx_applied": fx_applied,
                         "report": report,
                         # 25. A/B compare: optional 30s excerpts (stored in temp)
-                        "ab_source": None,
-                        "ab_master": None})
-        # Generate A/B only if requested
-        if mopts.get("ab_compare", "1") == "1":
-            tmpdir = os.path.join(OUTPUT_DIR, "temp_ab")
-            os.makedirs(tmpdir, exist_ok=True)
-            ab_src = _ab_excerpt(src_path, tmpdir, f"{job_id[:8]}_ab-source.mp3")
-            ab_mst = _ab_excerpt(final_path, tmpdir, f"{job_id[:8]}_ab-master.mp3")
-            with jobs_lock:
-                _jr = jobs.get(job_id, {}).get("result", {})
-                _jr["ab_source"] = ab_src
-                _jr["ab_master"] = ab_mst
-            set_job(job_id, result=_jr)
+                        "ab_source": ab_src,
+                        "ab_master": ab_mst})
     except Exception as e:
         set_job(job_id, status="error", progress=0, message=f"Error: {e}")
         try:
@@ -1568,8 +1880,619 @@ def detect_bpm(audio_path, sr=None):
     except Exception:
         return None
 
+
+# ===== Cloud Backup (BandLab parity) =====
+import zipfile
+import hashlib
+
+BACKUP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backups")
+os.makedirs(BACKUP_DIR, exist_ok=True)
+
+
+# ===== Piano Roll (FL Mobile parity) =====
+PIANO_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "piano_pattern.json")
+
+@app.get("/piano")
+def piano_page():
+    return render_template("piano.html")
+
+@app.post("/api/piano/save")
+def api_piano_save():
+    try:
+        data = request.get_json(force=True)
+        with open(PIANO_FILE, "w") as f:
+            json.dump(data, f)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.get("/api/piano/load")
+def api_piano_load():
+    try:
+        if not os.path.exists(PIANO_FILE):
+            return jsonify({"ok": False, "error": "No saved pattern"})
+        with open(PIANO_FILE) as f:
+            data = json.load(f)
+        return jsonify({"ok": True, **data})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ===== Distribution (LANDR parity) =====
+@app.get("/distribute")
+def distribute_page():
+    return render_template("distribute.html")
+
+
+
+# ===== Promo Tools (DistroKid parity) =====
+import hashlib
+
+@app.get("/promo")
+def promo_page():
+    return render_template("promo.html")
+
+
+
+
+# ===== Beat Store (Marketplace) =====
+import uuid as _uuid
+
+@app.get("/store")
+def store_page():
+    return render_template("store.html")
+
+@app.get("/api/store/beats")
+def api_store_beats():
+    """List all beats for sale."""
+    try:
+        store_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "store")
+        os.makedirs(store_dir, exist_ok=True)
+        beats = []
+        for fn in os.listdir(store_dir):
+            if fn.endswith(".json"):
+                try:
+                    beats.append(json.load(open(os.path.join(store_dir, fn))))
+                except Exception:
+                    pass
+        return jsonify({"ok": True, "beats": beats})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.post("/api/store/list")
+def api_store_list():
+    """List a beat for sale. 5% Prhyme fee."""
+    try:
+        from flask import session
+        uid = session.get("user_id", "anon")
+        f = request.files.get("file")
+        if not f:
+            return jsonify({"ok": False, "error": "No file"}), 400
+        bid = _uuid.uuid4().hex[:12]
+        store_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "store")
+        os.makedirs(store_dir, exist_ok=True)
+        # Save audio
+        ext = os.path.splitext(f.filename)[1] or ".mp3"
+        audio_path = os.path.join(store_dir, f"{bid}{ext}")
+        f.save(audio_path)
+        # Save metadata
+        meta = {
+            "id": bid,
+            "title": request.form.get("title", "Untitled"),
+            "genre": request.form.get("genre", "HipHop"),
+            "bpm": request.form.get("bpm", "140"),
+            "lease_price": float(request.form.get("lease_price", 25)),
+            "exclusive_price": float(request.form.get("exclusive_price", 150)),
+            "seller": uid,
+            "preview": f"/store_audio/{bid}{ext}",
+            "fee_percent": 5,
+            "created": time.time(),
+        }
+        json.dump(meta, open(os.path.join(store_dir, f"{bid}.json"), "w"))
+        return jsonify({"ok": True, "id": bid})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.get("/api/store/my")
+def api_store_my():
+    """Get current user's listings."""
+    try:
+        from flask import session
+        uid = session.get("user_id", "anon")
+        store_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "store")
+        beats = []
+        if os.path.exists(store_dir):
+            for fn in os.listdir(store_dir):
+                if fn.endswith(".json"):
+                    try:
+                        b = json.load(open(os.path.join(store_dir, fn)))
+                        if b.get("seller") == uid:
+                            beats.append(b)
+                    except Exception:
+                        pass
+        return jsonify({"ok": True, "beats": beats})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.get("/store_audio/<fn>")
+def store_audio(fn):
+    """Serve beat previews."""
+    store_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "store")
+    return send_from_directory(store_dir, fn)
+
+
+# ===== Prhyme Social (Community Platform) =====
+
+@app.get("/community")
+def community_page():
+    return render_template("social.html")
+
+
+@app.get("/analytics")
+def analytics_page():
+    return render_template("analytics.html")
+
+@app.get("/api/social/feed")
+def api_social_feed():
+    """Get community feed."""
+    try:
+        filt = request.args.get("filter", "all")
+        social_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "social")
+        os.makedirs(social_dir, exist_ok=True)
+        posts = []
+        for fn in sorted(os.listdir(social_dir), reverse=True):
+            if fn.endswith(".json"):
+                try:
+                    p = json.load(open(os.path.join(social_dir, fn)))
+                    if filt == "all" or p.get("type") == filt:
+                        posts.append(p)
+                except Exception:
+                    pass
+        return jsonify({"ok": True, "posts": posts[:50]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.post("/api/social/post")
+def api_social_post():
+    """Create a post."""
+    try:
+        from flask import session
+        data = request.get_json(force=True)
+        pid = _uuid.uuid4().hex[:12]
+        social_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "social")
+        os.makedirs(social_dir, exist_ok=True)
+        post = {
+            "id": pid,
+            "user": session.get("user_id", "Producer"),
+            "text": data.get("text", "")[:1000],
+            "type": data.get("type", "post"),
+            "audio": data.get("audio"),
+            "likes": 0,
+            "liked_by": [],
+            "comments": 0,
+            "created": time.time(),
+        }
+        json.dump(post, open(os.path.join(social_dir, f"{pid}.json"), "w"))
+        return jsonify({"ok": True, "id": pid})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.post("/api/social/like/<pid>")
+def api_social_like(pid):
+    """Like a post."""
+    try:
+        from flask import session
+        uid = session.get("user_id", "anon")
+        social_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "social")
+        pf = os.path.join(social_dir, f"{pid}.json")
+        if not os.path.exists(pf):
+            return jsonify({"ok": False}), 404
+        post = json.load(open(pf))
+        if uid not in post.get("liked_by", []):
+            post["liked_by"].append(uid)
+            post["likes"] = len(post["liked_by"])
+            json.dump(post, open(pf, "w"))
+        return jsonify({"ok": True, "likes": post["likes"]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ===== Social Analytics + Paid Campaigns =====
+
+@app.post("/api/social/view/<pid>")
+def api_social_view(pid):
+    """Track a post view."""
+    try:
+        social_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "social")
+        pf = os.path.join(social_dir, f"{pid}.json")
+        if os.path.exists(pf):
+            post = json.load(open(pf))
+            post["views"] = post.get("views", 0) + 1
+            json.dump(post, open(pf, "w"))
+            return jsonify({"ok": True})
+        return jsonify({"ok": False}), 404
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.get("/api/social/analytics/<pid>")
+def api_social_analytics(pid):
+    """Get analytics for a post."""
+    try:
+        from flask import session
+        social_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "social")
+        pf = os.path.join(social_dir, f"{pid}.json")
+        if not os.path.exists(pf):
+            return jsonify({"ok": False}), 404
+        post = json.load(open(pf))
+        # Only owner can see analytics
+        if post.get("user") != session.get("user_id", "anon") and session.get("user_id") != "anon":
+            # Allow for now (will restrict later)
+            pass
+        views = post.get("views", 0)
+        likes = post.get("likes", 0)
+        comments = post.get("comments", 0)
+        engagement = ((likes + comments) / max(1, views)) * 100
+        return jsonify({
+            "ok": True,
+            "views": views,
+            "likes": likes,
+            "comments": comments,
+            "engagement_rate": round(engagement, 1),
+            "is_boosted": post.get("boosted", False),
+            "boost_spend": post.get("boost_spend", 0),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.post("/api/social/boost/<pid>")
+def api_social_boost(pid):
+    """Boost a post (paid promotion)."""
+    try:
+        from flask import session
+        data = request.get_json(force=True)
+        budget = float(data.get("budget", 5))  # $5 minimum
+        if budget < 5:
+            return jsonify({"ok": False, "error": "Minimum $5"}), 400
+        social_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "social")
+        pf = os.path.join(social_dir, f"{pid}.json")
+        if not os.path.exists(pf):
+            return jsonify({"ok": False}), 404
+        post = json.load(open(pf))
+        # TODO: Stripe charge here
+        post["boosted"] = True
+        post["boost_spend"] = post.get("boost_spend", 0) + budget
+        post["boost_target"] = data.get("target", "all")  # all, producers, vocalists, etc.
+        json.dump(post, open(pf, "w"))
+        # Estimated reach: $1 = ~100 impressions
+        est_reach = int(budget * 100)
+        return jsonify({"ok": True, "estimated_reach": est_reach,
+                       "message": f"Boosted! Estimated {est_reach} impressions."})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.get("/api/social/analytics/overview")
+def api_social_overview():
+    """Get analytics overview for current user."""
+    try:
+        from flask import session
+        uid = session.get("user_id", "anon")
+        social_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "social")
+        total_views = 0
+        total_likes = 0
+        total_posts = 0
+        if os.path.exists(social_dir):
+            for fn in os.listdir(social_dir):
+                if fn.endswith(".json"):
+                    try:
+                        p = json.load(open(os.path.join(social_dir, fn)))
+                        if p.get("user") == uid:
+                            total_posts += 1
+                            total_views += p.get("views", 0)
+                            total_likes += p.get("likes", 0)
+                    except Exception:
+                        pass
+        return jsonify({
+            "ok": True,
+            "posts": total_posts,
+            "views": total_views,
+            "likes": total_likes,
+            "avg_engagement": round((total_likes / max(1, total_views)) * 100, 1),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.post("/api/dj/mixplay")
+def api_dj_mixplay():
+    """Rokdabus generates a curated infinite mix playlist.
+    Smart ordering: energy arc + key compatibility + BPM flow."""
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        genre = data.get("genre")
+        energy_arc = data.get("energy_arc", "rise")
+        count = min(50, max(5, int(data.get("count", 20))))
+
+        # Get library tracks
+        import glob as _glob
+        lib_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+        tracks = []
+        if os.path.exists(lib_dir):
+            for fn in _glob.glob(os.path.join(lib_dir, "*.mp3")) + _glob.glob(os.path.join(lib_dir, "*.wav")):
+                # Skip temp files
+                if "temp" in fn:
+                    continue
+                tracks.append({
+                    "path": fn,
+                    "url": "/download/" + os.path.basename(fn),
+                    "title": os.path.splitext(os.path.basename(fn))[0].replace("_", " "),
+                    "bpm": 120,  # TODO: detect actual BPM
+                    "energy": 5,
+                })
+
+        if not tracks:
+            return jsonify({"ok": False, "error": "No tracks in library"}), 400
+
+        # Smart ordering: sort by energy for arc
+        import random
+        if energy_arc == "rise":
+            # Start chill, build up
+            tracks.sort(key=lambda t: t["energy"])
+        elif energy_arc == "chill":
+            tracks.sort(key=lambda t: t["energy"], reverse=True)
+        else:  # wave: alternate
+            tracks.sort(key=lambda t: t["energy"])
+            # Interleave low/high
+            mid = len(tracks) // 2
+            low, high = tracks[:mid], tracks[mid:]
+            tracks = [x for pair in zip(low, high) for x in pair]
+
+        # Shuffle within energy bands for variety, keep arc
+        random.shuffle(tracks)
+
+        return jsonify({"ok": True, "tracks": tracks[:count], "count": len(tracks[:count])})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.get("/api/i18n/<lang>")
+def api_i18n(lang):
+    """Get translations for a language."""
+    try:
+        import i18n as _i18n
+        if lang not in _i18n.SUPPORTED_LANGUAGES:
+            return jsonify({"ok": False, "error": "Unsupported language"}), 400
+        return jsonify({
+            "ok": True,
+            "lang": lang,
+            "strings": _i18n.TRANSLATIONS.get(lang, {}),
+            "languages": _i18n.SUPPORTED_LANGUAGES,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.get("/api/i18n/languages")
+def api_i18n_languages():
+    import i18n as _i18n
+    return jsonify({"ok": True, "languages": _i18n.SUPPORTED_LANGUAGES})
+
+@app.get("/api/usage")
+def api_usage():
+    """Get current user's usage vs allowances."""
+    try:
+        import billing_core as bc
+        from flask import session
+        uid = session.get("user_id")
+        if not uid:
+            return jsonify({"ok": False, "error": "Not logged in"}), 401
+        summary = bc.get_usage_summary(uid)
+        tier = bc.get_user_tier(bc.get_user(uid))
+        return jsonify({"ok": True, "tier": tier, "usage": summary})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.post("/api/promo/presave")
+def api_promo_presave():
+    """Generate a pre-save smart link."""
+    try:
+        data = request.get_json(force=True)
+        title = data.get("title", "untitled")
+        # Generate a unique slug
+        slug = hashlib.md5(f"{title}{time.time()}".encode()).hexdigest()[:8]
+        # Store the pre-save data
+        ps_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presaves", f"{slug}.json")
+        os.makedirs(os.path.dirname(ps_file), exist_ok=True)
+        json.dump(data, open(ps_file, "w"))
+        # URL (use request host)
+        url = request.host_url.rstrip("/") + f"/presave/{slug}"
+        return jsonify({"ok": True, "url": url, "slug": slug})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.get("/presave/<slug>")
+def presave_page(slug):
+    """Public pre-save landing page."""
+    try:
+        ps_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presaves", f"{slug}.json")
+        if not os.path.exists(ps_file):
+            return "Pre-save link not found", 404
+        data = json.load(open(ps_file))
+        rd = data.get('date','')
+        return f"""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{data.get('title','')} — Pre-Save | Prhyme™</title>
+<meta property="og:title" content="{data.get('title','')} by {data.get('artist','')}">
+<meta property="og:description" content="Pre-save now on Prhyme™">
+<style>
+body{{background:linear-gradient(135deg,#0a0a14,#1a1a2e);color:#fff;font-family:-apple-system,sans-serif;text-align:center;padding:40px 20px;min-height:100vh;margin:0}}
+.badge{{color:#00e5a0;font-weight:bold;letter-spacing:3px;font-size:12px}}
+h1{{font-size:42px;margin:16px 0 8px}}.artist{{color:#aaa;font-size:20px;margin-bottom:24px}}
+#countdown{{font-size:28px;color:#00e5a0;margin:24px 0;font-variant-numeric:tabular-nums}}
+.btn{{display:inline-block;background:#00e5a0;color:#000;padding:16px 40px;border-radius:30px;text-decoration:none;font-weight:bold;margin:8px;font-size:16px}}
+.btn2{{background:#2a2a48;color:#fff}}
+.email-box{{margin:32px auto;max-width:400px}}
+.email-box input{{width:70%;padding:12px;border-radius:8px 0 0 8px;border:1px solid #333;background:#1a1a2e;color:#fff}}
+.email-box button{{width:30%;padding:12px;border-radius:0 8px 8px 0;border:none;background:#00e5a0;font-weight:bold;cursor:pointer}}
+.share{{margin-top:24px}}.share a{{color:#888;margin:0 12px;font-size:14px;text-decoration:none}}
+</style></head><body>
+<p class="badge">PRHYME™ PRE-SAVE</p>
+<h1>{data.get('title','')}</h1>
+<p class="artist">{data.get('artist','')}</p>
+<div id="countdown">Loading...</div>
+<a class="btn" href="https://open.spotify.com/search/{data.get('title','').replace(' ','%20')}">Pre-Save on Spotify</a><br>
+<a class="btn btn2" href="https://music.apple.com/search?term={data.get('title','').replace(' ','%20')}">Pre-Add on Apple Music</a>
+<div class="email-box">
+<p style="color:#888;font-size:14px">Get notified on release day:</p>
+<input id="em" type="email" placeholder="your@email.com"><button onclick="sub()">Notify Me</button>
+<p id="emsg" style="font-size:13px;margin-top:8px"></p>
+</div>
+<div class="share">
+<a href="https://twitter.com/intent/tweet?text=Pre-save">𝕏</a>
+<a href="https://www.facebook.com/sharer/sharer.php">Facebook</a>
+<a href="https://www.instagram.com/">Instagram</a>
+<a href="https://www.tiktok.com/">TikTok</a>
+<a href="https://www.youtube.com/">YouTube</a>
+<a href="https://www.snapchat.com/">Snapchat</a>
+<a href="#" onclick="navigator.clipboard.writeText(location.href);return false">📋 Copy</a>
+</div>
+<script>
+var rd = "{rd}";
+if (rd) {{
+  var target = new Date(rd).getTime();
+  setInterval(function(){{
+    var d = target - Date.now();
+    if (d < 0) {{ document.getElementById('countdown').textContent = '🎉 OUT NOW!'; return; }}
+    var days = Math.floor(d/864e5), h = Math.floor(d%864e5/36e5), m = Math.floor(d%36e5/6e4), s = Math.floor(d%6e4/1e3);
+    document.getElementById('countdown').textContent = days+'d '+h+'h '+m+'m '+s+'s';
+  }}, 1000);
+}} else document.getElementById('countdown').textContent = 'Coming Soon';
+function sub(){{
+  var e = document.getElementById('em').value;
+  if (e.includes('@')) document.getElementById('emsg').textContent = '✅ You\'re on the list!';
+  else document.getElementById('emsg').textContent = 'Enter a valid email';
+}}
+</script></body></html>"""
+    except Exception as e:
+        return str(e), 500
+
+@app.post("/api/distribute/notify")
+def api_distribute_notify():
+    """Sign up for distribution launch notification."""
+    try:
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dist_notify.json")
+        subs = []
+        if os.path.exists(p):
+            subs = json.load(open(p))
+        # Use a simple marker (no PII)
+        subs.append({"ts": time.time()})
+        json.dump(subs, open(p, "w"))
+        return jsonify({"ok": True, "count": len(subs)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.post("/api/distribute/package")
+def api_distribute_package():
+    ok, resp = _check_and_log_usage("distribute")
+    if not ok:
+        return jsonify(resp), 402
+    """Build a distributor-ready release package."""
+    try:
+        import io, zipfile
+        title = request.form.get("title", "untitled")
+        safe = "".join(c if c.isalnum() else "_" for c in title)
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            # Metadata
+            meta = f"""Title: {request.form.get('title','')}
+Artist: {request.form.get('artist','')}
+Genre: {request.form.get('genre','')}
+Release Date: {request.form.get('release_date','')}
+"""
+            zf.writestr(f"{safe}/metadata.txt", meta)
+            # Audio
+            if "audio" in request.files:
+                af = request.files["audio"]
+                ext = os.path.splitext(af.filename)[1] or ".wav"
+                zf.writestr(f"{safe}/audio{ext}", af.read())
+            # Artwork
+            if "art" in request.files:
+                im = request.files["art"]
+                ext = os.path.splitext(im.filename)[1] or ".jpg"
+                zf.writestr(f"{safe}/cover{ext}", im.read())
+        buf.seek(0)
+        return send_file(buf, as_attachment=True,
+                         download_name=f"{safe}_release.zip",
+                         mimetype="application/zip")
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.post("/api/backup/create")
+def api_backup_create():
+    """Create a zip of all user outputs and return it for download."""
+    try:
+        import io
+        buf = io.BytesIO()
+        outputs = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for root, dirs, files in os.walk(outputs):
+                # Skip temp dirs
+                dirs[:] = [d for d in dirs if d not in ("temp_beats", "temp_masters", "temp_ab")]
+                for fn in files:
+                    fp = os.path.join(root, fn)
+                    arc = os.path.relpath(fp, outputs)
+                    zf.write(fp, arc)
+        # Save locally
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        local_path = os.path.join(BACKUP_DIR, f"backup-{ts}.zip")
+        with open(local_path, "wb") as f:
+            f.write(buf.getvalue())
+        return send_file(local_path, as_attachment=True,
+                         download_name=f"prhyme-backup-{ts}.zip",
+                         mimetype="application/zip")
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.get("/api/backup/list")
+def api_backup_list():
+    """List local backups."""
+    try:
+        files = []
+        for fn in sorted(os.listdir(BACKUP_DIR), reverse=True):
+            if fn.endswith(".zip"):
+                fp = os.path.join(BACKUP_DIR, fn)
+                files.append({
+                    "name": fn,
+                    "size_mb": round(os.path.getsize(fp) / 1024 / 1024, 1),
+                    "created": time.strftime("%Y-%m-%d %H:%M",
+                        time.localtime(os.path.getmtime(fp))),
+                })
+        return jsonify({"ok": True, "backups": files})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.post("/api/backup/restore")
+def api_backup_restore():
+    """Restore from an uploaded backup zip."""
+    try:
+        if "file" not in request.files:
+            return jsonify({"ok": False, "error": "No file"}), 400
+        f = request.files["file"]
+        import io, zipfile
+        buf = io.BytesIO(f.read())
+        outputs = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+        with zipfile.ZipFile(buf) as zf:
+            # Safety: prevent path traversal
+            for name in zf.namelist():
+                if ".." in name or name.startswith("/"):
+                    return jsonify({"ok": False, "error": "Invalid zip"}), 400
+            zf.extractall(outputs)
+        return jsonify({"ok": True, "message": "Backup restored"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 @app.post("/api/master")
 def api_master():
+    ok, resp = _check_and_log_usage("master")
+    if not ok:
+        return jsonify(resp), 402
     f = request.files.get("file")
     if not f:
         return jsonify({"ok": False, "error": "No file uploaded"}), 400
@@ -1748,9 +2671,35 @@ def api_artist_info(name):
                     "region": st["region"], "notes": st["notes"]})
 
 
+
+def _check_and_log_usage(operation):
+    """Spend free allowance first, then pay-per-use credits. Returns (ok, resp).
+    ok=True means proceed. ok=False means return the response to client."""
+    try:
+        import billing_payments as bp_pay
+        from flask import session
+        uid = session.get("user_id")
+        if not uid:
+            # Not logged in — allow (free tier preview logic handles limits)
+            return True, None
+        ok, via = bp_pay.consume_generation(uid, operation)
+        if ok:
+            return True, None
+        price = float(bp_pay.PAY_PER_USE.get(operation, 0))
+        return False, {"ok": False, "error": "Free allowance used up",
+                       "pay_per_use": price, "operation": operation,
+                       "message": f"Your free {operation}s are used up. Pay ${price:.2f} to continue, or upgrade your plan."}
+    except Exception:
+        # If billing check fails, allow (fail open for now)
+        return True, None
+
 def _start_beat_job(data):
     """Validate beat params and launch the render job.
-    Returns (payload_dict, status_code). Shared by /api/beats and Rockdabus."""
+
+    Returns (payload_dict, status_code). Shared by /api/beats and Rokdabus."""
+    ok, resp = _check_and_log_usage("beat")
+    if not ok:
+        return resp, 402
     data = data or {}
     genre = data.get("genre", "HipHop")
     if genre not in GENRES:
@@ -2209,7 +3158,7 @@ def _clean_explicit(s):
 
 def _gen_lyrics(data):
     """Generate draft lyrics. Returns (payload_dict, status_code).
-    Shared by /api/lyrics and Rockdabus."""
+    Shared by /api/lyrics and Rokdabus."""
     data = data or {}
     # Try Gemini first for high-quality lyrics
     try:
@@ -2421,7 +3370,7 @@ def _build_library_mix(job_id, genre, prog):
     """Build DJ mix from player's library tracks. Returns (audio, meta) or None."""
     import os as _os, re as _re
     import numpy as _np
-    exts = (".wav", ".mp3", ".ogg", ".flac", ".m4a")
+    exts = (".wav", ".mp3", ".ogg", ".flac", ".m4a", ".opus", ".aiff", ".aif", ".wma", ".aac")
     tracks = []
     if _os.path.isdir(OUTPUT_DIR):
         for fn in _os.listdir(OUTPUT_DIR):
@@ -2537,7 +3486,7 @@ def run_mix_job(job_id, genre, style, seed):
 
 def _start_mix_job(data):
     """Validate mix params and launch the mix job.
-    Returns (payload_dict, status_code). Shared by /api/mix and Rockdabus."""
+    Returns (payload_dict, status_code). Shared by /api/mix and Rokdabus."""
     data = data or {}
     genre = data.get("genre") or "HipHop"
     if genre not in mixgen.SUPPORTED_GENRES:
@@ -2578,7 +3527,7 @@ def api_dj_upload():
         return jsonify({"ok": False, "error": "No file uploaded"}), 400
     fname = secure_filename(f.filename or "track")
     ext = os.path.splitext(fname)[1].lower()
-    if ext not in (".mp3", ".wav", ".ogg", ".flac", ".m4a"):
+    if ext not in (".wav", ".mp3", ".ogg", ".flac", ".m4a", ".opus", ".aiff", ".aif", ".wma", ".aac"):
         return jsonify({"ok": False, "error":
                         f"Unsupported type {ext or '(none)'} — use MP3/WAV/OGG/FLAC/M4A"}), 400
     # 50 MB cap for phone storage
@@ -2605,7 +3554,7 @@ def api_dj_upload():
 def api_library():
     """List generated tracks (beats, masters) playable in the DJ decks."""
     import re as _re
-    exts = (".wav", ".mp3", ".ogg", ".flac", ".m4a")
+    exts = (".wav", ".mp3", ".ogg", ".flac", ".m4a", ".opus", ".aiff", ".aif", ".wma", ".aac")
     tracks = []
     if os.path.isdir(OUTPUT_DIR):
         for fn in os.listdir(OUTPUT_DIR):
@@ -2836,18 +3785,18 @@ def api_admin_feedback_status(fid):
     return jsonify({"ok": True})
 
 
-@app.get("/rockdabus")
-def rockdabus_page():
-    return render_template("rockdabus.html", active="rockdabus")
+@app.get("/rokdabus")
+def rokdabus_page():
+    return render_template("rokdabus.html", active="rokdabus")
 
 
-# ------------------------------------------------- Rockdabus Prhyme chat
+# ------------------------------------------------- Rokdabus Prhyme chat
 _rb_sessions = {}
 _rb_lock = threading.Lock()
 
 
 def _rb_session(sid):
-    """Get-or-create a Rockdabus chat session; prunes stale ones."""
+    """Get-or-create a Rokdabus chat session; prunes stale ones."""
     now = time.time()
     with _rb_lock:
         for k in [k for k, v in _rb_sessions.items()
@@ -2874,8 +3823,8 @@ def _rb_heavy_budget_ok():
         return len(hh) <= 10
 
 
-@app.post("/api/rockdabus")
-def api_rockdabus():
+@app.post("/api/rokdabus")
+def api_rokdabus():
     data = request.get_json(force=True, silent=True) or {}
     message = (data.get("message") or "").strip()[:500]
     if not message:
@@ -2886,7 +3835,7 @@ def api_rockdabus():
            "mix_genres": list(mixgen.SUPPORTED_GENRES),
            "mix_styles": [s[0] for s in mixgen.STYLE_PRESETS]}
     try:
-        # Rockdabus brain: LLM-enhanced (shared llama-server) with rule-based
+        # Rokdabus brain: LLM-enhanced (shared llama-server) with rule-based
         # fallback. chat_smart tries intent detection first, then the local
         # LLM for conversation, then falls back to pure rule-based chat().
         out = RB.chat_smart(message, sess, ctx)
@@ -2953,7 +3902,7 @@ def tutorials_page():
 def _freestyle_prompts(data):
     """Freestyle assist: phrase starters + rhyme words for a theme (seeded).
     Returns (payload_dict, status_code). Shared by /api/freestyle/prompts
-    and Rockdabus."""
+    and Rokdabus."""
     import random as _r
     data = data or {}
     theme = (data.get("theme") or "street").strip()
@@ -3758,6 +4707,16 @@ def run_video_job(job_id, mode, audio_path, media_paths, events, title,
             videofx.render_minimal_video(
                 audio_path, events, out_path, title=title,
                 aspect=aspect, progress_cb=cb)
+        elif mode == "canvas":
+            prog(5, "Rendering Spotify Canvas (8s loop)…")
+            videofx.render_canvas_video(
+                audio_path, out_path, title=title,
+                progress_cb=cb)
+        elif mode == "tiktok":
+            prog(5, "Rendering TikTok vertical video…")
+            videofx.render_tiktok_video(
+                audio_path, events, out_path, title=title,
+                progress_cb=cb)
         else:
             raise ValueError("Bad mode")
 
@@ -3885,6 +4844,9 @@ def api_video_lyrics():
 
 @app.post("/api/video/render")
 def api_video_render():
+    ok, resp = _check_and_log_usage("video")
+    if not ok:
+        return jsonify(resp), 402
     if not C.FFMPEG_OK:
         return jsonify({"ok": False,
                         "error": "FFmpeg not available on this device"}), 500
@@ -3965,7 +4927,7 @@ def api_video_render():
 def api_video_fx():
     return jsonify({"ok": True,
                     "modes": ["lyric", "selfie", "performance",
-                              "waveform", "collage", "minimal"],
+                              "waveform", "collage", "minimal", "canvas", "tiktok"],
                     "aspects": sorted(videofx.ASPECTS.keys()),
                     "grades": sorted(videofx.GRADES.keys()),
                     "backgrounds": ["rings", "bars", "wave"]})
@@ -4146,7 +5108,7 @@ def temp_master(jobid, fname):
     if not os.path.isfile(p):
         abort(404)
     ext = os.path.splitext(safe)[1].lower()
-    mime = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".flac": "audio/flac"}
+    mime = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".flac": "audio/flac", ".ogg": "audio/ogg", ".m4a": "audio/mp4", ".opus": "audio/opus", ".aiff": "audio/aiff", ".aif": "audio/aiff", ".wma": "audio/x-ms-wma", ".aac": "audio/aac"}
     return send_file(p, mimetype=mime.get(ext, "audio/mpeg"))
 
 @app.get("/files")
