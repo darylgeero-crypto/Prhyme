@@ -81,7 +81,7 @@ import vocalfix  # vocal clarity + subtle timing correction (never deletes words
 import vocalfx  # ONLINE-ONLY vocal separator + auto SFX layer (cloud DSP/Demucs)
 import player as player_mod  # offline music player: browse + stream on-device audio
 import trackfx  # creative FX: radio, vinyl, TV, filters, echo (never deletes words)
-import rockdabus as RB  # Rokdabus Prhyme — conversational assistant brain
+import rokdabus as RB  # Rokdabus Prhyme — conversational assistant brain
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(BASE, "uploads")
@@ -89,19 +89,6 @@ OUTPUT_DIR = os.path.join(BASE, "outputs")
 HISTORY_FILE = os.path.join(BASE, "job_history.json")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-# --- One-job-at-a-time guard for master jobs (prevents RAM crashes) ---
-_master_running = False
-_master_lock = threading.Lock()
-
-def _run_master_job_guarded(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
-    """Wrapper that clears the master-running flag when the job finishes."""
-    global _master_running
-    try:
-        run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts)
-    finally:
-        with _master_lock:
-            _master_running = False
 
 # --- Temp beats: last 5 generations live here until downloaded/overwritten ---
 TEMP_BEATS_DIR = os.path.join(OUTPUT_DIR, "temp_beats")
@@ -1003,82 +990,13 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         src_path = temp_src
         chain = mopts.get("chain", "Streaming")
         prog(3, "Loading your recording…")
-        # Fast path for large "keep original" files: stream from disk in 45s chunks
-        # instead of loading the entire file into RAM (prevents OOM on 20+ min tracks).
-        _file_size = os.path.getsize(src_path)
-        _keep_original_early = (mopts or {}).get("beat_source", "generate") == "keep"
-        if _file_size > 30 * 1024 * 1024 and _keep_original_early:
-            # Large file: get duration via ffprobe (no RAM load), then stream.
-            try:
-                import subprocess as _sp
-                _probe = _sp.run(
-                    ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                     "-of", "default=noprint_wrappers=1:nokey=1", src_path],
-                    capture_output=True, text=True, timeout=10)
-                v_dur = float(_probe.stdout.strip())
-            except Exception:
-                # Fallback: estimate from file size (MP3 ~1MB per minute)
-                v_dur = (_file_size / (1024 * 1024)) * 60.0
-            prog(5, f"Large file detected ({v_dur/60:.1f} min) — streaming in 45s chunks…")
-            # Skip full RAM load; master_chunked will stream from the file path.
-            # Use a simplified flow: set vocal=None to signal streaming mode.
-            vocal = None
-        else:
-            _, vocal = M.load_audio(src_path)
+        _, vocal = M.load_audio(src_path)
         # 140. corrupt-audio guard: reject silent / NaN / broken files
-        if vocal is not None:
-            if vocal.size == 0 or not np.all(np.isfinite(vocal)):
-                raise ValueError("Recording is unreadable (corrupt audio data)")
-            if np.max(np.abs(vocal)) < 1e-6:
-                raise ValueError("Recording is silent — nothing to master")
-            v_dur = vocal.shape[0] / SR
-
-        # Streaming mode for large keep-original files: bypass in-RAM processing,
-        # call master_chunked directly with the file path (45s chunks, disk streaming).
-        if vocal is None:
-            prog(8, "Streaming mode: mastering directly from disk…")
-            # Use defaults for streaming (no BPM detection, no beat generation)
-            bpm = bpm_opt or 90.0
-            # Call master_chunked with the file path — it streams in 45s chunks.
-            pcm16, report = master_chunked(
-                src_path, masterfx, chain, mopts, prog, SR)
-            # Save the output (simplified — reuse the existing save logic below)
-            # For now, set mix to None and let the existing code handle it.
-            # Actually, we need to jump to the save section. Let's do it directly:
-            safe = safe_name(title, "djrill-master")
-            out_ext = (mopts.get("output_format") or "mp3").lower()
-            if out_ext not in ("mp3", "wav", "flac"):
-                out_ext = "mp3"
-            out_name = f"{safe}.{out_ext}"
-            out_path = os.path.join(tdir, out_name)
-            # pcm16 is already the mastered audio from master_chunked
-            # Save it (master_chunked returns pcm16 array)
-            import numpy as _np
-            if isinstance(pcm16, _np.ndarray):
-                # Save via the standard method
-                from scipy.io.wavfile import write as _wav_write
-                _tmp_wav = os.path.join(tdir, "_stream_master.wav")
-                _wav_write(_tmp_wav, SR, pcm16)
-                # Convert to output format if needed
-                if out_ext != "wav":
-                    import subprocess as _sp2
-                    _sp2.run(["ffmpeg", "-y", "-i", _tmp_wav, "-c:a", "libmp3lame",
-                             "-b:a", "320k", out_path],
-                            capture_output=True, timeout=120)
-                    os.remove(_tmp_wav)
-                else:
-                    os.rename(_tmp_wav, out_path)
-            else:
-                # master_chunked returned a path already
-                out_path = pcm16
-            # Mark job as done
-            set_job(job_id, progress=100, message="Master complete!",
-                   status="done", output_file=out_name)
-            # Clear the running flag
-            global _master_running
-            with _master_lock:
-                _master_running = False
-            return
+        if vocal.size == 0 or not np.all(np.isfinite(vocal)):
+            raise ValueError("Recording is unreadable (corrupt audio data)")
+        if np.max(np.abs(vocal)) < 1e-6:
+            raise ValueError("Recording is silent — nothing to master")
+        v_dur = vocal.shape[0] / SR
 
         bpm = bpm_opt or M.detect_bpm(vocal.mean(axis=1), SR) or 90.0
         prog(8, f"Tempo locked: {bpm:.1f} BPM")
@@ -2575,22 +2493,12 @@ def api_master():
     ok, resp = _check_and_log_usage("master")
     if not ok:
         return jsonify(resp), 402
-    # One-job-at-a-time guard: prevent RAM crashes from parallel masters
-    global _master_running
-    with _master_lock:
-        if _master_running:
-            return jsonify({"ok": False, "error": "A master job is already running. Please wait for it to finish."}), 429
-        _master_running = True
     f = request.files.get("file")
     if not f:
-        with _master_lock:
-            _master_running = False
         return jsonify({"ok": False, "error": "No file uploaded"}), 400
     try:
         src = save_upload(f)
     except ValueError as e:
-        with _master_lock:
-            _master_running = False
         return jsonify({"ok": False, "error": str(e)}), 400
     genre = request.form.get("genre", "HipHop")
     if genre not in GENRES:
@@ -2659,7 +2567,7 @@ def api_master():
         except ValueError as e:
             return jsonify({"ok": False, "error": str(e)}), 400
     job_id = new_job("master", title)
-    t = threading.Thread(target=_run_master_job_guarded,
+    t = threading.Thread(target=run_master_job,
                          args=(job_id, src, genre, bpm, seed, title, mopts),
                          daemon=True)
     t.start()
