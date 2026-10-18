@@ -81,7 +81,7 @@ import vocalfix  # vocal clarity + subtle timing correction (never deletes words
 import vocalfx  # ONLINE-ONLY vocal separator + auto SFX layer (cloud DSP/Demucs)
 import player as player_mod  # offline music player: browse + stream on-device audio
 import trackfx  # creative FX: radio, vinyl, TV, filters, echo (never deletes words)
-import rokdabus as RB  # Rokdabus Prhyme — conversational assistant brain
+import rockdabus as RB  # Rokdabus Prhyme — conversational assistant brain
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(BASE, "uploads")
