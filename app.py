@@ -967,6 +967,115 @@ def _match_beat_structure(beat, orig_inst, bar_dur, intro_s):
         return beat
 
 
+# ---------------------------------------------------------------- large-file section mastering
+def master_large_sections(src_path, masterfx, chain, mopts, prog, SR=44100, section_min=4):
+    """Daryl's two-level chunking for large 'keep original' files.
+    1. Split into 4-min sections via ffmpeg (disk only, zero RAM).
+    2. Master each 4-min section sequentially using 45s chunks (master_chunked).
+    3. Stitch sections with 2s crossfades.
+    Returns (pcm16, report). Never loads the full file into RAM.
+    """
+    import subprocess, tempfile, shutil
+    import numpy as np
+
+    SECTION_S = section_min * 60
+    XFADE_S = 2
+    xfade_n = int(XFADE_S * SR)
+
+    # Get duration via ffprobe (no RAM)
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", src_path],
+            capture_output=True, text=True, timeout=15)
+        duration = float(r.stdout.strip())
+    except Exception:
+        # Fallback: estimate from file size (MP3 ~128kbps)
+        try:
+            sz = os.path.getsize(src_path)
+            duration = sz / 16000.0
+        except Exception:
+            duration = 0
+
+    if duration <= SECTION_S:
+        # Not large — use normal path
+        return master_chunked(src_path, masterfx, chain, mopts, prog, SR)
+
+    n_sections = int(np.ceil(duration / SECTION_S))
+    prog(5, f"Large file ({duration/60:.1f} min) — splitting into {n_sections} sections…")
+
+    tmpdir = tempfile.mkdtemp(prefix="msect_")
+    section_files = []
+    try:
+        # Split via ffmpeg segment (disk only)
+        seg_pat = os.path.join(tmpdir, "sect_%03d.mp3")
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", src_path,
+             "-f", "segment", "-segment_time", str(SECTION_S),
+             "-c", "copy", seg_pat],
+            capture_output=True, timeout=120)
+
+        # Collect segments
+        for i in range(n_sections):
+            fp = os.path.join(tmpdir, f"sect_{i:03d}.mp3")
+            if os.path.exists(fp) and os.path.getsize(fp) > 1024:
+                section_files.append(fp)
+
+        if not section_files:
+            raise ValueError("Section split produced no files")
+
+        # Master each section sequentially (45s chunks inside)
+        mastered_parts = []
+        last_report = None
+        for idx, sf in enumerate(section_files):
+            pct = 10 + int(70 * idx / len(section_files))
+            prog(pct, f"Mastering section {idx+1}/{len(section_files)}…")
+            pcm16, report = master_chunked(sf, masterfx, chain, mopts,
+                                          lambda p, m: prog(pct, m), SR)
+            last_report = report
+            mastered_parts.append(pcm16)
+            import gc
+            gc.collect()
+
+        # Stitch with 2s crossfades
+        prog(85, "Stitching sections…")
+        if len(mastered_parts) == 1:
+            result = mastered_parts[0]
+        else:
+            # Ensure all are 2D
+            parts = []
+            for p in mastered_parts:
+                if p.ndim == 1:
+                    p = p[:, None]
+                parts.append(p)
+
+            result = parts[0]
+            for nxt in parts[1:]:
+                # Crossfade: overlap last 2s of result with first 2s of nxt
+                if len(result) >= xfade_n and len(nxt) >= xfade_n:
+                    fade_out = np.linspace(1, 0, xfade_n)[:, None]
+                    fade_in = np.linspace(0, 1, xfade_n)[:, None]
+                    # Ensure channel match
+                    if result.shape[1] != nxt.shape[1]:
+                        if nxt.shape[1] == 1:
+                            nxt = np.repeat(nxt, result.shape[1], axis=1)
+                        else:
+                            result = np.repeat(result, nxt.shape[1], axis=1)
+                    tail = result[-xfade_n:] * fade_out
+                    head = nxt[:xfade_n] * fade_in
+                    xfade = tail + head
+                    result = np.concatenate([result[:-xfade_n], xfade, nxt[xfade_n:]], axis=0)
+                else:
+                    result = np.concatenate([result, nxt], axis=0)
+                del nxt
+                import gc
+                gc.collect()
+
+        return result, last_report
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- master job
 def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
     def prog(p, msg):
@@ -989,6 +1098,84 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         shutil.copy2(src_path, temp_src)
         src_path = temp_src
         chain = mopts.get("chain", "Streaming")
+        # Daryl's fast path: large 'keep original' files use 4-min sections
+        # (never loads full file into RAM). Sequential, 45s chunks inside.
+        _is_keep = mopts.get("beat_source", "generate") == "keep"
+        if _is_keep:
+            try:
+                import subprocess
+                _r = subprocess.run(
+                    ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=noprint_wrappers=1:nokey=1", src_path],
+                    capture_output=True, text=True, timeout=15)
+                _dur = float(_r.stdout.strip())
+            except Exception:
+                _dur = 0
+            if _dur > 4 * 60:  # >4 minutes: use sectioned mastering
+                prog(3, f"Large file ({_dur/60:.1f} min) — using 4-min sections…")
+                pcm16, report = master_large_sections(
+                    src_path, masterfx, chain, mopts, prog, SR)
+                # Write output (same as normal path)
+                safe = safe_name(title, "djrill-master")
+                base = f"{safe}_prhymemaster"
+                _fmt = mopts.get("output_format", "mp3")
+                if _fmt not in ("mp3", "wav", "flac", "ogg", "m4a", "opus"):
+                    _fmt = "mp3"
+                tmp_wav = os.path.join(tdir, base + ".tmp.wav")
+                prog(86, "Writing master…")
+                wav_write(tmp_wav, SR, pcm16)
+                if _fmt == "wav":
+                    final_path = os.path.join(tdir, base + ".wav")
+                    os.replace(tmp_wav, final_path)
+                elif _fmt == "flac":
+                    final_path = os.path.join(tdir, base + ".flac")
+                    prog(92, "Encoding FLAC…")
+                    C.convert_file(tmp_wav, final_path)
+                    os.remove(tmp_wav)
+                elif _fmt == "ogg":
+                    final_path = os.path.join(tdir, base + ".ogg")
+                    prog(92, "Encoding OGG…")
+                    C.convert_file(tmp_wav, final_path)
+                    os.remove(tmp_wav)
+                elif _fmt == "m4a":
+                    final_path = os.path.join(tdir, base + ".m4a")
+                    prog(92, "Encoding M4A…")
+                    C.convert_file(tmp_wav, final_path)
+                    os.remove(tmp_wav)
+                elif _fmt == "opus":
+                    final_path = os.path.join(tdir, base + ".opus")
+                    prog(92, "Encoding Opus…")
+                    C.convert_file(tmp_wav, final_path)
+                    os.remove(tmp_wav)
+                else:
+                    final_path = os.path.join(tdir, base + ".mp3")
+                    prog(92, "Encoding MP3…")
+                    encode_mp3(tmp_wav, final_path)
+                    os.remove(tmp_wav)
+                prog(96, "Building A/B previews…")
+                ab_src = None
+                ab_mst = None
+                if mopts.get("ab_compare", "1") == "1":
+                    tmpdir_ab = os.path.join(OUTPUT_DIR, "temp_ab")
+                    os.makedirs(tmpdir_ab, exist_ok=True)
+                    ab_src = _ab_excerpt(src_path, tmpdir_ab, f"{job_id[:8]}_ab-source.mp3")
+                    ab_mst = _ab_excerpt(final_path, tmpdir_ab, f"{job_id[:8]}_ab-master.mp3")
+                set_job(job_id, status="done", progress=100,
+                        message=f"Track Prhymed! — {report['lufs']} LUFS, "
+                                f"{report['true_peak_dbtp']} dBTP",
+                        result={"file": os.path.basename(final_path),
+                                "format": _fmt,
+                                "temp": True,
+                                "job_id": job_id,
+                                "lufs": report["lufs"],
+                                "dbtp": report["true_peak_dbtp"],
+                                "bpm": 0,
+                                "duration": report["duration_s"],
+                                "fx_applied": [],
+                                "report": report,
+                                "ab_source": ab_src,
+                                "ab_master": ab_mst})
+                return
         prog(3, "Loading your recording…")
         _, vocal = M.load_audio(src_path)
         # 140. corrupt-audio guard: reject silent / NaN / broken files
