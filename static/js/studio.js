@@ -2,7 +2,7 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const canvas = $("tlCanvas"), ctx = canvas.getContext("2d");
-const TRACK_H = 72, RULER_H = 26, HEAD_W = 118;
+const TRACK_H = 54, RULER_H = 26, HEAD_W = 118;
 let pxPerSec = 42;
 let project = {
 bpm: 92,
