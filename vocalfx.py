@@ -16,6 +16,9 @@ import subprocess
 import tempfile
 
 import numpy as np
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+import chunkpipe  # shared chunk/stitch pipeline (2026-10-20 unification)
 from scipy import signal
 from scipy.io.wavfile import write as wav_write, read as wav_read
 
@@ -176,12 +179,15 @@ def _separate_chunk(L, R):
     # 3. Vocal band weight
     w = _vocal_band_weight(mag.shape[0])
 
-    Mv = h_mask * np.power(np.clip(center, 0, 1), 1.5) * w
+    Mv = h_mask * np.power(np.clip(center, 0, 1), 1.0) * w
 
-    # 4. Spectral gate: drop bins 60dB below chunk peak
+    # 4. Soft spectral floor (2026-10-20 fix): the old hard gate zeroed
+    #    every bin >60dB below the chunk peak, eating quiet vocal phrases
+    #    and causing warble/dropouts. Bins now fade to a 0.30 floor
+    #    instead of zero -- bleed is acceptable, deleted words are not.
     peak = mag.max() + 1e-12
-    gate = (mag > peak * 1e-3).astype(np.float32)
-    Mv = Mv * gate
+    gate = np.clip(mag / (peak * 1e-3), 0.0, 1.0).astype(np.float32)
+    Mv = Mv * (0.30 + 0.70 * gate)
     Mv = np.clip(Mv, 0.0, 1.0).astype(np.float32)
 
     v_mono = _istft(Mv * ZM)
@@ -216,31 +222,22 @@ def _separate_dsp(path, sr=SR, progress=None):
     vocals = np.zeros((total, 2), dtype=np.float64)
     inst = np.zeros((total, 2), dtype=np.float64)
 
-    n_chunks = max(1, int(np.ceil((total - ov_n) / step)))
+    _wins = list(chunkpipe.chunk_windows(total, chunk_n, ov_n))
+    n_chunks = len(_wins)
     fade = np.linspace(0, 1, ov_n)[:, None]
-    for ci in range(n_chunks):
-        s = ci * step
-        e = min(s + chunk_n, total)
+    for ci, s, e in _wins:
         v_c, i_c = _separate_chunk(d[s:e, 0], d[s:e, 1])
-        m = e - s
-        v_c, i_c = v_c[:m], i_c[:m]
-        if ci > 0:  # crossfade the overlap region
-            vocals[s:s + ov_n] = (vocals[s:s + ov_n] * (1 - fade)
-                                  + v_c[:ov_n] * fade)
-            inst[s:s + ov_n] = (inst[s:s + ov_n] * (1 - fade)
-                                + i_c[:ov_n] * fade)
-            vocals[s + ov_n:e] = v_c[ov_n:]
-            inst[s + ov_n:e] = i_c[ov_n:]
-        else:
-            vocals[s:e] = v_c
-            inst[s:e] = i_c
+        chunkpipe.blend_into(vocals, s, e, v_c, ov_n, fade)
+        chunkpipe.blend_into(inst, s, e, i_c, ov_n, fade)
         if progress:
             progress(100.0 * (ci + 1) / n_chunks)
 
-    for a in (vocals, inst):
-        peak = np.max(np.abs(a))
-        if peak > 0:
-            a *= 0.89 / peak
+    _joint_peak = max(float(np.max(np.abs(vocals))),
+                      float(np.max(np.abs(inst))))
+    if _joint_peak > 0.89:
+        _g = 0.89 / _joint_peak
+        vocals *= _g
+        inst *= _g
     return vocals, inst
 
 
@@ -259,7 +256,7 @@ def detect_transitions(audio, sr=SR, min_gap_s=4.0):
         seg = mono[i * hop:i * hop + win]
         e[i] = np.mean(seg * seg)
     e_db = 10 * np.log10(e + 1e-12)
-    k = 3  # light smoothing: keep abrupt section changes sharp
+    k = 9
     es = np.convolve(e_db, np.ones(k) / k, mode="same")
     d = np.diff(es)
 
@@ -268,11 +265,11 @@ def detect_transitions(audio, sr=SR, min_gap_s=4.0):
         t = (i + 1) * hop / sr
         if t < 3.0 or t > len(mono) / sr - 3.0:
             continue
-        if dd >= 4.0:
+        if dd >= 6.0:
             cands.append((t, "drop", dd))
-        elif dd <= -4.0:
+        elif dd <= -6.0:
             cands.append((t, "break", -dd))
-        elif dd >= 2.0:
+        elif dd >= 3.0:
             cands.append((t, "build", dd))
     # strongest first, enforce min gap
     cands.sort(key=lambda c: -c[2])

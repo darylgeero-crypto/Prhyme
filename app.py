@@ -65,12 +65,18 @@ from flask import Flask, request, render_template, jsonify, send_file, abort, ur
 from werkzeug.utils import secure_filename
 
 import djrill_master as M
+import chunkpipe  # shared chunk/stitch pipeline (2026-10-20 unification)
 import djrill_lyrics as L
 import djrill_convert as C
 import djrill_video as V
 import daw
 import beatfx
 import masterfx
+try:
+    import adaptive_master
+    _ADAPTIVE_AVAILABLE = True
+except ImportError:
+    _ADAPTIVE_AVAILABLE = False
 import videofx
 import audiotools
 import lightbeat  # pure-numpy fast beat renderer (no pygame/ffmpeg/samples)
@@ -260,8 +266,16 @@ def master_chunked(mix, masterfx, chain, mopts, prog, SR=44100):
                 use_sf = True
             except ImportError:
                 use_sf = False
-                # Fallback: load fully (old behavior) if no soundfile
+                # Fallback: load fully (old behavior) if no soundfile.
+                # scipy returns int16 — convert to float [-1, 1] for the
+                # mastering chain (master_with_options expects float).
                 sr, mix = wav_read(mix)
+                if mix.dtype == np.int16:
+                    mix = mix.astype(np.float32) / 32768.0
+                elif mix.dtype == np.int32:
+                    mix = mix.astype(np.float32) / 2147483648.0
+                elif mix.dtype == np.uint8:
+                    mix = (mix.astype(np.float32) - 128) / 128.0
                 total = mix.shape[0]
                 n_ch = mix.shape[1] if mix.ndim > 1 else 1
         else:
@@ -276,8 +290,15 @@ def master_chunked(mix, masterfx, chain, mopts, prog, SR=44100):
                 use_sf = False
                 raise ValueError("soundfile required for streaming non-WAV")
     else:
-        # Old behavior: numpy array already in RAM
+        # Old behavior: numpy array already in RAM.
+        # Ensure float [-1, 1] for the mastering chain.
         use_sf = False
+        if mix.dtype == np.int16:
+            mix = mix.astype(np.float32) / 32768.0
+        elif mix.dtype == np.int32:
+            mix = mix.astype(np.float32) / 2147483648.0
+        elif mix.dtype == np.uint8:
+            mix = (mix.astype(np.float32) - 128) / 128.0
         total = mix.shape[0]
         n_ch = mix.shape[1] if mix.ndim > 1 else 1
 
@@ -776,9 +797,12 @@ def get_engine():
                 raise RuntimeError(f"Beat engine failed to load: {e}")
             m.BASE_DIR = os.path.join(_base_tmp, "djrill_nomedia") + os.sep
             # Prefer Daryl's real sample library on shared storage; fall back to temp dir.
-            _real_samples = "/storage/emulated/0/Ai_music_samples"
+            _real_samples = "/storage/emulated/0/personal-ai/Ai_music_samples"
+            _old_samples = "/storage/emulated/0/Ai_music_samples"
             if os.path.isdir(_real_samples):
                 m.SAMPLE_BASE_DIR = _real_samples
+            elif os.path.isdir(_old_samples):
+                m.SAMPLE_BASE_DIR = _old_samples
             else:
                 m.SAMPLE_BASE_DIR = os.path.join(m.BASE_DIR, "Ai_music_samples")
             _engine = m
@@ -818,8 +842,92 @@ def _restore_jobs():
         pass
 
 
+def _resume_interrupted_masters():
+    """On startup: find master jobs interrupted by a crash and resume them.
+    Looks for checkpoint.json in temp master dirs. If a job was mid-mastering,
+    restarts it — already-completed sections are skipped via the checkpoint.
+    """
+    import glob
+    try:
+        temp_base = os.path.join(BASE, "outputs", "temp_masters")
+        if not os.path.isdir(temp_base):
+            return
+        for tdir in os.listdir(temp_base):
+            ckpt = os.path.join(temp_base, tdir, "checkpoint.json")
+            if not os.path.exists(ckpt):
+                continue
+            try:
+                with open(ckpt) as f:
+                    ck = json.load(f)
+            except Exception:
+                continue
+            if ck.get("phase") == "done":
+                continue
+            job_id = ck.get("job_id")
+            if not job_id:
+                continue
+            # Don't resume if already running (e.g. from a previous resume)
+            with jobs_lock:
+                if job_id in jobs and jobs[job_id].get("status") == "running":
+                    continue
+            # Reconstruct job from checkpoint + temp dir
+            # The source file should still be in the temp dir
+            src = None
+            for ext in (".mp3", ".wav", ".flac", ".ogg", ".m4a", ".opus"):
+                p = os.path.join(temp_base, tdir, "source" + ext)
+                if os.path.exists(p):
+                    src = p
+                    break
+            if not src:
+                continue
+            # Mark as resumable — the frontend can show "Resume" or auto-resume
+            # For now: auto-resume in a background thread
+            set_job(job_id, status="running", progress=5,
+                    message="Resuming interrupted master…",
+                    _kind="master", _resumed=True)
+            # We need the original mopts — try to load from a saved file
+            mopts_path = os.path.join(temp_base, tdir, "mopts.json")
+            mopts = {}
+            if os.path.exists(mopts_path):
+                try:
+                    with open(mopts_path) as f:
+                        mopts = json.load(f)
+                except Exception:
+                    pass
+            # Start resume in background thread
+            import threading as _th
+            _th.Thread(target=_resume_master_thread,
+                       args=(job_id, src, ck, mopts),
+                       daemon=True).start()
+    except Exception:
+        pass
+
+
+def _resume_master_thread(job_id, src_path, ck, mopts):
+    """Background thread to resume an interrupted master job."""
+    try:
+        # Reconstruct minimal args from checkpoint
+        # For now, we re-run run_master_job which will pick up the checkpoint
+        # and skip already-done sections.
+        genre = mopts.get("genre", "HipHop")
+        title = mopts.get("title", "Resumed Master")
+        # run_master_job needs the full signature — use saved values
+        run_master_job(job_id, src_path, genre,
+                       mopts.get("bpm"), mopts.get("seed", 0),
+                       title, mopts)
+    except Exception as e:
+        set_job(job_id, status="error", progress=0,
+                message=f"Resume failed: {e}")
+
+
 threading.Thread(target=_persist_jobs, daemon=True).start()
 _restore_jobs()
+# Resume any interrupted master jobs after a short delay (let server start first)
+def _delayed_resume():
+    import time as _t
+    _t.sleep(10)
+    _resume_interrupted_masters()
+threading.Thread(target=_delayed_resume, daemon=True).start()
 
 
 def safe_name(title, default="djrill"):
@@ -857,16 +965,22 @@ def render_beat_progress(m, genre, bpm, n_bars, seed=None, cb=None):
             cb(bar + 1, n_bars)
     g._bypass_master = False
     beat = np.concatenate(chunks, axis=0)
+    # V71 glue bus (2026-10-20): the old chain peak-normalized twice around
+    # a blunt +8 dB sub boost applied to the whole mix (mud). Now: clean
+    # the rumble, gentle +3 dB low shelf, soft saturation for glue, ceiling.
+    try:
+        _sos_hp = signal.butter(2, 25, btype="highpass", fs=SR, output="sos")
+        beat = signal.sosfilt(_sos_hp, beat, axis=0)
+        _shelf = signal.firwin2(255, [0, 60, 120, 200, SR / 2],
+                                [1.41, 1.41, 1.19, 1.0, 1.0], fs=SR)
+        beat = np.column_stack([signal.fftconvolve(beat[:, ch], _shelf, mode="same")
+                                for ch in range(beat.shape[1])])
+    except Exception:
+        pass
+    beat = np.tanh(beat * 1.15) / np.tanh(1.15)
     peak = np.max(np.abs(beat))
-    if peak > 0:
-        beat = beat / peak * 0.9
-    sub_taps = signal.firwin2(255, [0, 60, 120, 200, SR / 2],
-                              [2.51, 2.51, 1.78, 1.0, 1.0], fs=SR)
-    beat = np.column_stack([signal.fftconvolve(beat[:, ch], sub_taps, mode="same")
-                            for ch in range(beat.shape[1])])
-    peak = np.max(np.abs(beat))
-    if peak > 0:
-        beat = beat / peak * 0.9
+    if peak > 0.89:
+        beat = beat / peak * 0.89
     return beat
 
 
@@ -968,12 +1082,16 @@ def _match_beat_structure(beat, orig_inst, bar_dur, intro_s):
 
 
 # ---------------------------------------------------------------- large-file section mastering
-def master_large_sections(src_path, masterfx, chain, mopts, prog, SR=44100, section_min=4):
+def master_large_sections(src_path, masterfx, chain, mopts, prog, SR=44100, section_min=4, checkpoint_dir=None, job_id=None):
     """Daryl's two-level chunking for large 'keep original' files.
     1. Split into 4-min sections via ffmpeg (disk only, zero RAM).
     2. Master each 4-min section sequentially using 45s chunks (master_chunked).
     3. Stitch sections with 2s crossfades.
     Returns (pcm16, report). Never loads the full file into RAM.
+
+    If checkpoint_dir is given, mastered sections are saved to disk there
+    and a checkpoint.json tracks progress — a crash can resume from the
+    last completed section instead of starting over.
     """
     import subprocess, tempfile, shutil
     import numpy as np
@@ -982,94 +1100,102 @@ def master_large_sections(src_path, masterfx, chain, mopts, prog, SR=44100, sect
     XFADE_S = 2
     xfade_n = int(XFADE_S * SR)
 
-    # Get duration via ffprobe (no RAM)
-    try:
-        r = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", src_path],
-            capture_output=True, text=True, timeout=15)
-        duration = float(r.stdout.strip())
-    except Exception:
-        # Fallback: estimate from file size (MP3 ~128kbps)
+    # Checkpoint setup
+    ckpt_path = os.path.join(checkpoint_dir, "checkpoint.json") if checkpoint_dir else None
+    sections_done = set()
+    if ckpt_path and os.path.exists(ckpt_path):
         try:
-            sz = os.path.getsize(src_path)
-            duration = sz / 16000.0
+            with open(ckpt_path) as f:
+                ck = json.load(f)
+            sections_done = set(ck.get("sections_done", []))
+            if sections_done:
+                prog(5, f"Resuming — {len(sections_done)} sections already done…")
         except Exception:
-            duration = 0
+            pass
+
+    def _save_ckpt(total, done_list, phase):
+        if not ckpt_path:
+            return
+        try:
+            with open(ckpt_path + ".tmp", "w") as f:
+                json.dump({"job_id": job_id, "phase": phase,
+                           "sections_total": total,
+                           "sections_done": sorted(done_list)}, f)
+            os.replace(ckpt_path + ".tmp", ckpt_path)
+        except Exception:
+            pass
+
+    # Duration + split via the shared chunkpipe (2026-10-20 unification):
+    # sections are cut WITH the 2s overlap built in so the stitch blends
+    # the same audio moment at every join.
+    _probe_dir = tempfile.mkdtemp(prefix="msect_probe_")
+    try:
+        section_files, duration = chunkpipe.cut_sections(
+            src_path, _probe_dir, SECTION_S, XFADE_S, SR)
+    finally:
+        pass  # files live in _probe_dir; renamed below
 
     if duration <= SECTION_S:
+        shutil.rmtree(_probe_dir, ignore_errors=True)
         # Not large — use normal path
         return master_chunked(src_path, masterfx, chain, mopts, prog, SR)
 
-    n_sections = int(np.ceil(duration / SECTION_S))
+    n_sections = len(section_files)
     prog(5, f"Large file ({duration/60:.1f} min) — splitting into {n_sections} sections…")
 
-    tmpdir = tempfile.mkdtemp(prefix="msect_")
-    section_files = []
+    tmpdir = _probe_dir
     try:
-        # Split via ffmpeg segment (disk only)
-        seg_pat = os.path.join(tmpdir, "sect_%03d.mp3")
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", src_path,
-             "-f", "segment", "-segment_time", str(SECTION_S),
-             "-c", "copy", seg_pat],
-            capture_output=True, timeout=120)
-
-        # Collect segments
-        for i in range(n_sections):
-            fp = os.path.join(tmpdir, f"sect_{i:03d}.mp3")
-            if os.path.exists(fp) and os.path.getsize(fp) > 1024:
-                section_files.append(fp)
-
         if not section_files:
             raise ValueError("Section split produced no files")
 
         # Master each section sequentially (45s chunks inside)
+        # With checkpointing: save each mastered section to disk, skip done ones
         mastered_parts = []
         last_report = None
         for idx, sf in enumerate(section_files):
+            # Check if this section was already mastered (resume)
+            sect_ckpt = None
+            if checkpoint_dir:
+                sect_ckpt = os.path.join(checkpoint_dir, f"mastered_sect_{idx:03d}.wav")
+                if idx in sections_done and os.path.exists(sect_ckpt):
+                    prog(10 + int(70 * idx / len(section_files)),
+                         f"Section {idx+1}/{len(section_files)} — already done, skipping…")
+                    # Load from disk
+                    try:
+                        import scipy.io.wavfile as _wv
+                        _sr, _pcm = _wv.read(sect_ckpt)
+                        mastered_parts.append(_pcm)
+                        # Get report from checkpoint if available
+                        continue
+                    except Exception:
+                        sections_done.discard(idx)  # re-do if load fails
             pct = 10 + int(70 * idx / len(section_files))
             prog(pct, f"Mastering section {idx+1}/{len(section_files)}…")
             pcm16, report = master_chunked(sf, masterfx, chain, mopts,
                                           lambda p, m: prog(pct, m), SR)
             last_report = report
+            # Save to disk for crash recovery
+            if sect_ckpt:
+                try:
+                    import scipy.io.wavfile as _wv
+                    _wv.write(sect_ckpt, SR, pcm16)
+                    sections_done.add(idx)
+                    _save_ckpt(len(section_files), sections_done, "mastering")
+                except Exception:
+                    pass
             mastered_parts.append(pcm16)
             import gc
             gc.collect()
 
-        # Stitch with 2s crossfades
+        # Stitch with 2s crossfades.
+        # master_chunked returns int16; convert to float [-1, 1] for the
+        # crossfade math, then back to int16. (Float WAV values must be
+        # in [-1, 1] — int16-scale floats would clip catastrophically.)
         prog(85, "Stitching sections…")
-        if len(mastered_parts) == 1:
-            result = mastered_parts[0]
-        else:
-            # Ensure all are 2D
-            parts = []
-            for p in mastered_parts:
-                if p.ndim == 1:
-                    p = p[:, None]
-                parts.append(p)
-
-            result = parts[0]
-            for nxt in parts[1:]:
-                # Crossfade: overlap last 2s of result with first 2s of nxt
-                if len(result) >= xfade_n and len(nxt) >= xfade_n:
-                    fade_out = np.linspace(1, 0, xfade_n)[:, None]
-                    fade_in = np.linspace(0, 1, xfade_n)[:, None]
-                    # Ensure channel match
-                    if result.shape[1] != nxt.shape[1]:
-                        if nxt.shape[1] == 1:
-                            nxt = np.repeat(nxt, result.shape[1], axis=1)
-                        else:
-                            result = np.repeat(result, nxt.shape[1], axis=1)
-                    tail = result[-xfade_n:] * fade_out
-                    head = nxt[:xfade_n] * fade_in
-                    xfade = tail + head
-                    result = np.concatenate([result[:-xfade_n], xfade, nxt[xfade_n:]], axis=0)
-                else:
-                    result = np.concatenate([result, nxt], axis=0)
-                del nxt
-                import gc
-                gc.collect()
+        # Shared stitch (chunkpipe): float crossfades, then back to int16.
+        result = chunkpipe.stitch_parts(mastered_parts, xfade_n)
+        result = np.clip(result, -1.0, 1.0)
+        result = (result * 32767).astype(np.int16)
 
         return result, last_report
     finally:
@@ -1077,6 +1203,180 @@ def master_large_sections(src_path, masterfx, chain, mopts, prog, SR=44100, sect
 
 
 # ---------------------------------------------------------------- master job
+
+
+def master_adaptive(src_path, masterfx, chain, mopts, prog, SR=44100, checkpoint_dir=None, job_id=None):
+    """Adaptive mastering for tracks with tempo/volume changes.
+    Analyzes the track to find natural section boundaries, then adapts
+    mastering parameters per section. Falls back to master_chunked if
+    analysis fails or no significant changes detected.
+    
+    Does NOT modify the working master_chunked — wraps it with intelligence.
+    """
+    import numpy as np
+    import subprocess, tempfile, os
+    
+    if not _ADAPTIVE_AVAILABLE:
+        # Fallback to standard
+        return master_chunked(src_path, masterfx, chain, mopts, prog, SR)
+    
+    try:
+        prog(2, "Analyzing track for tempo/volume changes…")
+        sections = adaptive_master.analyze_track_sections(src_path, sr=SR)
+        
+        # If only 1 section or all sections similar, use standard chain
+        if len(sections) <= 1:
+            prog(3, "Uniform track — using standard mastering…")
+            return master_chunked(src_path, masterfx, chain, mopts, prog, SR)
+        
+        # Check if sections are actually different
+        energies = [s[2].get('energy', 'medium') for s in sections]
+        tempos = [s[2].get('tempo', 'stable') for s in sections]
+        if len(set(energies)) == 1 and len(set(tempos)) == 1:
+            prog(3, "Consistent dynamics — using standard mastering…")
+            return master_chunked(src_path, masterfx, chain, mopts, prog, SR)
+        
+        prog(5, f"Found {len(sections)} distinct sections — adaptive mastering…")
+        
+        # Convert src to WAV if needed for section extraction
+        import soundfile as sf
+        data, file_sr = sf.read(src_path, dtype='float32')
+        if data.ndim == 1:
+            data = np.stack([data, data], axis=1)  # Mono to stereo
+        
+        # Resample if needed (simple linear)
+        if file_sr != SR:
+            ratio = SR / file_sr
+            new_len = int(len(data) * ratio)
+            old_idx = np.linspace(0, len(data)-1, len(data))
+            new_idx = np.linspace(0, len(data)-1, new_len)
+            data = np.stack([
+                np.interp(new_idx, old_idx, data[:, 0]),
+                np.interp(new_idx, old_idx, data[:, 1])
+            ], axis=1).astype(np.float32)
+        
+        # Master each section with adapted parameters
+        # DISK-STREAMING: each section written to disk immediately, never held in RAM
+        import tempfile
+        XFADE_S = 2
+        xfade_n = int(XFADE_S * SR)
+        
+        # Temp dir for section files
+        sect_tmpdir = tempfile.mkdtemp(prefix="adaptive_sect_")
+        section_files = []
+        
+        try:
+            for idx, (start_s, end_s, chars) in enumerate(sections):
+                prog(5 + int(70 * idx / len(sections)),
+                     f"Mastering section {idx+1}/{len(sections)} ({chars['energy']} energy, {chars['tempo']} tempo)…")
+                
+                # Extract section audio (only this section in RAM).
+                # Sections after the first start xfade_n earlier so the
+                # stitch crossfade blends the SAME audio moment instead
+                # of eating 2s of track at every join.
+                _xs = start_s - xfade_n if idx > 0 else start_s
+                if _xs < 0:
+                    _xs = 0
+                section_audio = data[_xs:end_s].copy()
+                
+                # Adapt mopts for this section
+                section_mopts = adaptive_master.adapt_mopts_for_section(mopts, chars)
+                
+                # Master using the PROVEN master_chunked
+                pcm16, _ = master_chunked(section_audio, masterfx, chain, section_mopts,
+                                         lambda p, m: None, SR)
+                
+                # Free the input immediately
+                del section_audio
+                
+                # Write to disk immediately, free RAM
+                sect_path = os.path.join(sect_tmpdir, f"sect_{idx:03d}.wav")
+                import soundfile as sf
+                # Ensure stereo
+                if pcm16.ndim == 1:
+                    pcm16_st = np.stack([pcm16, pcm16], axis=1)
+                else:
+                    pcm16_st = pcm16
+                sf.write(sect_path, pcm16_st, SR, subtype='PCM_16')
+                del pcm16, pcm16_st
+                import gc; gc.collect()
+                
+                section_files.append(sect_path)
+            
+            # Free the full-track array NOW — stitching reads from disk only
+            del data
+            import gc; gc.collect()
+            
+            # Stitch with crossfades — STREAMING: only 2 sections in RAM at once
+            prog(80, "Stitching sections (streaming)…")
+            import soundfile as sf
+            
+            stitched_path = os.path.join(sect_tmpdir, "stitched.wav")
+            
+            # Open output file for writing
+            # We'll build it incrementally
+            with sf.SoundFile(stitched_path, mode='w', samplerate=SR, channels=2, subtype='PCM_16') as out:
+                prev_tail = None  # Last xfade_n samples of previous section (float32)
+                n_files = len(section_files)
+                fade_out, fade_in = chunkpipe.fade_ramps(xfade_n)
+
+                for idx, spath in enumerate(section_files):
+                    prog(80 + int(12 * idx / max(1, n_files)),
+                         f"Stitching {idx+1}/{n_files}…")
+                    is_last = (idx == n_files - 1)
+                    cur_data, _ = sf.read(spath, dtype='float32', always_2d=True)
+
+                    if prev_tail is not None and len(cur_data) >= xfade_n:
+                        overlap = prev_tail * fade_out + cur_data[:xfade_n] * fade_in
+                        out.write(overlap)
+                        body = cur_data[xfade_n:]
+                    else:
+                        body = cur_data
+
+                    if is_last:
+                        out.write(body)
+                        prev_tail = None
+                    else:
+                        if len(body) > xfade_n:
+                            out.write(body[:-xfade_n])
+                            prev_tail = body[-xfade_n:].copy()
+                        else:
+                            out.write(body)
+                            prev_tail = None
+
+                    del cur_data, body
+                    import gc; gc.collect()
+            
+            # Read stitched result (streaming read in chunks to avoid RAM spike)
+            # For report generation we need the full file, but it's PCM16 on disk
+            # Read it back as int16
+            pcm16, _ = sf.read(stitched_path, dtype='int16', always_2d=True)
+            # Convert stereo to expected format (keep as-is, report_card handles it)
+            
+        finally:
+            # Cleanup temp section files
+            import shutil
+            try:
+                shutil.rmtree(sect_tmpdir)
+            except Exception:
+                pass
+        
+        # Generate report
+        from masterfx import report_card
+        report = report_card(pcm16, SR)
+        report['adaptive_sections'] = len(sections)
+        report['adaptive'] = True
+        
+        prog(95, f"Adaptive master complete — {len(sections)} sections")
+        return pcm16, report
+        
+    except Exception as e:
+        print(f"Adaptive mastering failed ({e}), falling back to standard")
+        import traceback
+        traceback.print_exc()
+        return master_chunked(src_path, masterfx, chain, mopts, prog, SR)
+
+
 def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
     def prog(p, msg):
         set_job(job_id, progress=p, message=msg)
@@ -1086,6 +1386,17 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         # The original upload is never touched or deleted.
         tdir = _temp_master_dir(job_id)
         os.makedirs(tdir, exist_ok=True)
+        # Save mopts for crash recovery (resume needs the original options)
+        try:
+            _mopts_save = dict(mopts or {})
+            _mopts_save["genre"] = genre
+            _mopts_save["title"] = title
+            _mopts_save["bpm"] = bpm_opt
+            _mopts_save["seed"] = seed
+            with open(os.path.join(tdir, "mopts.json"), "w") as _mf:
+                json.dump(_mopts_save, _mf)
+        except Exception:
+            pass
         # No accumulation: a new master job clears older master temp dirs.
         try:
             for _jd in os.listdir(TEMP_MASTERS_DIR):
@@ -1111,10 +1422,27 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                 _dur = float(_r.stdout.strip())
             except Exception:
                 _dur = 0
+            # Adaptive mastering is explicit opt-in only (auto-detect disabled
+            # 2026-10-19: stitching OOMs on long tracks — proven chain by default)
+            # Auto-detect: enable adaptive for tracks with tempo/energy changes
+            _adaptive_flag = mopts.get("adaptive_mastering", None)
+            if _adaptive_flag is None:
+                # Default OFF (2026-10-20, Daryl's order): long tracks use the
+                # proven master_large_sections stitching from the locked
+                # working backup. Adaptive only when explicitly requested.
+                _adaptive_flag = False
+            _use_adaptive = bool(_adaptive_flag) and _ADAPTIVE_AVAILABLE
             if _dur > 4 * 60:  # >4 minutes: use sectioned mastering
-                prog(3, f"Large file ({_dur/60:.1f} min) — using 4-min sections…")
-                pcm16, report = master_large_sections(
-                    src_path, masterfx, chain, mopts, prog, SR)
+                if _use_adaptive:
+                    prog(3, f"Large file ({_dur/60:.1f} min) — adaptive sections…")
+                    pcm16, report = master_adaptive(
+                        src_path, masterfx, chain, mopts, prog, SR,
+                        checkpoint_dir=tdir, job_id=job_id)
+                else:
+                    prog(3, f"Large file ({_dur/60:.1f} min) — using 4-min sections…")
+                    pcm16, report = master_large_sections(
+                        src_path, masterfx, chain, mopts, prog, SR,
+                        checkpoint_dir=tdir, job_id=job_id)
                 # Write output (same as normal path)
                 safe = safe_name(title, "djrill-master")
                 base = f"{safe}_prhymemaster"
@@ -1124,6 +1452,11 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                 tmp_wav = os.path.join(tdir, base + ".tmp.wav")
                 prog(86, "Writing master…")
                 wav_write(tmp_wav, SR, pcm16)
+                # Free the full-track array NOW: encode + A/B steps spawn
+                # subprocesses/decoders; the phone OOM-kills the server if
+                # the whole mastered track stays resident in RAM.
+                del pcm16
+                import gc as _gc; _gc.collect()
                 if _fmt == "wav":
                     final_path = os.path.join(tdir, base + ".wav")
                     os.replace(tmp_wav, final_path)
@@ -1158,8 +1491,8 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                 if mopts.get("ab_compare", "1") == "1":
                     tmpdir_ab = os.path.join(OUTPUT_DIR, "temp_ab")
                     os.makedirs(tmpdir_ab, exist_ok=True)
-                    ab_src = _ab_excerpt(src_path, tmpdir_ab, f"{job_id[:8]}_ab-source.mp3")
-                    ab_mst = _ab_excerpt(final_path, tmpdir_ab, f"{job_id[:8]}_ab-master.mp3")
+                    ab_src, ab_pos = _ab_excerpt(src_path, tmpdir_ab, f"{job_id[:8]}_ab-source.mp3")
+                    ab_mst, _ = _ab_excerpt(final_path, tmpdir_ab, f"{job_id[:8]}_ab-master.mp3", start_sample=ab_pos)
                 set_job(job_id, status="done", progress=100,
                         message=f"Track Prhymed! — {report['lufs']} LUFS, "
                                 f"{report['true_peak_dbtp']} dBTP",
@@ -1185,7 +1518,7 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
             raise ValueError("Recording is silent — nothing to master")
         v_dur = vocal.shape[0] / SR
 
-        bpm = bpm_opt or M.detect_bpm(vocal.mean(axis=1), SR) or 90.0
+        bpm = bpm_opt or M.detect_bpm_consensus(vocal, SR) or 90.0
         prog(8, f"Tempo locked: {bpm:.1f} BPM")
         _keep_original = mopts.get("beat_source", "generate") == "keep"
         _beat_style = mopts.get("beat_style", "match")
@@ -1320,7 +1653,7 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
             mix[:beat.shape[0]] += beat * 0.9
             s0 = int(intro * SR)
             mix[s0:s0 + vp_fx.shape[0]] += vp_fx * 10 ** (boost_db / 20.0)
-            end = min(mix.shape[0], s0 + vp_fx.shape[0] + int(2 * SR))
+            end = min(mix.shape[0], s0 + vp_fx.shape[0] + int(0.5 * SR))
             mix = mix[:end]
         # configurable fades
         mix = masterfx.apply_fades(
@@ -1392,8 +1725,20 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         except Exception as _e:
             print(f"spill failed: {_e}, using in-RAM")
             _mix_arg = mix
-        pcm16, report = master_chunked(
-            _mix_arg, masterfx, chain, mopts, prog, SR)
+        # Adaptive mastering is explicit opt-in only (auto-detect disabled
+        # 2026-10-19: stitching OOMs on long tracks — proven chain by default)
+        _adaptive_flag_n = mopts.get("adaptive_mastering", None)
+        if _adaptive_flag_n is None:
+            # Default OFF (2026-10-20, Daryl's order): proven chain by
+            # default, adaptive only when explicitly requested.
+            _adaptive_flag_n = False
+        _use_adaptive_normal = bool(_adaptive_flag_n) and _ADAPTIVE_AVAILABLE and isinstance(_mix_arg, str)
+        if _use_adaptive_normal:
+            pcm16, report = master_adaptive(
+                _mix_arg, masterfx, chain, mopts, prog, SR)
+        else:
+            pcm16, report = master_chunked(
+                _mix_arg, masterfx, chain, mopts, prog, SR)
         # Cleanup spill file
         try:
             if _spill_wav and os.path.exists(_spill_wav):
@@ -1411,6 +1756,11 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         tmp_wav = os.path.join(tdir, base + ".tmp.wav")
         prog(86, "Writing master…")
         wav_write(tmp_wav, SR, pcm16)
+        # Free the full-track array NOW: encode + A/B steps spawn
+        # subprocesses/decoders; the phone OOM-kills the server if
+        # the whole mastered track stays resident in RAM.
+        del pcm16
+        import gc as _gc; _gc.collect()
         if _fmt == "wav":
             final_path = os.path.join(tdir, base + ".wav")
             os.replace(tmp_wav, final_path)
@@ -1449,8 +1799,8 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         if mopts.get("ab_compare", "1") == "1":
             tmpdir = os.path.join(OUTPUT_DIR, "temp_ab")
             os.makedirs(tmpdir, exist_ok=True)
-            ab_src = _ab_excerpt(src_path, tmpdir, f"{job_id[:8]}_ab-source.mp3")
-            ab_mst = _ab_excerpt(final_path, tmpdir, f"{job_id[:8]}_ab-master.mp3")
+            ab_src, ab_pos = _ab_excerpt(src_path, tmpdir, f"{job_id[:8]}_ab-source.mp3")
+            ab_mst, _ = _ab_excerpt(final_path, tmpdir, f"{job_id[:8]}_ab-master.mp3", start_sample=ab_pos)
 
         set_job(job_id, status="done", progress=100,
                 message=f"Track Prhymed! — {report['lufs']} LUFS, "
@@ -1476,22 +1826,25 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
             pass
 
 
-def _ab_excerpt(src_path, out_dir, fname, secs=30):
-    """Write a 30s preview MP3 for A/B comparison. Returns basename or None."""
+def _ab_excerpt(src_path, out_dir, fname, secs=30, start_sample=None):
+    """Write a 30s preview MP3 for A/B comparison. Returns (basename, start_sample) or (None, None).
+    If start_sample is given, uses that position instead of finding the loudest window."""
     try:
         _, audio = M.load_audio(src_path)
         n = min(len(audio), int(secs * SR))
-        # pick the loudest 30s window
-        if len(audio) > n:
+        # pick the loudest 30s window (or use given position)
+        if start_sample is not None:
+            best = min(start_sample, max(0, len(audio) - n))
+        elif len(audio) > n:
             win = SR * 5
             best, best_e = 0, -1
             for s in range(0, len(audio) - n, win):
                 e = float(np.mean(audio[s:s + n] ** 2))
                 if e > best_e:
                     best, best_e = s, e
-            seg = audio[best:best + n]
         else:
-            seg = audio[:n]
+            best = 0
+        seg = audio[best:best + n]
         peak = np.max(np.abs(seg))
         if peak > 0:
             seg = seg / peak * 0.9
@@ -1500,9 +1853,9 @@ def _ab_excerpt(src_path, out_dir, fname, secs=30):
         dst = os.path.join(out_dir, fname)
         encode_mp3(tmp, dst)
         os.remove(tmp)
-        return fname
+        return fname, best
     except Exception:
-        return None
+        return None, None
 
 
 # ---------------------------------------------------------------- beats job
@@ -2022,7 +2375,23 @@ def api_daw_click():
 
 
 def detect_bpm(audio_path, sr=None):
-    """Detect BPM from audio using onset autocorrelation. Returns float or None."""
+    """Detect BPM -- unified 2026-10-20: delegates to
+    M.detect_bpm_consensus so every route reports the same tempo.
+    (The old private algorithm could not detect below 60 BPM and
+    reported 62 for a ~50 BPM song.) Returns float or None."""
+    try:
+        import numpy as np
+        if isinstance(audio_path, np.ndarray):
+            if sr is None:
+                return None
+            return M.detect_bpm_consensus(audio_path, sr)
+        _sr, _audio = M.load_audio(audio_path)
+        return M.detect_bpm_consensus(_audio, _sr)
+    except Exception:
+        return None
+
+
+def _detect_bpm_legacy(audio_path, sr=None):
     try:
         import numpy as np
         if isinstance(audio_path, np.ndarray):
@@ -2680,6 +3049,17 @@ def api_master():
     ok, resp = _check_and_log_usage("master")
     if not ok:
         return jsonify(resp), 402
+    # One-job master guard: only one master job may run at a time.
+    # A second master request while one is active is rejected to avoid
+    # OOM crashes from parallel mastering jobs.
+    with jobs_lock:
+        for jid, j in jobs.items():
+            if j.get("_kind") in ("master", "stem-master") and j.get("status") == "running":
+                return jsonify({
+                    "ok": False,
+                    "error": "A master job is already running. Wait for it to finish before starting another.",
+                    "active_job_id": jid,
+                }), 409
     f = request.files.get("file")
     if not f:
         return jsonify({"ok": False, "error": "No file uploaded"}), 400
@@ -2784,6 +3164,11 @@ def run_stem_master_job(job_id, stem_paths, mopts):
         tmp_wav = wav_path + ".tmp"
         prog(86, "Writing WAV…")
         wav_write(tmp_wav, SR, pcm16)
+        # Free the full-track array NOW: encode + A/B steps spawn
+        # subprocesses/decoders; the phone OOM-kills the server if
+        # the whole mastered track stays resident in RAM.
+        del pcm16
+        import gc as _gc; _gc.collect()
         os.replace(tmp_wav, wav_path)
         prog(92, "Encoding MP3…")
         flac_path = os.path.join(OUTPUT_DIR, base + ".flac")
@@ -2808,6 +3193,15 @@ def run_stem_master_job(job_id, stem_paths, mopts):
 @app.post("/api/master/stems")
 def api_stem_master():
     """Master 2-8 uploaded stems together."""
+    # One-job master guard: stem mastering uses the same heavy path.
+    with jobs_lock:
+        for jid, j in jobs.items():
+            if j.get("_kind") in ("master", "stem-master") and j.get("status") == "running":
+                return jsonify({
+                    "ok": False,
+                    "error": "A master job is already running. Wait for it to finish before starting another.",
+                    "active_job_id": jid,
+                }), 409
     files = request.files.getlist("stems")
     if not 2 <= len(files) <= 8:
         return jsonify({"ok": False,
@@ -3361,8 +3755,11 @@ def _gen_lyrics(data):
                     "adlibs": {"hook": ["yeah!", "woo!"], "verse": ["uh", "yeah"]}}, 200
     except Exception as _e:
         import traceback as _tb
-        with open("/storage/emulated/0/djrill/mobile/gemini_debug.log", "a") as _lf:
-            _lf.write("Gemini error: " + str(_e) + "\n" + _tb.format_exc() + "\n")
+        try:
+            with open(os.path.join(BASE, "gemini_debug.log"), "a") as _lf:
+                _lf.write("Gemini error: " + str(_e) + "\n" + _tb.format_exc() + "\n")
+        except Exception:
+            pass
     theme = (data.get("theme") or "").strip()[:80]
     mood = (data.get("mood") or "").strip()[:40]
     genre = data.get("genre", "HipHop")
@@ -3974,7 +4371,7 @@ def api_admin_feedback_status(fid):
 
 @app.get("/rokdabus")
 def rokdabus_page():
-    return render_template("rokdabus.html", active="rokdabus")
+    return render_template("rockdabus.html", active="rokdabus")
 
 
 # ------------------------------------------------- Rokdabus Prhyme chat
@@ -5129,6 +5526,18 @@ def api_job(job_id):
     return jsonify({"ok": True, **j})
 
 
+@app.get("/api/jobs/active")
+def api_jobs_active():
+    """List currently running jobs (for resume discovery after crash)."""
+    with jobs_lock:
+        active = [
+            {"job_id": jid, **{k: v for k, v in j.items() if not k.startswith("_")}}
+            for jid, j in jobs.items()
+            if j.get("status") == "running"
+        ]
+    return jsonify({"ok": True, "jobs": active})
+
+
 
 
 @app.get("/api/referral/code")
@@ -5220,6 +5629,39 @@ def api_feedback_reward():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
+@app.get("/api/masters/pending")
+def api_masters_pending():
+    """List completed temp masters awaiting Download (survives restarts)."""
+    out = []
+    try:
+        base = TEMP_MASTERS_DIR
+        if os.path.isdir(base):
+            for jid in sorted(os.listdir(base)):
+                tdir = os.path.join(base, jid)
+                if not os.path.isdir(tdir):
+                    continue
+                master_file = None
+                title = None
+                for fn in sorted(os.listdir(tdir)):
+                    if fn == "mopts.json":
+                        try:
+                            import json as _j
+                            with open(os.path.join(tdir, fn)) as _f:
+                                _m = _j.load(_f)
+                            title = _m.get("title") or _m.get("_title")
+                        except Exception:
+                            pass
+                    if fn.startswith("source.") or fn.endswith(".tmp.wav") or fn == "mopts.json" or fn == "checkpoint.json":
+                        continue
+                    if os.path.isfile(os.path.join(tdir, fn)):
+                        master_file = fn
+                if master_file:
+                    out.append({"job_id": jid, "file": master_file, "title": title})
+    except Exception:
+        pass
+    return jsonify({"ok": True, "pending": out})
+
+
 @app.post("/api/master/keep")
 def api_master_keep():
     """Download selected: copy the temp master into the library, clean temp."""
@@ -5253,6 +5695,15 @@ def api_master_keep():
         shutil.copy2(os.path.join(tdir, master_file), dst)
     except OSError as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+    # 2026-10-20 (Daryl): output also goes straight to the phone Downloads
+    # folder -- the browser/WebView download hand-off kept failing for him,
+    # so the file must land somewhere he can always find it.
+    try:
+        _dl = "/storage/emulated/0/Download"
+        os.makedirs(_dl, exist_ok=True)
+        shutil.copy2(dst, os.path.join(_dl, os.path.basename(dst)))
+    except Exception:
+        pass
     temp_master_cleanup(job_id)
     try:
         player_mod.refresh()
@@ -5401,6 +5852,13 @@ def beats_keep():
         try:
             shutil.copy2(src_p, dst)
             kept[fmt] = os.path.basename(dst)
+            # Also straight to the phone Downloads folder (2026-10-20, Daryl)
+            try:
+                _dl = "/storage/emulated/0/Download"
+                os.makedirs(_dl, exist_ok=True)
+                shutil.copy2(dst, os.path.join(_dl, os.path.basename(dst)))
+            except Exception:
+                pass
         except OSError:
             pass
     manifest = [e for e in manifest if e.get("job_id") != job_id]
@@ -5596,7 +6054,7 @@ def api_dj_analyze():
     try:
         y, sr = M.load_audio(path)
         y_mono = y.mean(axis=1) if y.ndim > 1 else y
-        bpm = M.detect_bpm(y_mono, sr) or 90.0
+        bpm = M.detect_bpm_consensus(y, sr) or 90.0
         rms = float((y_mono ** 2).mean() ** 0.5)
         energy = min(10, max(1, int(rms * 50)))
         return jsonify({"ok": True, "bpm": round(float(bpm), 1), "energy": energy, "path": path})

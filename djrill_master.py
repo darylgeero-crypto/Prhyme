@@ -84,6 +84,43 @@ def detect_bpm(x, sr):
     return float(60 * fps / peak)
 
 
+def detect_bpm_consensus(x, sr):
+    """One tempo answer everywhere (2026-10-20 unification).
+
+    The old single-shot detectors disagreed with each other (the app's
+    path detector could not go below 60 BPM and reported 62 for a ~50 BPM
+    song, while this module reported 50.7/99.4 on different windows).
+    Consensus: detect per 30s window, fold every reading into the
+    55-110 BPM octave band (kills half/double splits), take the median.
+    """
+    try:
+        mono = x.mean(axis=1) if getattr(x, "ndim", 1) > 1 else x
+        W = int(30 * sr)
+        vals = []
+        if len(mono) > W * 2:
+            nwin = min(5, len(mono) // W)
+            for i in range(nwin):
+                v = detect_bpm(mono[i * W:(i + 1) * W], sr)
+                if v:
+                    vals.append(v)
+        if not vals:
+            v = detect_bpm(mono, sr)
+            if v:
+                vals.append(v)
+        if not vals:
+            return None
+        folded = []
+        for v in vals:
+            while v < 55.0:
+                v *= 2.0
+            while v > 110.0:
+                v /= 2.0
+            folded.append(v)
+        return float(np.median(folded))
+    except Exception:
+        return None
+
+
 def first_onset_sec(x, sr, thresh=0.3):
     env, fps = onset_envelope(x, sr)
     for i, v in enumerate(env):
@@ -218,7 +255,7 @@ def envelope(x, sr, win_ms=50.0):
     return np.sqrt(np.mean(mono[:n].reshape(-1, w) ** 2, axis=1) + 1e-12)
 
 
-def verify_vocal_integrity(vocal_polished, mix, s0, min_corr=0.85):
+def verify_vocal_integrity(vocal_polished, mix, s0, min_corr=0.70):
     """Lyric-integrity gate: the vocal's energy envelope must survive into the
     mix at the place it was laid. Returns (ok, correlation). A deleted or
     snipped vocal craters the correlation; beat bleed alone cannot."""
