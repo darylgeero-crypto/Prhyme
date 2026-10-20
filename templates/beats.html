@@ -244,7 +244,9 @@
 {% endblock %}
 {% block scripts %}
 <script>
-document.getElementById("beatsForm").addEventListener("submit", async function(e){e.preventDefault(); var out=document.getElementById("jobResult"); if(out) out.innerHTML="<p>Generating...</p>"; var fd=new FormData(this); var obj={}; fd.forEach(function(v,k){obj[k]=v}); try{var r=await fetch("/api/beats",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(obj)}); var j=await r.json(); if(out) out.innerHTML=j.ok?"<p style=color:green>Job started: "+j.job_id+"</p>":"<p style=color:red>Error: "+(j.error||"Unknown")+"</p>";}catch(err){if(out) out.innerHTML="<p style=color:red>Failed: "+err.message+"</p>";}});
+document.getElementById("beatsForm").addEventListener("submit", async function(e){e.preventDefault(); var out=document.getElementById("jobResult"); if(out) out.innerHTML="<p>Generating...</p>"; var fd=new FormData(this); var obj={}; fd.forEach(function(v,k){obj[k]=v}); try{var r=await fetch("/api/beats",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(obj)}); var j=await r.json(); if(j.ok){ if(out) out.innerHTML="<p style=color:green>Job started: "+j.job_id+"</p>"; pollBeatJob(j.job_id); } else if(j.error==="subscription_required"){ if(out) out.innerHTML="<p style=color:orange>Please <a href='/login' style=color:#1db954>log in</a> to generate beats.</p>"; } else { if(out) out.innerHTML="<p style=color:red>Error: "+(j.error||j.message||"Unknown")+"</p>"; }}catch(err){if(out) out.innerHTML="<p style=color:red>Failed: "+err.message+"</p>";}});
+async function keepBeatDl(jobId, btn){ if(btn){btn.disabled=true;btn.textContent='Saving...';} try{ var r=await fetch('/api/beats/keep',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:jobId})}); var d=await r.json(); if(d.ok){ if(btn)btn.textContent='\u2705 In Downloads'; var o=document.getElementById('jobResult'); if(o)o.innerHTML='<p style="color:#00e5a0">\u2705 Saved to your Downloads folder</p>'; } else { if(btn){btn.disabled=false;btn.textContent='\u2b07 Download';} alert('Save failed: '+(d.error||'unknown')); } }catch(e){ if(btn){btn.disabled=false;btn.textContent='\u2b07 Download';} alert('Save failed: '+e.message); } }
+async function pollBeatJob(jobId){ var out=document.getElementById("jobResult"); var msg=document.getElementById("jobMsg"); var fill=document.getElementById("jobFill"); var pct=document.getElementById("jobPct"); var box=document.getElementById("jobBox"); if(box) box.classList.remove("hidden"); for(let i=0;i<120;i++){ await new Promise(r=>setTimeout(r,2000)); try{ var r=await fetch("/api/job/"+jobId); var j=await r.json(); if(msg) msg.textContent=j.message||"Working…"; if(fill) fill.style.width=(j.progress||0)+"%"; if(pct) pct.textContent=(j.progress||0)+"%"; if(j.status==="done"){ var mp3f=(j.result&&j.result.mp3)?j.result.mp3:""; if(out) out.innerHTML="<p style='color:#00e5a0'>Beat ready!</p><button onclick=\"keepBeatDl('"+jobId+"',this)\" style=\"position:relative;z-index:300;background:#00e5a0;color:#000;padding:16px 22px;min-height:56px;font-size:17px;font-weight:700;border:none;border-radius:8px;cursor:pointer;\">\u2b07 Download</button>"; return; } if(j.status==="error"){ if(out) out.innerHTML="<p style=color:red>Error: "+(j.message||"Failed")+"</p>"; return; } }catch(e){} } }
 // Lite Mode: full songs cap at 2:30, loops cap at 16 bars; lock fast mode
 // on (server enforces too).
 (function () {
@@ -261,7 +263,7 @@ document.getElementById("beatsForm").addEventListener("submit", async function(e
   };
   document.addEventListener("djrill:lite", e => applyLite(e.detail.lite));
   applyLite(document.body.classList.contains("lite-on") ||
-            localStorage.getItem("djrill-lite") !== "0");
+            localStorage.getItem("djrill-lite") === "1");
 })();
 // artist style: auto-set BPM + genre from the artist's production style
 (function () {

@@ -177,13 +177,16 @@ body.no-banner {
 function acceptTos() {
   localStorage.setItem('prhyme_tos_accepted', '1');
   localStorage.setItem('prhyme_tos_date', new Date().toISOString());
+  // Cookie fallback for WebViews that clear localStorage
+  document.cookie = "prhyme_tos_accepted=1; max-age=31536000; path=/";
   document.getElementById('tosGate').hidden = true;
 }
 function declineTos() {
   alert('You must accept the Terms of Service to use Prhyme.');
 }
 (function() {
-  if (!localStorage.getItem('prhyme_tos_accepted')) {
+  var tosAccepted = localStorage.getItem('prhyme_tos_accepted') || document.cookie.indexOf('prhyme_tos_accepted=1') !== -1;
+  if (!tosAccepted) {
     document.getElementById('tosGate').hidden = false;
   }
 })();
@@ -270,20 +273,38 @@ function declineTos() {
 </nav>
 
 <!-- Billing: upgrade banner + founding badge (injected by JS) -->
-<div id="billBanner" class="bill-banner" hidden><button class="banner-close" onclick="dismissBanner()" aria-label="Dismiss">&times;</button><span id="bannerText"></span></div>
+<div id="billBanner" class="bill-banner" hidden><button class="banner-close" onclick="dismissBanner()" aria-label="Dismiss">&times;</button><span id="bannerText">👋 <a href="/signup">Sign up free</a> — 3-day trial, no card needed.</span></div>
 <script>
 function dismissBanner() {
-  document.getElementById("billBanner").hidden = true;
-  localStorage.setItem('banner_dismissed', '1');
+  var b = document.getElementById("billBanner");
+  b.hidden = true;
+  b.style.display = "none";
+  try { localStorage.setItem('banner_dismissed', '1'); } catch(e) {}
+  document.cookie = "banner_dismissed=1; max-age=31536000; path=/";
 }
+// Keep screen on while app is open (Wake Lock API)
+(function() {
+  var wl = null;
+  function lock() {
+    if ('wakeLock' in navigator) {
+      navigator.wakeLock.request('screen').then(function(l) { wl = l; }).catch(function() {});
+    }
+  }
+  lock();
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible') lock();
+  });
+})();
 (function () {
   fetch("{{ url_for('billing.api_status') }}").then(function (r) { return r.json(); }).then(function (st) {
     if (!st.logged_in) {
       // Don't show if user dismissed it
-      if (localStorage.getItem('banner_dismissed')) return;
+      if (localStorage.getItem('banner_dismissed') || document.cookie.indexOf('banner_dismissed=1') !== -1) return;
       var b = document.getElementById("billBanner");
-      var t = document.getElementById("bannerText");
+      if (b.dataset.shown) return;
+      b.dataset.shown = "1";
       b.hidden = false;
+      b.style.display = "";
       t.innerHTML = '👋 <a href="{{ url_for('billing.signup') }}">Sign up free</a> — 3-day trial, no card needed.';
       return;
     }
@@ -301,7 +322,7 @@ function dismissBanner() {
     if (!st.active) {
       var b2 = document.getElementById("billBanner");
       b2.hidden = false;
-      b2.innerHTML = '⏸ ' + st.detail + ' <a href="{{ url_for('billing.pricing') }}">Upgrade →</a>';
+      var t2 = document.getElementById("bannerText"); b2.style.display = ""; if (t2) t2.innerHTML = '⏸ ' + st.detail + ' <a href="{{ url_for('billing.pricing') }}">Upgrade →</a>';
     }
   }).catch(function () {});
 })();
@@ -352,16 +373,23 @@ function dismissBanner() {
 (function(){
   var KEY='djrill-cookie-consent';
   try {
-    if (!localStorage.getItem(KEY)) {
+    var consented = localStorage.getItem(KEY) || document.cookie.indexOf(KEY) !== -1;
+    if (!consented) {
       document.getElementById('cookieBanner').hidden = false;
     }
   } catch(e){}
   window.acceptCookies = function(){
-    try { localStorage.setItem(KEY,'all'); } catch(e){}
+    try { 
+      localStorage.setItem(KEY,'all');
+      document.cookie = KEY + "=all; max-age=31536000; path=/";
+    } catch(e){}
     document.getElementById('cookieBanner').hidden = true;
   };
   window.declineCookies = function(){
-    try { localStorage.setItem(KEY,'essential'); } catch(e){}
+    try { 
+      localStorage.setItem(KEY,'essential');
+      document.cookie = KEY + "=essential; max-age=31536000; path=/";
+    } catch(e){}
     document.getElementById('cookieBanner').hidden = true;
   };
 })();
@@ -391,7 +419,8 @@ document.addEventListener('visibilitychange', () => {
 (function() {
   // Keys to PRESERVE (user preferences)
   var KEEP = ["rb_buddy_pos", "rb_tips_on", "rb_buddy_voice", "prhyme_onboarded",
-              "prhyme_theme", "dj_welcome_seen"];
+              "prhyme_theme", "dj_welcome_seen", "djrill_seen_welcome_v1", "djrill_seen_tour_v1",
+              "prhyme_tos_accepted", "banner_dismissed", "djrill-cookie-consent"];
   // On page hide (app exit/background): clear sessionStorage and transient localStorage
   function clearTransient() {
     try {

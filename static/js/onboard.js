@@ -6,7 +6,7 @@ const STEPS = [
 {
 ico: "👋",
 title: "Welcome to Prhyme™",
-body: "Your studio in your pocket — beats, mixing, mastering, lyrics, video & live DJ with Rockdabus Prhyme. All on your phone. <span class=\"prhyming-flash\">Prhyming</span>",
+body: "Your studio in your pocket — beats, mixing, mastering, lyrics, video & live DJ with Rokdabus Prhyme. All on your phone. <span class=\"prhyming-flash\">Prhyming</span>",
 link: null, linkLabel: null
 },
 {
@@ -48,10 +48,16 @@ if (html != null) d.innerHTML = html;
 return d;
 }
 function seen(key) {
-try { return localStorage.getItem(key) === "1"; } catch (e) { return true; }
+try { 
+  if (localStorage.getItem(key) === "1") return true;
+  return document.cookie.indexOf(key + "=1") !== -1;
+} catch (e) { return true; }
 }
 function markSeen(key) {
-try { localStorage.setItem(key, "1"); } catch (e) {}
+try { 
+  localStorage.setItem(key, "1");
+  document.cookie = key + "=1; max-age=31536000; path=/";
+} catch (e) {}
 }
 function showWelcome() {
 const w = el("div", "dj-welcome", `
@@ -61,7 +67,7 @@ const w = el("div", "dj-welcome", `
 </div>
 <h2>Welcome to<br>Prhyme™!</h2>
 <div><span class="prhyming-flash">Prhyming</span></div>
-<p>A full studio in your pocket.<br>Beats, mixing, mastering, lyrics, video & live DJ with Rockdabus Prhyme.</p>
+<p>A full studio in your pocket.<br>Beats, mixing, mastering, lyrics, video & live DJ with Rokdabus Prhyme.</p>
 <div class="dj-welcome-btns">
 <button class="btn" id="djWelcomeTour">🎓 Take the tour</button>
 <button class="btn ghost" id="djWelcomeSkip">Skip</button>
