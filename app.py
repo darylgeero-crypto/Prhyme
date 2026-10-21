@@ -540,6 +540,11 @@ def _warmup():
         get_engine()
     except Exception:
         pass
+    try:
+        import gemini_compose as _gc
+        _gc.warm_pools()
+    except Exception:
+        pass
 
 
 threading.Thread(target=_warmup, daemon=True).start()
