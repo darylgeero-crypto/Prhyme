@@ -122,3 +122,33 @@ def blend_into(buf, s, e, chunk_out, ov_n, fade):
         buf[s + ov_n:e] = chunk_out[ov_n:]
     else:
         buf[s:e] = chunk_out
+
+
+# ------------------------------------------------- RAM-versatile sizing
+def mem_available_mb():
+    """Free RAM (MB) from /proc/meminfo; None when unknown."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) // 1024
+    except OSError:
+        pass
+    return None
+
+
+def ram_chunk_s(base_s, low_s, high_s):
+    """Versatile RAM use (Daryl's rule): scale chunk length to free RAM.
+    Plenty free -> bigger chunks (fewer passes, faster). Tight -> smaller
+    chunks (never overload). One heavy job at a time keeps the total in
+    check; this keeps each job's footprint proportional to headroom."""
+    avail = mem_available_mb()
+    if avail is None:
+        return base_s
+    if avail >= 1500:
+        return high_s
+    if avail >= 1000:
+        return (base_s + high_s) / 2.0
+    if avail >= 550:
+        return base_s
+    return low_s

@@ -237,7 +237,8 @@ def master_chunked(mix, masterfx, chain, mopts, prog, SR=44100):
     20+ minute tracks."""
     import gc, os
     import numpy as np
-    CHUNK_S = 45
+    import chunkpipe as _cp
+    CHUNK_S = _cp.ram_chunk_s(45, 30, 90)
     OVERLAP_S = 2
     chunk_n = int(CHUNK_S * SR)
     overlap_n = int(OVERLAP_S * SR)
@@ -673,6 +674,8 @@ _HEAVY_PATHS = ("/api/beats", "/api/master", "/api/mix", "/api/video/",
                 "/api/daw/export", "/api/daw/stems", "/api/convert",
                 "/api/separate")
 _rl_heavy = {}
+_HEAVY_KINDS = ("master", "stem-master", "separate", "beat", "mix",
+                "mixdown", "stems", "video")
 _rl_heavy_lock = threading.Lock()
 
 
@@ -737,6 +740,23 @@ def _rate_limit():
                 return jsonify({"ok": False,
                                 "error": "Too many heavy jobs — "
                                          "wait a few minutes"}), 429
+    # One heavy job at a time (Daryl's rule — RAM can't be overloaded):
+    # mastering, separation, beats, mixes and video never run parallel.
+    if request.method == "POST" and (
+            request.path.startswith(_HEAVY_PATHS)
+            or request.path.startswith("/api/separate")):
+        with jobs_lock:
+            for _jid, _j in jobs.items():
+                if (_j.get("_kind") in _HEAVY_KINDS
+                        and _j.get("status") == "running"):
+                    return jsonify({
+                        "ok": False,
+                        "error": ("One job at a time — a "
+                                  + str(_j.get("_kind"))
+                                  + " job is still running. "
+                                  "Wait for it to finish."),
+                        "active_job_id": _jid,
+                    }), 409
     return None
 
 

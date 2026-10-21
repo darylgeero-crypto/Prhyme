@@ -215,7 +215,7 @@ def _separate_dsp(path, sr=SR, progress=None):
         d = signal.resample(d, n).astype(np.float64)
     d = d.astype(np.float32)
 
-    chunk_n = int(CHUNK_S * sr)
+    chunk_n = int(chunkpipe.ram_chunk_s(30, 20, 60) * sr)
     ov_n = int(OVERLAP_S * sr)
     step = chunk_n - ov_n
     total = d.shape[0]
