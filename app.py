@@ -2171,7 +2171,35 @@ def save_media_upload(file_storage, allowed_exts, kind):
 # ---------------------------------------------------------------- routes
 @app.get("/")
 def home():
-    return render_template("home.html", active="home")
+    # Intro song: the newest generated track (real beats/masters only —
+    # no separations, A/B excerpts or ambient junk) plays when the intro
+    # record spins up, before Rokdabus pops out.
+    intro_song = None
+    intro_name = ""
+    try:
+        cands = []
+        for f in os.listdir(OUTPUT_DIR):
+            if not f.lower().endswith(".mp3"):
+                continue
+            if ("_Separated_" in f or "_ab-" in f
+                    or f.startswith("ambient_") or "-inst." in f
+                    or "-vocals." in f or "-sfx." in f):
+                continue
+            cands.append(f)
+        if cands:
+            cands.sort(
+                key=lambda f: os.path.getmtime(os.path.join(OUTPUT_DIR, f)),
+                reverse=True)
+            intro_name = cands[0].rsplit(".", 1)[0].replace("_", " ")
+            import re as _re
+            _m = _re.match(r"^[0-9a-f]{8} (.+)$", intro_name)
+            if _m:
+                intro_name = _m.group(1)
+            intro_song = url_for("download", fname=cands[0])
+    except Exception:
+        pass
+    return render_template("home.html", active="home",
+                           intro_song=intro_song, intro_name=intro_name)
 
 
 @app.get("/master")

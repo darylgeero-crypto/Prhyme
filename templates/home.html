@@ -25,6 +25,15 @@
   <button class="intro-skip" id="introSkip">Skip ▸</button>
 </div>
 
+{% if intro_song %}
+<audio id="introSong" src="{{ intro_song }}" preload="auto" loop></audio>
+<div id="introSongChip" title="Tap to pause/play">&#9834; {{ intro_name }}</div>
+<style>
+#introSongChip{position:fixed;left:12px;bottom:86px;z-index:65;background:rgba(14,14,22,.92);border:1px solid rgba(0,229,255,.4);color:#fff;border-radius:999px;padding:8px 14px;font-size:13px;font-weight:700;display:none;cursor:pointer;max-width:70vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#introSongChip.show{display:block}
+#introSongChip.paused{opacity:.55}
+</style>
+{% endif %}
 <section class="hero home-bg">
   <div class="home-bg-graphic" aria-hidden="true">
     <img class="home-bg-mascot" src="{{ url_for('static', filename='img/rockdabus.webp') }}" alt="">
@@ -131,6 +140,33 @@
   var skip = document.getElementById('introSkip');
   if (!intro) return;
   if (sessionStorage.getItem('prhyme_intro_seen')) { intro.remove(); return; }
+
+  /* Intro song: starts the moment the record spins up (0.6s), before
+     Rokdabus pops out. Keeps playing after the intro fades; the chip
+     toggles it and any other audio on the page pauses it. */
+  var song = document.getElementById('introSong');
+  var chip = document.getElementById('introSongChip');
+  if (song) {
+    var startSong = function(){
+      song.volume = 0.85;
+      var pr = song.play();
+      if (pr && pr.catch) pr.catch(function(){
+        document.addEventListener('pointerdown', function h(){
+          document.removeEventListener('pointerdown', h);
+          song.play().catch(function(){});
+        });
+      });
+      if (chip) chip.classList.add('show');
+    };
+    setTimeout(startSong, 600);
+    if (chip) chip.addEventListener('click', function(){
+      if (song.paused) { song.play().catch(function(){}); chip.classList.remove('paused'); }
+      else { song.pause(); chip.classList.add('paused'); }
+    });
+    document.addEventListener('play', function(e){
+      if (e.target !== song && e.target.tagName === 'AUDIO') { song.pause(); if (chip) chip.classList.add('paused'); }
+    }, true);
+  }
 
   /* Lightweight canvas particle field: ambient drift + burst on transform.
      Capped at 60 particles, devicePixelRatio-aware, pauses when hidden. */
