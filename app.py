@@ -3515,6 +3515,11 @@ def api_ambient():
     Query: style=<index into _AMBIENT_STYLES> (default 0), seed=<int>.
     The frontend cycles styles for a multi-genre mix.
     """
+    # DISABLED 2026-10-20 (per Daryl): ambient generation filled the
+    # outputs folder with ambient_<seed> files. Endpoint stays mounted so
+    # the frontend gets a clean answer, but nothing is rendered or saved.
+    return jsonify({"ok": False, "disabled": True,
+                    "error": "Ambient generation is turned off"}), 410
     try:
         style_idx = int(request.args.get("style", 0))
     except (TypeError, ValueError):
