@@ -31,20 +31,52 @@ def _stereo(mono):
 # New percussion synth functions
 # ---------------------------------------------------------------------------
 
+def _bp_fft(x, sr, lo, hi, peak_hz=None, peak_gain=0.0):
+    """FFT bandpass with raised-cosine edges (numpy only) — gives
+    noise voices the body bands real instruments have."""
+    n = len(x)
+    if n < 16:
+        return x
+    X = np.fft.rfft(x)
+    f = np.fft.rfftfreq(n, 1.0 / sr)
+    edge = 0.35
+    def _ramp(freqs, a, b):
+        return np.clip((freqs - a) / max(b - a, 1.0), 0.0, 1.0)
+    rise = 0.5 - 0.5 * np.cos(np.pi * _ramp(f, lo * (1 - edge), lo))
+    fall = 0.5 + 0.5 * np.cos(np.pi * _ramp(f, hi, hi * (1 + edge)))
+    w = rise * fall
+    if peak_hz:
+        w = w * (1.0 + peak_gain * np.exp(-0.5 * ((f - peak_hz) / (peak_hz * 0.35)) ** 2))
+    return np.fft.irfft(X * w, n).astype(np.float32)
+
+
+def _cap_peak(x, cap=0.98):
+    pk = float(np.max(np.abs(x))) if len(x) else 0.0
+    return x * (cap / pk) if pk > cap else x
+
+
 def _bongo(sr, rng, freq=220.0, dur=0.22):
     n = int(sr * dur); t = np.arange(n) / sr
     body = (np.sin(2*np.pi*freq*t) * np.exp(-t*28.0)
-            + 0.4*np.sin(2*np.pi*freq*1.5*t) * np.exp(-t*40.0))
-    click = rng.standard_normal(n) * np.exp(-t*300.0) * 0.25
-    return _stereo((body + click) * 0.7)
+            + 0.4*np.sin(2*np.pi*freq*1.5*t) * np.exp(-t*40.0)
+            + 0.15*np.sin(2*np.pi*freq*2.32*t) * np.exp(-t*52.0))
+    # fingertip slap: band-limited smack, not raw noise
+    click = (_bp_fft(rng.standard_normal(n).astype(np.float32), sr,
+                     900, 2600)
+             * np.exp(-t*300.0) * 0.5)
+    return _cap_peak(_stereo((body + click) * 0.7))
 
 
 def _timbale(sr, rng, freq=330.0, dur=0.28):
     n = int(sr * dur); t = np.arange(n) / sr
     body = (np.sin(2*np.pi*freq*t) * np.exp(-t*22.0)
             + 0.5*np.sin(2*np.pi*freq*1.33*t) * np.exp(-t*30.0))
-    rim = rng.standard_normal(n) * np.exp(-t*180.0) * 0.3
-    return _stereo((body + rim) * 0.65)
+    rim = (_bp_fft(rng.standard_normal(n).astype(np.float32), sr,
+                   1800, 4200)
+           * np.exp(-t*180.0) * 0.45)
+    # steel shell ring
+    shell = 0.18*np.sin(2*np.pi*freq*3.9*t) * np.exp(-t*36.0)
+    return _cap_peak(_stereo((body + shell + rim) * 0.65))
 
 
 def _agogo(sr, rng, freq=740.0, dur=0.30):
@@ -72,11 +104,11 @@ def _triangle(sr, rng, freq=1244.0, dur=0.8):
 
 def _cabasa(sr, rng, dur=0.18):
     n = int(sr * dur); t = np.arange(n) / sr
-    noise = rng.standard_normal(n)
-    hp = np.diff(noise, prepend=noise[0])
+    noise = _bp_fft(rng.standard_normal(n).astype(np.float32), sr,
+                    4800, 9800)
     # rhythmic chatter: amplitude modulation
     am = 0.6 + 0.4*np.sin(2*np.pi*28*t)
-    return _stereo(hp * np.exp(-t*25.0) * am * 0.4)
+    return _cap_peak(_stereo(noise * np.exp(-t*25.0) * am * 0.55))
 
 
 def _vibraslap(sr, rng, dur=0.5):
@@ -84,29 +116,38 @@ def _vibraslap(sr, rng, dur=0.5):
     # rattling metallic buzz
     carrier = np.sin(2*np.pi*2100*t)
     rattle = np.abs(np.sin(2*np.pi*47*t))  # 47 Hz rattle
-    sig = carrier * rattle * np.exp(-t*8.0)
-    return _stereo(sig * 0.35)
+    sig = (carrier + 0.4*np.sin(2*np.pi*2870*t)) * rattle * np.exp(-t*8.0)
+    return _cap_peak(_stereo(sig * 0.55))
 
 
 def _guiro(sr, rng, dur=0.3):
     n = int(sr * dur); t = np.arange(n) / sr
-    noise = rng.standard_normal(n)
-    hp = np.diff(noise, prepend=noise[0])
+    noise = _bp_fft(rng.standard_normal(n).astype(np.float32), sr,
+                    2600, 7200, peak_hz=4200, peak_gain=0.5)
     scrape = 0.5 + 0.5*np.sign(np.sin(2*np.pi*18*t))  # scrape ridges
-    return _stereo(hp * np.exp(-t*12.0) * scrape * 0.45)
+    return _cap_peak(_stereo(noise * np.exp(-t*12.0) * scrape * 0.55))
 
 
 def _clave(sr, rng, freq=2500.0, dur=0.09):
     n = int(sr * dur); t = np.arange(n) / sr
-    sig = np.sin(2*np.pi*freq*t) * np.exp(-t*110.0)
-    return _stereo(sig * 0.6)
+    # A clave is a woody "tok": fundamental + a fast-dying upper mode
+    # + the stick's band click. A bare sine reads as a synth beep.
+    sig = (np.sin(2*np.pi*freq*t) * np.exp(-t*110.0)
+           + 0.45*np.sin(2*np.pi*freq*1.68*t) * np.exp(-t*180.0)
+           + 0.2*np.sin(2*np.pi*freq*2.91*t) * np.exp(-t*260.0))
+    click = (_bp_fft(rng.standard_normal(n).astype(np.float32), sr,
+                     1500, 3800)
+             * np.exp(-t*500.0) * 0.5)
+    return _cap_peak(_stereo((sig + click) * 0.65))
 
 
 def _tamborim(sr, rng, freq=440.0, dur=0.15):
     n = int(sr * dur); t = np.arange(n) / sr
     body = np.sin(2*np.pi*freq*t) * np.exp(-t*45.0)
-    snap = rng.standard_normal(n) * np.exp(-t*250.0) * 0.35
-    return _stereo((body + snap) * 0.6)
+    snap = (_bp_fft(rng.standard_normal(n).astype(np.float32), sr,
+                    1400, 3600)
+            * np.exp(-t*250.0) * 0.5)
+    return _cap_peak(_stereo((body + snap) * 0.6))
 
 
 # ---------------------------------------------------------------------------
@@ -117,10 +158,13 @@ def _rhodes(sr, freq, dur=0.8):
     n = int(sr * dur); t = np.arange(n) / sr
     sig = (np.sin(2*np.pi*freq*t) * np.exp(-t*4.5)
            + 0.35*np.sin(2*np.pi*2*freq*t) * np.exp(-t*9.0)
-           + 0.12*np.sin(2*np.pi*4*freq*t) * np.exp(-t*16.0))
+           + 0.12*np.sin(2*np.pi*4*freq*t) * np.exp(-t*16.0)
+           # the tine's metallic bark: high inharmonic partial, dies fast
+           + 0.16*np.sin(2*np.pi*freq*13.2*t) * np.exp(-t*26.0)
+           + 0.09*np.sin(2*np.pi*freq*3.98*t) * np.exp(-t*20.0))
     # gentle tremolo
     trem = 0.85 + 0.15*np.sin(2*np.pi*4.5*t)
-    return _stereo(sig * trem * 0.45)
+    return _cap_peak(_stereo(sig * trem * 0.45))
 
 
 def _organ(sr, freq, dur=0.7):
@@ -129,28 +173,62 @@ def _organ(sr, freq, dur=0.7):
            + 0.5*np.sin(2*np.pi*2*freq*t)
            + 0.3*np.sin(2*np.pi*3*freq*t)
            + 0.2*np.sin(2*np.pi*4*freq*t))
-    env = np.minimum(1.0, t/0.02) * np.minimum(1.0, (dur-t)/0.1)
-    return _stereo(sig * env * 0.22)
+    # Hammond keys land in ~5 ms WITH a click — the old 58 ms swell
+    # read as a synth pad. Click is a short high burst at note-on.
+    click = 0.35*np.sin(2*np.pi*2300*t) * np.exp(-t*260.0)
+    sig = sig + 0.08*np.sin(2*np.pi*6*freq*t) + 0.05*np.sin(2*np.pi*8*freq*t)
+    env = np.minimum(1.0, t/0.005) * np.minimum(1.0, (dur-t)/0.06)
+    return _cap_peak(_stereo((sig + click) * env * 0.24))
 
 
 def _strings(sr, freq, dur=1.2):
     n = int(sr * dur); t = np.arange(n) / sr
+    # Real bow envelope: ~8% attack to near-full, gentle swell,
+    # late vibrato, bow hair noise underneath. The old version
+    # ramped for a quarter of the note and PEAKED at the end
+    # (measured attack 1088 ms — the note never "arrived").
+    vib_depth = 0.004 * np.clip((t - dur*0.25) / (dur*0.2), 0, 1)
+    vib = 1.0 + vib_depth * np.sin(2*np.pi*5.2*t)
     sig = np.zeros(n)
-    for det in (0.997, 1.0, 1.004):
-        for mult, amp in ((1, 0.5), (2, 0.25), (3, 0.12)):
-            sig += amp * np.sin(2*np.pi*freq*mult*det*t)
+    for det in (0.9985, 1.0, 1.002):
+        for mult, amp in ((1, 0.5), (2, 0.25), (3, 0.12), (4, 0.06), (5, 0.03)):
+            sig += amp * np.sin(2*np.pi*freq*mult*det*vib*t)
     sig /= 3.0
-    atk = np.minimum(1.0, t/(dur*0.25))
-    return _stereo(sig * atk * 0.4)
+    _rng = np.random.default_rng(int(freq) % 997 + 3)
+    bow = (_bp_fft(_rng.standard_normal(n).astype(np.float32), sr,
+                   2400, 6000) * 0.05)
+    a = np.clip(t / (dur*0.08), 0, 1)
+    swell = 0.85 + 0.15*np.clip(t / (dur*0.35), 0, 1)
+    rel = np.clip((dur - t) / (dur*0.12), 0, 1)
+    # gentle decay after the bow lands, so the note's weight sits at
+    # the attack like a real stroke (not at a random beating peak)
+    settle = 0.8 + 0.2*np.exp(-t*1.6)
+    env = a * swell * rel * settle
+    return _cap_peak(_stereo((sig + bow) * env * 0.42))
 
 
 def _guitar_pluck(sr, freq, dur=0.6):
     n = int(sr * dur); t = np.arange(n) / sr
     # Karplus-Strong-ish: filtered noise burst through decaying comb
-    burst = np.random.default_rng(11).standard_normal(n) * np.exp(-t*30.0)
-    sig = np.sin(2*np.pi*freq*t) * np.exp(-t*7.0) + burst * 0.3
-    sig += 0.3*np.sin(2*np.pi*2*freq*t) * np.exp(-t*12.0)
-    return _stereo(sig * 0.45)
+    # True Karplus-Strong: a short noise excitation recirculating
+    # through a pitch-period feedback lowpass — bright pick attack
+    # that warms as it decays, like a real string. (The old version
+    # layered raw noise over a sine: measured as fizz, centroid
+    # 5.8 kHz, flatness 0.71.)
+    from scipy.signal import lfilter
+    _rng = np.random.default_rng(int(freq) % 997 + 11)
+    p = max(2, int(round(sr / max(freq, 20.0))))
+    exc = _rng.standard_normal(n).astype(np.float64)
+    exc = np.convolve(exc, np.ones(4) / 4.0, mode="same")  # pick softness
+    exc[int(0.012 * sr):] = 0.0
+    rho = float(np.exp(-2.2 / max(dur, 0.05) * (p / sr)))
+    a_fb = np.zeros(p + 2)
+    a_fb[0] = 1.0
+    a_fb[p] = -0.5 * rho
+    a_fb[p + 1] = -0.5 * rho
+    ks = lfilter([1.0], a_fb, exc).astype(np.float32)
+    body = np.sin(2*np.pi*freq*t) * np.exp(-t*7.0) * 0.25
+    return _cap_peak(_stereo((ks * 0.9 + body) * 0.55))
 
 
 def _guitar_dist(sr, freq, dur=0.7):
@@ -162,49 +240,65 @@ def _guitar_dist(sr, freq, dur=0.7):
            + 0.25 * np.sign(np.sin(2*np.pi*2*freq*t))
            + 0.12 * np.sign(np.sin(2*np.pi*3*freq*t)))
     sig = np.tanh(sig * 3.2)  # hard-clip distortion
+    sig = _bp_fft(sig.astype(np.float32), sr, 65, 7800)  # tame the fizz
     env = np.exp(-t*4.0) * (0.35 + 0.65*np.exp(-t*28.0))
-    return _stereo(sig * env * 0.5)
+    return _cap_peak(_stereo(sig * env * 0.55))
 
 
 def _musicbox(sr, freq, dur=1.0):
     n = int(sr * dur); t = np.arange(n) / sr
-    sig = (np.sin(2*np.pi*freq*t) * np.exp(-t*5.0)
-           + 0.4*np.sin(2*np.pi*freq*3.01*t) * np.exp(-t*9.0)
-           + 0.15*np.sin(2*np.pi*freq*9.2*t) * np.exp(-t*14.0))
-    return _stereo(sig * 0.35)
+    # A music box tine rings HIGH: strong inharmonic partials with
+    # long ring times. The old balance buried them under the
+    # fundamental (measured centroid 382 Hz — a dull thud).
+    # In a real music box the fundamental is the QUIETEST part —
+    # the tine's high modes carry the note. Rebalanced accordingly.
+    sig = (0.5*np.sin(2*np.pi*freq*t) * np.exp(-t*4.2)
+           + 0.85*np.sin(2*np.pi*freq*3.01*t) * np.exp(-t*11.0)
+           + 0.35*np.sin(2*np.pi*freq*5.4*t) * np.exp(-t*13.0)
+           + 0.4*np.sin(2*np.pi*freq*9.2*t) * np.exp(-t*18.0))
+    return _cap_peak(_stereo(sig * 0.4))
 
 
 def _steeldrum(sr, freq, dur=0.9):
     n = int(sr * dur); t = np.arange(n) / sr
+    # Steelpan modes are tuned 1 : 2 : ~3 (octave + fifth above the
+    # octave), with a bright mallet tick — not the old 1.5x wash.
     sig = (np.sin(2*np.pi*freq*t) * np.exp(-t*6.0)
-           + 0.5*np.sin(2*np.pi*freq*1.5*t) * np.exp(-t*10.0)
-           + 0.25*np.sin(2*np.pi*freq*2.0*t) * np.exp(-t*14.0))
-    return _stereo(sig * 0.4)
+           + 0.55*np.sin(2*np.pi*freq*2.0*t) * np.exp(-t*9.0)
+           + 0.28*np.sin(2*np.pi*freq*2.99*t) * np.exp(-t*14.0)
+           + 0.12*np.sin(2*np.pi*freq*4.2*t) * np.exp(-t*22.0)
+           + 0.3*np.sin(2*np.pi*freq*5.9*t) * np.exp(-t*60.0))
+    return _cap_peak(_stereo(sig * 0.42))
 
 
 def _sitar(sr, freq, dur=0.8):
     n = int(sr * dur); t = np.arange(n) / sr
     # buzzy: saw-ish via additive + sympathetic shimmer
     sig = np.zeros(n)
-    for k in range(1, 9):
-        sig += (1.0/k) * np.sin(2*np.pi*freq*k*t + 0.1*k)
+    for k in range(1, 15):
+        sig += (1.0/k) * (0.6 if k > 8 else 1.0) * np.sin(2*np.pi*freq*k*t + 0.1*k)
     sig /= 4.0
-    buzz = 0.9 + 0.1*np.sin(2*np.pi*23*t)
-    return _stereo(sig * np.exp(-t*5.0) * buzz * 0.3)
+    # jawari buzz: the string rattles against the curved bridge,
+    # pulsing brightness at the note's own rate
+    buzz = 0.85 + 0.3*np.abs(np.sin(np.pi*freq*0.5*t)) * np.exp(-t*2.0)
+    return _cap_peak(_stereo(sig * np.exp(-t*5.0) * buzz * 0.85))
 
 
 def _epiano(sr, freq, dur=0.7):
     n = int(sr * dur); t = np.arange(n) / sr
     sig = (np.sin(2*np.pi*freq*t) * np.exp(-t*5.5)
            + 0.3*np.sin(2*np.pi*freq*2.01*t) * np.exp(-t*10.0)
-           + 0.1*np.sin(2*np.pi*freq*3.98*t) * np.exp(-t*18.0))
-    return _stereo(sig * 0.42)
+           + 0.1*np.sin(2*np.pi*freq*3.98*t) * np.exp(-t*18.0)
+           + 0.14*np.sin(2*np.pi*freq*11.9*t) * np.exp(-t*30.0))
+    return _cap_peak(_stereo(sig * 0.42))
 
 
 def _wurlie(sr, freq, dur=0.6):
     n = int(sr * dur); t = np.arange(n) / sr
-    sig = np.sin(2*np.pi*freq*t) + 0.25*np.tanh(2.0*np.sin(2*np.pi*freq*t))
-    return _stereo(sig * np.exp(-t*6.5) * 0.38)
+    sig = (np.sin(2*np.pi*freq*t) + 0.25*np.tanh(2.0*np.sin(2*np.pi*freq*t))
+           + 0.16*np.sin(2*np.pi*freq*3.0*t) * np.exp(-t*8.0)
+           + 0.07*np.sin(2*np.pi*freq*5.1*t) * np.exp(-t*14.0))
+    return _cap_peak(_stereo(sig * np.exp(-t*6.5) * 0.4))
 
 
 def _lead_saw(sr, freq, dur=0.5):
@@ -254,10 +348,15 @@ def _acid_bass(sr, freq, dur=0.4):
 
 def _pluck_bass(sr, freq, dur=0.45):
     n = int(sr * dur); t = np.arange(n) / sr
+    # Finger attack: upper partials that speak first, then the
+    # fundamental takes over (the old one was a naked sub sine,
+    # centroid 68 Hz at A1 — no string definition at all).
     sig = (np.sin(2*np.pi*freq*t) * np.exp(-t*9.0)
            + 0.5*np.sin(2*np.pi*2*freq*t) * np.exp(-t*16.0)
-           + 0.2*np.sin(2*np.pi*3*freq*t) * np.exp(-t*25.0))
-    return _stereo(sig * 0.6)
+           + 0.2*np.sin(2*np.pi*3*freq*t) * np.exp(-t*25.0)
+           + 0.26*np.sin(2*np.pi*4.3*freq*t) * np.exp(-t*38.0)
+           + 0.17*np.sin(2*np.pi*6.7*freq*t) * np.exp(-t*52.0))
+    return _cap_peak(_stereo(sig * 0.62))
 
 
 def _sub_drop(sr, freq, dur=0.8):
@@ -284,7 +383,7 @@ def _reverse_cymbal(sr, rng, dur=1.5):
     hp = np.diff(noise, prepend=noise[0])
     env = (t/dur)**2.5  # swell into the hit
     hit = np.exp(-np.maximum(0, t-dur+0.05)*40.0) * (t > dur-0.1)
-    return _stereo((hp*env*0.5 + hp*hit*0.8) * 0.4)
+    return _cap_peak(_stereo((hp*env*0.5 + hp*hit*0.8) * 0.55))
 
 
 def _sweep_up(sr, dur=1.0):

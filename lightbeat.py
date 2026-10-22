@@ -937,6 +937,37 @@ _GENRE_KITS = {
 _KITS.update(_GENRE_KITS)
 
 
+
+def _bp_fft(x, sr, lo, hi, peak_hz=None, peak_gain=0.0):
+    """FFT bandpass with raised-cosine edges (numpy only). Optionally
+    adds a resonant bump at peak_hz. Used to give noise-based drum
+    voices the body bands real instruments have — raw white noise
+    through a differentiator is why the old snare/clap/hats measured
+    as pure hiss at 11-14 kHz."""
+    n = len(x)
+    if n < 16:
+        return x
+    X = np.fft.rfft(x)
+    f = np.fft.rfftfreq(n, 1.0 / sr)
+    edge = 0.35
+    def _ramp(freqs, a, b):
+        return np.clip((freqs - a) / max(b - a, 1.0), 0.0, 1.0)
+    rise = 0.5 - 0.5 * np.cos(np.pi * _ramp(f, lo * (1 - edge), lo))
+    fall = 0.5 + 0.5 * np.cos(np.pi * _ramp(f, hi, hi * (1 + edge)))
+    w = rise * fall
+    if peak_hz:
+        w = w * (1.0 + peak_gain * np.exp(-0.5 * ((f - peak_hz) / (peak_hz * 0.35)) ** 2))
+    return np.fft.irfft(X * w, n).astype(np.float32)
+
+
+def _cap_peak(x, cap=0.98):
+    """Scale down ONLY if the voice would clip (>0 dBFS peaks up to
+    2.5 measured in the 2026-10-22 audit). Quieter voices untouched."""
+    pk = float(np.max(np.abs(x))) if len(x) else 0.0
+    if pk > cap:
+        return x * (cap / pk)
+    return x
+
 def list_kits():
     """Return [{name, label, desc, group}] for the built-in drum kits."""
     return [{"name": k, "label": v["label"], "desc": v["desc"],
@@ -974,18 +1005,26 @@ def _kick(sr, rng, variant="classic"):
     body = np.sin(phase) * np.exp(-t * p["body_decay"])
     click = (rng.standard_normal(n) * np.exp(-t * p["click_decay"])
              * p["click_level"])
-    return _stereo((body + click) * p["level"])
+    return _cap_peak(_stereo((body + click) * p["level"]))
 
 
 def _snare(sr, rng, variant="classic"):
     p = _SNARE_VARIANTS.get(variant, _SNARE_VARIANTS["classic"])
     n = int(sr * p["dur"])
     t = np.arange(n) / sr
-    noise = (rng.standard_normal(n) * np.exp(-t * p["noise_decay"])
-             * p["noise_level"])
-    body = (np.sin(2 * np.pi * p["body_freq"] * t)
-            * np.exp(-t * p["body_decay"]) * p["body_level"])
-    return _stereo(noise + body)
+    raw = rng.standard_normal(n).astype(np.float32)
+    # Wires: band-limited noise 3.5-8.5 kHz (real snare wires live
+    # there — the old full-band noise read as 10.8 kHz static).
+    wires = (_bp_fft(raw, sr, 3400, 8500)
+             * np.exp(-t * p["noise_decay"]) * p["noise_level"])
+    # Snap: the stick attack, 1.2-3 kHz, gone in ~35 ms.
+    snap = (_bp_fft(raw, sr, 1100, 3200, peak_hz=1900, peak_gain=0.7)
+            * np.exp(-t * 90.0) * p["noise_level"] * 0.9)
+    # Shell body with a slight downward pitch bend, like a real drum.
+    f0 = p["body_freq"]
+    ph = 2 * np.pi * (f0 * t + (f0 * 0.35) * (1 - np.exp(-t * 60.0)) / 60.0)
+    body = (np.sin(ph) * np.exp(-t * p["body_decay"]) * p["body_level"])
+    return _cap_peak(_stereo(wires + snap + body))
 
 
 def _hat(sr, rng, dur=None, decay=None, level=None, variant="classic"):
@@ -995,9 +1034,20 @@ def _hat(sr, rng, dur=None, decay=None, level=None, variant="classic"):
     level = p["level"] if level is None else level
     n = int(sr * dur)
     t = np.arange(n) / sr
-    noise = rng.standard_normal(n)
-    hp = np.diff(noise, prepend=noise[0])  # crude highpass, no scipy needed
-    return _stereo(hp * np.exp(-t * decay) * level)
+    # Real hats/cymbals are inharmonic partial clusters, not hiss:
+    # the classic metallic ratios (square-wave stack ~8-11 kHz),
+    # each partial decaying at its own rate, plus a breath of
+    # band-shaped noise for the stick.
+    ratios = np.array([1.0, 1.34, 1.65, 1.98, 2.49, 3.36])
+    base = 6120.0
+    metal = np.zeros(n, dtype=np.float32)
+    for i, r in enumerate(ratios):
+        metal += (np.sin(2 * np.pi * base * r * t).astype(np.float32)
+                  * np.exp(-t * decay * (0.75 + 0.22 * i)) * (0.55 - 0.06 * i))
+    breath = (_bp_fft(rng.standard_normal(n).astype(np.float32), sr,
+                      7000, 13000)
+              * np.exp(-t * decay * 1.15) * 0.5)
+    return _cap_peak(_stereo((metal * 0.55 + breath) * np.exp(-t * decay * 0.12) * level))
 
 
 def _ohat(sr, rng, variant="classic"):
@@ -1015,8 +1065,11 @@ def _clap(sr, rng, variant="classic"):
         m = n - k
         out[k:] += (rng.standard_normal(m)
                     * np.exp(-np.arange(m) / sr * p["burst_decay"]))
-    hp = np.diff(out, prepend=out[0])
-    return _stereo(hp * np.exp(-t * p["tail_decay"]) * p["level"])
+    # Real claps resonate ~1-2.5 kHz (cupped hands) — band the burst
+    # train there instead of differentiating it into 14 kHz hiss.
+    shaped = _bp_fft(out.astype(np.float32), sr, 850, 3400,
+                     peak_hz=1600, peak_gain=0.8)
+    return _cap_peak(_stereo(shaped * np.exp(-t * p["tail_decay"]) * p["level"]))
 
 
 def _bass808(sr, freq, glide_from=None, dur=0.55, drive=2.0,
@@ -1051,20 +1104,31 @@ def _piano(sr, freq, dur=0.5):
     """Dark piano-ish stab: percussive attack, fast-decaying harmonics."""
     n = int(sr * dur)
     t = np.arange(n) / sr
+    # Piano strings are inharmonic and the hammer strike is bright:
+    # upper partials (slightly stretched) that die fast over a warm
+    # fundamental stack — the old 3-partial version measured as a
+    # dull 324 Hz thud at C4.
     sig = (np.sin(2 * np.pi * freq * t) * np.exp(-t * 6.0)
            + 0.45 * np.sin(2 * np.pi * 2 * freq * t) * np.exp(-t * 11.0)
-           + 0.2 * np.sin(2 * np.pi * 3 * freq * t) * np.exp(-t * 18.0))
-    return _stereo(sig * 0.42)
+           + 0.2 * np.sin(2 * np.pi * 3 * freq * t) * np.exp(-t * 18.0)
+           + 0.22 * np.sin(2 * np.pi * 4.02 * freq * t) * np.exp(-t * 26.0)
+           + 0.16 * np.sin(2 * np.pi * 5.05 * freq * t) * np.exp(-t * 34.0)
+           + 0.11 * np.sin(2 * np.pi * 6.35 * freq * t) * np.exp(-t * 44.0)
+           + 0.08 * np.sin(2 * np.pi * 8.2 * freq * t) * np.exp(-t * 55.0)
+           + 0.05 * np.sin(2 * np.pi * 10.5 * freq * t) * np.exp(-t * 70.0))
+    return _cap_peak(_stereo(sig * 0.46))
 
 
 def _bells(sr, freq, dur=1.1):
     """Bright bell: inharmonic partial, long shimmering decay."""
     n = int(sr * dur)
     t = np.arange(n) / sr
-    sig = (np.sin(2 * np.pi * freq * t) * np.exp(-t * 3.2)
-           + 0.35 * np.sin(2 * np.pi * 2.76 * freq * t) * np.exp(-t * 5.0)
-           + 0.12 * np.sin(2 * np.pi * 5.4 * freq * t) * np.exp(-t * 8.0))
-    return _stereo(sig * 0.38)
+    sig = (np.sin(2 * np.pi * freq * t) * np.exp(-t * 3.8)
+           + 0.6 * np.sin(2 * np.pi * 2.76 * freq * t) * np.exp(-t * 5.0)
+           + 0.24 * np.sin(2 * np.pi * 5.4 * freq * t) * np.exp(-t * 8.0)
+           + 0.11 * np.sin(2 * np.pi * 8.93 * freq * t) * np.exp(-t * 12.0)
+           + 0.06 * np.sin(2 * np.pi * 11.2 * freq * t) * np.exp(-t * 30.0))
+    return _cap_peak(_stereo(sig * 0.4))
 
 
 def _pad(sr, freqs, dur=1.8):
@@ -1110,10 +1174,12 @@ def _bass_note(sr, freq, glide_from, style, staccato=False):
 def _pluck(sr, freq, dur=0.45):
     n = int(sr * dur)
     t = np.arange(n) / sr
-    sig = (np.sin(2 * np.pi * freq * t)
-           + 0.4 * np.sin(2 * np.pi * 2 * freq * t)
-           + 0.18 * np.sin(2 * np.pi * 3 * freq * t))
-    return _stereo(sig * np.exp(-t * 7.0) * 0.4)
+    sig = (np.sin(2 * np.pi * freq * t) * np.exp(-t * 7.0)
+           + 0.4 * np.sin(2 * np.pi * 2 * freq * t) * np.exp(-t * 10.0)
+           + 0.18 * np.sin(2 * np.pi * 3 * freq * t) * np.exp(-t * 15.0)
+           + 0.1 * np.sin(2 * np.pi * 4.2 * freq * t) * np.exp(-t * 24.0)
+           + 0.06 * np.sin(2 * np.pi * 5.6 * freq * t) * np.exp(-t * 32.0))
+    return _cap_peak(_stereo(sig * 0.44))
 
 
 # ------------------------------------------------------- extra instruments
@@ -1126,8 +1192,10 @@ def _tom(sr, rng, freq=130.0, dur=0.32):
     f = freq + freq * 0.8 * np.exp(-t * 28.0)
     phase = 2 * np.pi * np.cumsum(f) / sr
     body = np.sin(phase) * np.exp(-t * 9.0)
-    click = rng.standard_normal(n) * np.exp(-t * 180.0) * 0.25
-    return _stereo((body + click) * 0.8)
+    click = (_bp_fft(rng.standard_normal(n).astype(np.float32), sr,
+                     1000, 3000)
+             * np.exp(-t * 180.0) * 0.4)
+    return _cap_peak(_stereo((body + click) * 0.8))
 
 
 def _rimshot(sr, rng):
@@ -1135,47 +1203,70 @@ def _rimshot(sr, rng):
     n = int(sr * 0.09)
     t = np.arange(n) / sr
     body = np.sin(2 * np.pi * 420.0 * t) * np.exp(-t * 90.0) * 0.6
-    click = rng.standard_normal(n) * np.exp(-t * 400.0) * 0.5
-    return _stereo((body + click) * 0.7)
+    click = (_bp_fft(rng.standard_normal(n).astype(np.float32), sr,
+                     1700, 3600)
+             * np.exp(-t * 400.0) * 0.8)
+    return _cap_peak(_stereo((body + click) * 0.7))
 
 
 def _shaker(sr, rng, dur=0.12):
-    """Grainy shaker: bright noise with a pulsing envelope."""
+    """Grainy shaker: band-shaped noise (5.5-10 kHz, where the beads
+    actually speak) with a pulsing envelope."""
     n = int(sr * dur)
     t = np.arange(n) / sr
-    noise = rng.standard_normal(n)
-    hp = np.diff(noise, prepend=noise[0])
+    noise = _bp_fft(rng.standard_normal(n).astype(np.float32), sr,
+                    5200, 10500)
     env = np.exp(-t * 40.0) * (0.6 + 0.4 * np.sin(2 * np.pi * 30.0 * t) ** 2)
-    return _stereo(hp * env * 0.35)
+    return _cap_peak(_stereo(noise * env * 0.5))
 
 
 def _cowbell(sr, freq=560.0, dur=0.25):
-    """Classic 808 cowbell: two detuned square waves."""
+    """Cowbell: the classic two-mode clang (modes ~1.0x and ~1.49x,
+    band-limited so the energy sits at the modes like real metal,
+    not in square-wave harmonics up to Nyquist) + strike click."""
     n = int(sr * dur)
     t = np.arange(n) / sr
-    sig = np.sign(np.sin(2 * np.pi * freq * t))
-    sig += np.sign(np.sin(2 * np.pi * freq * 1.49 * t))
-    return _stereo(sig * np.exp(-t * 18.0) * 0.28)
+    sq = (np.sign(np.sin(2 * np.pi * freq * t))
+          + np.sign(np.sin(2 * np.pi * freq * 1.49 * t)))
+    clang = _bp_fft(sq.astype(np.float32), sr, freq * 0.55, freq * 4.2,
+                    peak_hz=freq * 1.49, peak_gain=0.5)
+    return _cap_peak(_stereo(clang * np.exp(-t * 16.0) * 0.5))
 
 
 def _crash(sr, rng, dur=1.2):
-    """Long bright crash cymbal."""
+    """Crash cymbal: inharmonic shimmer cluster (4.5-9 kHz modes,
+    each decaying at its own rate) over a band-shaped wash — a real
+    crash blooms and shimmers; raw hiss just sits there."""
     n = int(sr * dur)
     t = np.arange(n) / sr
-    noise = rng.standard_normal(n)
-    hp = np.diff(noise, prepend=noise[0])
-    return _stereo(hp * np.exp(-t * 4.5) * 0.4)
+    modes = np.array([1.0, 1.21, 1.47, 1.83, 2.24, 2.71]) * 2890.0
+    shim = np.zeros(n, dtype=np.float32)
+    for i, f in enumerate(modes):
+        shim += (np.sin(2 * np.pi * f * t).astype(np.float32)
+                 * np.exp(-t * (3.2 + 0.55 * i)) * (0.5 - 0.05 * i))
+    wash = (_bp_fft(rng.standard_normal(n).astype(np.float32), sr,
+                    4200, 11500)
+            * np.exp(-t * 3.6) * 0.55)
+    swell = np.minimum(1.0, t / 0.012)
+    return _cap_peak(_stereo((shim * 0.5 + wash) * swell * 0.75))
 
 
 def _ride(sr, rng, dur=0.8):
-    """Metallic ride ping: inharmonic partials + stick noise."""
+    """Ride: low bell modes for the body, high inharmonic partials
+    for the ping, and a band-shaped stick tick (the old version was
+    all body + raw noise, attack ~9 ms — a real stick lands in 2)."""
     n = int(sr * dur)
     t = np.arange(n) / sr
-    sig = (np.sin(2 * np.pi * 310.0 * t)
-           + 0.6 * np.sin(2 * np.pi * 417.0 * t)
-           + 0.4 * np.sin(2 * np.pi * 521.0 * t)) * np.exp(-t * 7.0)
-    noise = rng.standard_normal(n) * np.exp(-t * 30.0) * 0.2
-    return _stereo((sig + noise) * 0.3)
+    body = (np.sin(2 * np.pi * 310.0 * t)
+            + 0.6 * np.sin(2 * np.pi * 417.0 * t)
+            + 0.4 * np.sin(2 * np.pi * 521.0 * t)) * np.exp(-t * 7.0)
+    ping = (np.sin(2 * np.pi * 2960.0 * t) * 0.35
+            + np.sin(2 * np.pi * 4230.0 * t) * 0.28
+            + np.sin(2 * np.pi * 5410.0 * t) * 0.2) * np.exp(-t * 16.0)
+    tick = (_bp_fft(rng.standard_normal(n).astype(np.float32), sr,
+                    3800, 9000)
+            * np.exp(-t * 55.0) * 0.5)
+    return _cap_peak(_stereo((body + ping + tick) * 0.42))
 
 
 def _conga(sr, rng, freq=210.0, dur=0.25):
@@ -1185,8 +1276,13 @@ def _conga(sr, rng, freq=210.0, dur=0.25):
     f = freq + freq * 0.5 * np.exp(-t * 35.0)
     phase = 2 * np.pi * np.cumsum(f) / sr
     sig = (np.sin(phase) * np.exp(-t * 14.0)
-           + 0.3 * np.sin(2 * phase) * np.exp(-t * 22.0))
-    return _stereo(sig * 0.6)
+           + 0.3 * np.sin(2 * phase) * np.exp(-t * 22.0)
+           + 0.18 * np.sin(2.76 * phase) * np.exp(-t * 26.0))
+    # Skin slap: the hand's band-limited smack on top of the tone.
+    slap = (_bp_fft(rng.standard_normal(n).astype(np.float32), sr,
+                    850, 2600)
+            * np.exp(-t * 65.0) * 0.35)
+    return _cap_peak(_stereo(sig * 0.6 + slap))
 
 
 def _flute(sr, freq, dur=0.6):
@@ -1196,9 +1292,15 @@ def _flute(sr, freq, dur=0.6):
     vib = 1.0 + 0.006 * np.sin(2 * np.pi * 5.5 * t)
     sig = (np.sin(2 * np.pi * freq * vib * t)
            + 0.25 * np.sin(2 * np.pi * 2 * freq * vib * t))
-    atk = np.minimum(1.0, t / 0.06)
+    # Breath chiff at the attack (deterministic per-note seed) —
+    # without it a flute reads as a slow sine swell.
+    _rng = np.random.default_rng(int(freq) % 997 + 7)
+    chiff = (_bp_fft(_rng.standard_normal(n).astype(np.float32), sr,
+                     900, 3000)
+             * np.exp(-t * 22.0) * 0.35)
+    atk = np.minimum(1.0, t / 0.035)
     rel = np.exp(-np.maximum(0.0, t - dur * 0.7) * 8.0)
-    return _stereo(sig * atk * rel * 0.35)
+    return _cap_peak(_stereo((sig + chiff) * atk * rel * 0.38))
 
 
 def _brass(sr, freq, dur=0.4):
@@ -1242,11 +1344,11 @@ def _koto(sr, freq, dur=0.7):
     """Bright koto-like pluck: long sustain + sharp attack transient."""
     n = int(sr * dur)
     t = np.arange(n) / sr
-    sig = (np.sin(2 * np.pi * freq * t)
-           + 0.5 * np.sin(2 * np.pi * 2 * freq * t)
-           + 0.3 * np.sin(2 * np.pi * 3.01 * freq * t)) * np.exp(-t * 5.0)
+    sig = (np.sin(2 * np.pi * freq * t) * np.exp(-t * 5.0)
+           + 0.5 * np.sin(2 * np.pi * 2 * freq * t) * np.exp(-t * 7.0)
+           + 0.3 * np.sin(2 * np.pi * 3.01 * freq * t) * np.exp(-t * 11.0))
     sig += 0.3 * np.sin(2 * np.pi * 5 * freq * t) * np.exp(-t * 40.0)
-    return _stereo(sig * 0.35)
+    return _cap_peak(_stereo(sig * 0.38))
 
 
 # Melodic instrument dispatch: name -> function taking (sr, freq).
@@ -1407,7 +1509,7 @@ def _riser(sr, rng, dur):
         y[i] = acc
     env = np.minimum(1.0, t / (dur * 0.1))
     env = env * np.minimum(1.0, (dur - t) / (dur * 0.05) + 0.2)
-    return _stereo(y * env * 0.5)
+    return _cap_peak(_stereo(y * env * 0.5))
 
 
 def _impact(sr, rng, dur=0.8):
@@ -1419,7 +1521,7 @@ def _impact(sr, rng, dur=0.8):
     noise = rng.standard_normal(n)
     hp = np.diff(noise, prepend=noise[0])
     crash = hp * np.exp(-t * 5.0) * 0.4
-    return _stereo((boom + crash) * np.exp(-t * 3.0) * 0.7)
+    return _cap_peak(_stereo((boom + crash) * np.exp(-t * 3.0) * 0.7))
 
 
 def _downshifter(sr, dur=1.2):
