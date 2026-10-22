@@ -217,9 +217,11 @@ function startMasterPoll(jobId, out, prog, bar, msg) {
             html += '<div style="margin:10px 0;">';
             if (isTemp) {
               html += '<div style="margin:12px 0;padding:10px;background:#1a1a2e;border-radius:8px;">';
-              html += '<label style="color:#fff;">🎤 Vocal Gain: <input type="range" id="postVocalGain" min="-12" max="12" step="0.5" value="1.5" style="width:150px;vertical-align:middle;" oninput="document.getElementById(\'postVocalVal\').textContent=this.value+\' dB\'"> <span id="postVocalVal">1.5 dB</span></label> ';
-              html += '<button onclick="remasterWithGain(\'' + jobId + '\')" style="background:#9d4edd;color:#fff;padding:6px 12px;border:none;border-radius:4px;cursor:pointer;margin-left:8px;">🔄 Re-render</button>';
-              html += '<div style="font-size:0.8em;color:#888;margin-top:4px;">Adjust vocal level and re-render before downloading.</div></div>';
+              html += '<label style="color:#fff;">🎤 Vocal Gain: <input type="range" id="postVocalGain" min="-12" max="12" step="0.5" value="1.5" style="width:150px;vertical-align:middle;" oninput="gainSliderMoved(\'' + jobId + '\',this)"> <span id="postVocalVal">…</span></label>';
+              html += '<div style="margin:8px 0;"><audio id="gainPrevAudio" controls preload="none" style="width:100%;height:32px;"></audio></div>';
+              html += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;"><button onclick="setGainAB(\'' + jobId + '\',\'orig\')" style="background:#333;color:#fff;padding:6px 12px;border:1px solid #555;border-radius:4px;cursor:pointer;">▶ A: Master level</button><button onclick="setGainAB(\'' + jobId + '\',\'new\')" style="background:#333;color:#fff;padding:6px 12px;border:1px solid #555;border-radius:4px;cursor:pointer;">▶ B: Slider level</button><span id="gainPrevMsg" style="font-size:0.8em;color:#888;">Loading level preview…</span></div>';
+              html += '<button onclick="rerunMaster(\'' + jobId + '\',this)" style="background:#9d4edd;color:#fff;padding:8px 14px;border:none;border-radius:4px;cursor:pointer;margin-top:8px;">🔄 Re-render full master at this level</button>';
+              html += '<div style="font-size:0.8em;color:#888;margin-top:4px;">Drag the slider — the 30s preview re-renders at the new vocal level so you can hear it first. A/B flips between the mastered level and your slider level at the same spot. Happy? Re-render the full master, then download.</div></div>';
               html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">';
               html += '<button onclick="discardMaster(\'' + jobId + '\')" style="background:#ff4444;color:#fff;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;">🗑 Discard</button>';
               html += '<button onclick="keepMaster(\'' + jobId + '\',this)" style="position:relative;z-index:300;background:#00e5a0;color:#000;padding:16px 22px;min-height:56px;font-size:17px;font-weight:700;border:none;border-radius:8px;cursor:pointer;">⬇ Download</button>';
@@ -233,6 +235,7 @@ function startMasterPoll(jobId, out, prog, bar, msg) {
             html += 'Done! Job: ' + jobId;
           }
           out.innerHTML = html;
+          if (res.file && res.temp) { initGainPreview(jobId); }
         } else if (pj.status === 'cancelled') {
           clearInterval(poll);
           hideCancelBtn();
@@ -297,18 +300,85 @@ document.getElementById('f').addEventListener('submit', async (e) => {
     prog.style.display = 'block';
     startMasterPoll(jobId, out, prog, bar, msg);
 
-    function remasterWithGain(jobId) {
-      var gainEl = document.getElementById('postVocalGain');
-      var gain = gainEl ? gainEl.value : "1.5";
-      var form = document.querySelector('form');
-      if (!form) return;
-      var fd = new FormData(form);
-      syncMasterToggles(fd, form);
-      fd.set('vocal_boost_db', gain);
-      if (typeof toast === 'function') toast('Re-rendering with vocal gain ' + gain + ' dB...');
-      fetch('/api/master', {method:'POST', body:fd}).then(function(r){return r.json();}).then(function(j){
-        if(j.job_id && typeof pollMaster === 'function') pollMaster(j.job_id);
+    
+    var _gainPrev = {job: null, origUrl: null, origGain: null, newUrl: null, timer: null};
+    async function _fetchGainPreview(jobId, body) {
+      const r = await fetch('/api/master/preview-gain', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(Object.assign({job_id: jobId}, body))});
+      return await r.json();
+    }
+    async function initGainPreview(jobId) {
+      _gainPrev = {job: jobId, origUrl: null, origGain: null, newUrl: null, timer: null};
+      var msg = document.getElementById('gainPrevMsg');
+      try {
+        var d = await _fetchGainPreview(jobId, {orig: true});
+        if (d.ok) {
+          _gainPrev.origUrl = d.url; _gainPrev.origGain = d.gain;
+          var sl = document.getElementById('postVocalGain');
+          var vl = document.getElementById('postVocalVal');
+          if (sl) sl.value = d.gain;
+          if (vl) vl.textContent = d.gain + ' dB';
+          var au = document.getElementById('gainPrevAudio');
+          if (au) au.src = d.url;
+          if (msg) msg.textContent = 'Preview ready — A is the mastered level.';
+        } else if (msg) { msg.textContent = 'Preview unavailable: ' + (d.error || ''); }
+      } catch(e) { if (msg) msg.textContent = 'Preview unavailable.'; }
+    }
+    function gainSliderMoved(jobId, el) {
+      var vl = document.getElementById('postVocalVal');
+      if (vl) vl.textContent = el.value + ' dB';
+      var msg = document.getElementById('gainPrevMsg');
+      if (msg) msg.textContent = 'Rendering preview at ' + el.value + ' dB…';
+      clearTimeout(_gainPrev.timer);
+      _gainPrev.timer = setTimeout(async function() {
+        try {
+          var d = await _fetchGainPreview(jobId, {gain_db: parseFloat(el.value)});
+          if (d.ok) {
+            _gainPrev.newUrl = d.url;
+            var au = document.getElementById('gainPrevAudio');
+            if (au) { au.src = d.url; au.play().catch(function(){}); }
+            if (msg) msg.textContent = 'Hearing B — your slider level (' + d.gain + ' dB).';
+          } else if (msg) { msg.textContent = 'Preview failed: ' + (d.error || ''); }
+        } catch(e) { if (msg) msg.textContent = 'Preview failed.'; }
+      }, 650);
+    }
+    function setGainAB(jobId, which) {
+      var au = document.getElementById('gainPrevAudio');
+      var msg = document.getElementById('gainPrevMsg');
+      if (!au) return;
+      var url = which === 'orig' ? _gainPrev.origUrl : _gainPrev.newUrl;
+      if (!url) {
+        if (which === 'new') {
+          var sl = document.getElementById('postVocalGain');
+          if (sl) gainSliderMoved(jobId, sl);
+        }
+        return;
+      }
+      var t = au.currentTime || 0;
+      au.src = url;
+      au.addEventListener('loadedmetadata', function h() {
+        au.removeEventListener('loadedmetadata', h);
+        try { au.currentTime = t; } catch(e) {}
       });
+      au.play().catch(function(){});
+      if (msg) msg.textContent = which === 'orig' ? 'Hearing A — the mastered level.' : 'Hearing B — your slider level.';
+    }
+    async function rerunMaster(jobId, btn) {
+      var sl = document.getElementById('postVocalGain');
+      var gain = sl ? parseFloat(sl.value) : 1.5;
+      if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+      try {
+        const r = await fetch('/api/master/rerun', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({job_id: jobId, vocal_gain_db: gain})});
+        const d = await r.json();
+        if (d.ok && d.job_id) {
+          if (typeof pollMaster === 'function') pollMaster(d.job_id);
+        } else {
+          alert('Re-render failed: ' + (d.error || 'unknown'));
+          if (btn) { btn.disabled = false; btn.textContent = '🔄 Re-render full master at this level'; }
+        }
+      } catch(e) {
+        alert('Re-render failed');
+        if (btn) { btn.disabled = false; btn.textContent = '🔄 Re-render full master at this level'; }
+      }
     }
     async function keepMaster(jobId, btn) {
       if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }

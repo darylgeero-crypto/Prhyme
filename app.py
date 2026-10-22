@@ -1802,8 +1802,11 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                 # Rebuild from the processed VOCAL STEM + the untouched
                 # original instrumental. The beat itself is never warped,
                 # polished or time-stretched — only the words move.
+                # vocal_trim_db (default 0) is set only by an explicit
+                # re-render request — the post-master gain slider.
+                _trim = 10 ** (float(mopts.get("vocal_trim_db", 0.0)) / 20.0)
                 _n_mix = min(vp_fx.shape[0], _keep_inst.shape[0], _src_len)
-                mix = (vp_fx[:_n_mix].astype(np.float32, copy=False)
+                mix = (vp_fx[:_n_mix].astype(np.float32, copy=False) * _trim
                        + _keep_inst[:_n_mix].astype(np.float32, copy=False))
                 try:
                     del _keep_inst
@@ -6494,6 +6497,163 @@ def api_master_discard():
         return jsonify({"ok": False, "error": "Invalid job ID"}), 400
     deleted = temp_master_cleanup(job_id)
     return jsonify({"ok": True, "deleted": deleted})
+
+@app.post("/api/master/rerun")
+def api_master_rerun():
+    """Re-render a finished temp master with a different vocal gain
+    (2026-10-22). Runs from the job's OWN stored source + options — the
+    old page code resubmitted the upload form (and its handler was
+    scoped out of reach of the button, so Re-render did nothing)."""
+    data = request.get_json(force=True, silent=True) or {}
+    job_id = str(data.get("job_id", ""))[:32]
+    try:
+        gain = float(data.get("vocal_gain_db", 1.5))
+    except (TypeError, ValueError):
+        gain = 1.5
+    gain = max(-12.0, min(12.0, gain))
+    if len(job_id) < 8:
+        return jsonify({"ok": False, "error": "Invalid job ID"}), 400
+    tdir = _temp_master_dir(job_id)
+    src = None
+    for ext in (".mp3", ".wav", ".flac", ".ogg", ".m4a", ".opus"):
+        p = os.path.join(tdir, "source" + ext)
+        if os.path.exists(p):
+            src = p
+            break
+    if not src:
+        return jsonify({"ok": False, "error": "Master no longer in temp"}), 404
+    mopts = {}
+    try:
+        with open(os.path.join(tdir, "mopts.json")) as f:
+            mopts = json.load(f)
+    except Exception:
+        pass
+    with jobs_lock:
+        for jid, j in jobs.items():
+            if j.get("_kind") in ("master", "stem-master") \
+                    and j.get("status") == "running":
+                return jsonify({
+                    "ok": False,
+                    "error": "A master job is already running. Wait for "
+                             "it to finish before starting another.",
+                    "active_job_id": jid}), 409
+    if mopts.get("beat_source") == "keep":
+        mopts["vocal_trim_db"] = gain
+    else:
+        mopts["vocal_boost_db"] = gain
+    title = mopts.get("title", "Prhyme™ Master")
+    genre = mopts.get("genre", "HipHop")
+    new_id = new_job("master", title)
+    # Pre-stage the source into the NEW job's temp dir: run_master_job's
+    # cleanup would otherwise delete the original temp dir (and its
+    # source) before its own copy step.
+    ntdir = _temp_master_dir(new_id)
+    os.makedirs(ntdir, exist_ok=True)
+    staged = os.path.join(ntdir, "source" + os.path.splitext(src)[1])
+    try:
+        shutil.copy2(src, staged)
+    except OSError as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    threading.Thread(target=run_master_job,
+                     args=(new_id, staged, genre, mopts.get("bpm"),
+                           mopts.get("seed", 0), title, mopts),
+                     daemon=True).start()
+    return jsonify({"ok": True, "job_id": new_id})
+
+
+@app.post("/api/master/preview-gain")
+def api_master_preview_gain():
+    """30s vocal-level preview for the post-master gain slider
+    (2026-10-22): separate the loudest 30s of the job's source, remix it
+    at the requested vocal gain, and return a playable MP3 — so the
+    level can be judged by ear BEFORE re-rendering the full master.
+    Pass gain_db, or orig=true for the level the master was made with."""
+    data = request.get_json(force=True, silent=True) or {}
+    job_id = str(data.get("job_id", ""))[:32]
+    if len(job_id) < 8:
+        return jsonify({"ok": False, "error": "Invalid job ID"}), 400
+    tdir = _temp_master_dir(job_id)
+    src = None
+    for ext in (".mp3", ".wav", ".flac", ".ogg", ".m4a", ".opus"):
+        p = os.path.join(tdir, "source" + ext)
+        if os.path.exists(p):
+            src = p
+            break
+    if not src:
+        return jsonify({"ok": False, "error": "Master no longer in temp"}), 404
+    mopts = {}
+    try:
+        with open(os.path.join(tdir, "mopts.json")) as f:
+            mopts = json.load(f)
+    except Exception:
+        pass
+    if data.get("orig"):
+        gain = 0.0 if mopts.get("beat_source") == "keep" \
+            else float(mopts.get("vocal_boost_db", 1.5))
+    else:
+        try:
+            gain = float(data.get("gain_db", 1.5))
+        except (TypeError, ValueError):
+            gain = 1.5
+        gain = max(-12.0, min(12.0, gain))
+    out_dir = os.path.join(OUTPUT_DIR, "temp_ab")
+    os.makedirs(out_dir, exist_ok=True)
+    tag = ("%+.1f" % gain).replace("+", "p").replace("-", "m").replace(".", "_")
+    name = f"{job_id[:8]}_gain_{tag}.mp3"
+    dst = os.path.join(out_dir, name)
+    if os.path.exists(dst):
+        return jsonify({"ok": True, "url": "/preview/" + name, "gain": gain})
+    try:
+        import soundfile as _sf
+        # Loudest 30s window, found by streaming 5s block energies.
+        with _sf.SoundFile(src) as f:
+            sr_f = f.samplerate
+            total = len(f)
+            hop = 5 * sr_f
+            win = 30 * sr_f
+            energies = []
+            while True:
+                blk = f.read(hop, dtype="float32", always_2d=True)
+                if len(blk) == 0:
+                    break
+                energies.append(float(np.mean(blk.astype(np.float64) ** 2)))
+            start = 0
+            if total > win and len(energies) >= 6:
+                best, best_e = 0, -1.0
+                for i in range(0, len(energies) - 5):
+                    e = sum(energies[i:i + 6])
+                    if e > best_e:
+                        best, best_e = i, e
+                start = best * hop
+            f.seek(start)
+            seg = f.read(min(win, total - start), dtype="float32",
+                         always_2d=True)
+        if sr_f != SR:
+            return jsonify({"ok": False,
+                            "error": "Preview needs a 44.1kHz source"}), 400
+        win_wav = os.path.join(out_dir, f"{job_id[:8]}_pgwin.wav")
+        wav_write(win_wav, SR, (np.clip(seg, -1, 1) * 32767).astype(np.int16))
+        voc, inst = vocalfx.separate_track(win_wav)
+        try:
+            os.remove(win_wav)
+        except OSError:
+            pass
+        n = min(len(voc), len(inst))
+        mix = voc[:n] * (10 ** (gain / 20.0)) + inst[:n]
+        peak = float(np.max(np.abs(mix))) if n else 0.0
+        if peak > 0:
+            mix = mix / peak * 0.9
+        tmp_wav = os.path.join(out_dir, f"{job_id[:8]}_pg.wav")
+        wav_write(tmp_wav, SR, (np.clip(mix, -1, 1) * 32767).astype(np.int16))
+        encode_mp3(tmp_wav, dst)
+        try:
+            os.remove(tmp_wav)
+        except OSError:
+            pass
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({"ok": True, "url": "/preview/" + name, "gain": gain})
+
 
 @app.post("/api/master/delete")
 def api_master_delete():
