@@ -188,7 +188,7 @@ function startMasterPoll(jobId, out, prog, bar, msg) {
           var html = '';
           var res = pj.result || {};
           if (res.ab_source || res.ab_master) {
-            html += '<div style="background:#1a1a2e;border:1px solid #333;border-radius:8px;padding:12px;margin:10px 0;">';
+            html += '<div class="ab-in" style="background:#1a1a2e;border:1px solid #333;border-radius:8px;padding:12px;margin:10px 0;">';
             html += '<div style="font-weight:bold;margin-bottom:8px;color:#00e5a0;">🎧 A/B Compare (30s previews)</div>';
             if (res.ab_source) {
               html += '<div style="margin:8px 0;"><div style="font-size:0.85em;color:#888;margin-bottom:4px;">BEFORE (original):</div><audio controls controlsList="nodownload" preload="metadata" src="/preview/' + res.ab_source + '" style="width:100%;height:32px;"></audio></div>';
@@ -203,7 +203,7 @@ function startMasterPoll(jobId, out, prog, bar, msg) {
             var mUrl = isTemp
               ? "/temp_master/" + jobId.substring(0,8) + "/" + encodeURIComponent(res.file)
               : "/download/" + encodeURIComponent(res.file);
-            html += '<div style="background:#1a1a2e;border:1px solid #333;border-radius:8px;padding:12px;margin:10px 0;">';
+            html += '<div class="ab-in" style="background:#1a1a2e;border:1px solid #333;border-radius:8px;padding:12px;margin:10px 0;">';
             html += '<div style="font-weight:bold;margin-bottom:8px;color:#00e5a0;">Master (' + (res.format||"").toUpperCase() + ')</div>';
             html += '<audio controls preload="metadata" src="' + mUrl + '" style="width:100%;height:32px;"></audio>';
             html += '</div>';

@@ -24,6 +24,7 @@
     <label class="field">
       <span>Tempo (BPM)</span>
       <input type="number" name="bpm" min="50" max="200" value="92" id="bpmInput">
+      <button type="button" id="tapTempo" class="btn small" style="margin-top:6px;">👆 Tap tempo</button>
     </label>
   </div>
   <p class="plead" id="artistNote" style="display:none;margin:4px 0 0"></p>
@@ -380,6 +381,30 @@ async function pollBeatJob(jobId){ var out=document.getElementById("jobResult");
       morphBadge("Morphing " + d.prevGenre + " → " + d.genre + "…");
       morphBpm(d.genre);
     }
+  });
+})();
+</script>
+
+<script>
+(function(){
+  var btn = document.getElementById('tapTempo');
+  var inp = document.getElementById('bpmInput');
+  if (!btn || !inp) return;
+  var taps = [];
+  btn.addEventListener('click', function(){
+    var now = Date.now();
+    taps = taps.filter(function(t){ return now - t < 2000; });
+    taps.push(now);
+    if (taps.length >= 2) {
+      var iv = (taps[taps.length-1] - taps[0]) / (taps.length - 1);
+      var bpm = Math.max(50, Math.min(200, Math.round(60000 / iv)));
+      inp.value = bpm;
+      btn.textContent = '\u{1F446} ' + bpm + ' BPM — keep tapping or stop';
+    } else {
+      btn.textContent = '\u{1F446} Tap again\u2026';
+    }
+    clearTimeout(btn._rt);
+    btn._rt = setTimeout(function(){ taps = []; btn.textContent = '\u{1F446} Tap tempo'; }, 2000);
   });
 })();
 </script>

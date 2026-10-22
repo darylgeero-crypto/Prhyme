@@ -286,6 +286,39 @@ def logout():
     return redirect(url_for("billing.pricing"))
 
 
+def _storage_summary():
+    """Library storage for the account page (Gemini suggestion, approved):
+    sizes of outputs/uploads/samples beside billing.py + device free."""
+    import os as _os
+    import shutil as _sh
+    root = _os.path.dirname(_os.path.abspath(__file__))
+    parts = []
+    total_b = 0
+    total_n = 0
+    for label, sub in (("Tracks & outputs", "outputs"),
+                       ("Uploads", "uploads"), ("Samples", "samples")):
+        d = _os.path.join(root, sub)
+        b = n = 0
+        if _os.path.isdir(d):
+            for fn in _os.listdir(d):
+                p = _os.path.join(d, fn)
+                if _os.path.isfile(p):
+                    b += _os.path.getsize(p)
+                    n += 1
+        parts.append({"label": label, "mb": round(b / 1048576, 1),
+                      "count": n})
+        total_b += b
+        total_n += n
+    total_mb = round(total_b / 1048576, 1)
+    try:
+        free_gb = round(_sh.disk_usage(root).free / 1073741824, 1)
+    except Exception:
+        free_gb = 0
+    return {"parts": parts, "total_mb": total_mb, "count": total_n,
+            "free_gb": free_gb,
+            "pct": max(2, min(100, round(total_mb / 10.24)))}
+
+
 @bp.get("/account")
 def account():
     user, redir = _login_required()
@@ -300,6 +333,7 @@ def account():
         paid=request.args.get("paid") == "1",
         totp_enabled=bool(user.get("totp_enabled")),
         security_log=bc.get_security_log(user["id"], limit=10),
+        storage=_storage_summary(),
     )
 
 

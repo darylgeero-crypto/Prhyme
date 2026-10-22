@@ -39,6 +39,28 @@
   {% endif %}
 
   <hr class="bill-hr">
+  <div class="bill-status-row"><span>💾 Your Prhyme storage</span><strong>{{ storage.total_mb }} MB · {{ storage.count }} files</strong></div>
+  {% for p in storage.parts %}
+  <div class="bill-status-row"><span>{{ p.label }}</span><strong>{{ p.mb }} MB ({{ p.count }})</strong></div>
+  {% endfor %}
+  <div style="height:10px;border-radius:6px;background:rgba(255,255,255,.08);overflow:hidden;margin:8px 0;">
+    <div style="height:100%;width:{{ storage.pct }}%;background:linear-gradient(90deg,#00e5a0,#00b8ff);box-shadow:0 0 12px rgba(0,229,160,.6);"></div>
+  </div>
+  <div style="font-size:12px;opacity:.7;">Bar: library size on a 1 GB scale · Device free space: {{ storage.free_gb }} GB</div>
+  <button class="btn" style="margin-top:10px;" onclick="cleanupTemp(this)">🧹 Clear A/B preview temp files</button>
+  <div id="cleanupMsg" style="margin-top:8px;"></div>
+  <script>
+  async function cleanupTemp(btn){
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/account/cleanup-temp', {method:'POST'});
+      const j = await r.json();
+      document.getElementById('cleanupMsg').textContent = j.ok ? ('Freed ' + j.freed_mb + ' MB (' + j.removed + ' temp files).') : ('Failed: ' + (j.error||'unknown'));
+    } catch(e) { document.getElementById('cleanupMsg').textContent = 'Failed: ' + e.message; }
+    btn.disabled = false;
+  }
+  </script>
+  <hr class="bill-hr">
 
   <div class="bill-status-row">
     <span>🔐 Two-factor auth</span>

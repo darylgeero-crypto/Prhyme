@@ -5997,6 +5997,27 @@ def api_files():
                         pass
     return jsonify({"ok": True, "files": result})
 
+@app.post("/api/account/cleanup-temp")
+def api_cleanup_temp():
+    """One-tap cleanup from the account page (Gemini suggestion, approved).
+    Deletes ONLY A/B preview temp files - regenerable excerpts. Library,
+    uploads and pending masters are never touched."""
+    freed = removed = 0
+    abdir = os.path.join(OUTPUT_DIR, "temp_ab")
+    if os.path.isdir(abdir):
+        for fn in os.listdir(abdir):
+            p = os.path.join(abdir, fn)
+            if os.path.isfile(p):
+                try:
+                    freed += os.path.getsize(p)
+                    os.remove(p)
+                    removed += 1
+                except OSError:
+                    pass
+    return jsonify({"ok": True, "removed": removed,
+                    "freed_mb": round(freed / 1048576, 1)})
+
+
 @app.post("/api/files/delete")
 def api_files_delete():
     """Delete a specific file."""

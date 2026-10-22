@@ -39,7 +39,7 @@
       const prevFile = r.mp3 || r.wav;
       const prev = prevFile ? '<div class="hprev"><audio controls preload="none" style="width:100%;height:36px" src="/download/' +
         encodeURIComponent(prevFile) + '"></audio></div>' : "";
-      return '<div class="histitem"><div class="ht">' + escapeHtml(h.kind) +
+      return '<div class="histitem"><div class="ht"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#00e5a0;margin-right:7px;box-shadow:0 0 8px #00e5a0;vertical-align:middle"></span>' + escapeHtml(h.kind) +
         (h.title ? " — " + escapeHtml(h.title) : "") + '</div>' +
         '<div class="hm">' + when + (meta ? " · " + meta : "") + '</div>' +
         prev +
