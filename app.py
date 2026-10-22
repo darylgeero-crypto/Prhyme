@@ -790,7 +790,11 @@ def _rate_limit():
                         "upgrade_url": "/pricing",
                     }), 429
     # Heavy-op budget: 10 expensive renders per 5 minutes per IP.
-    if request.path.startswith(_HEAVY_PATHS):
+    # POSTs only (2026-10-22): status polls are GETs on the same
+    # prefixes (/api/separate/<id>, /api/video/...) and were burning the
+    # budget in ~20s of ordinary progress-watching — the page then got
+    # "Too many heavy jobs" mid-job. That was a real user-facing snag.
+    if request.method == "POST" and request.path.startswith(_HEAVY_PATHS):
         with _rl_heavy_lock:
             hh = _rl_heavy.get(ip, [])
             hh = [t for t in hh if now - t < 300]
@@ -4057,58 +4061,129 @@ def api_convert():
 # ONLINE-ONLY feature: the phone uploads, the cloud separates (DSP or
 # Demucs via vocalfx), the phone downloads the 3 layers.
 def run_separate_job(job_id, src_path, title):
-    """Separate vocals/instrumental, auto-build SFX layer, write 3 stems."""
+    """Separate vocals/instrumental, auto-build SFX layer, write 3 stems.
+
+    Segmented + disk-first (2026-10-22): the old version held the whole
+    track in RAM five times over (source float64 + normalized copy +
+    both stems + SFX layer) and died mid-separation on long songs — the
+    same snag as the old beat+master chain. Now the track is separated
+    in 60s segments (2s crossfaded joins, the master-chain convention)
+    and the stems live in on-disk memmaps while they are built."""
     def prog(p, msg):
         set_job(job_id, progress=p, message=msg)
 
+    import soundfile as _sf
+    import chunkpipe as _cp
+    norm_wav = os.path.join(OUTPUT_DIR, f"{job_id[:8]}_sep-src.wav")
+    mm_paths = []
     try:
-        prog(3, "Loading audio…")
+        prog(3, "Loading audio\u2026")
         sr, audio = M.load_audio(src_path)  # float64 stereo @44.1k
         dur_s = len(audio) / sr
         if dur_s > 600:
-            raise ValueError("Track too long — 10 minute max for separation")
+            raise ValueError("Track too long \u2014 10 minute max for separation")
         if dur_s < 3:
             raise ValueError("Track too short to separate")
+        audio = audio.astype(np.float32)
+        total = len(audio)
 
-        eng = vocalfx.engine_name()
-        prog(8, f"Separating vocals ({eng})…")
-
-        def _sp(p):
-            prog(8 + int(p * 0.62), f"Separating vocals ({eng})… {int(p)}%")
-
-        # normalize to WAV first (uploads may be MP3/M4A/OGG…)
-        norm_wav = os.path.join(OUTPUT_DIR, f"{job_id[:8]}_sep-src.wav")
-        vocalfx.write_wav(norm_wav + ".tmp", audio, sr)
-        os.replace(norm_wav + ".tmp", norm_wav)
-        vocals, inst = vocalfx.separate_track(norm_wav, sr, _sp)
-
-        prog(72, "Detecting section transitions…")
+        prog(6, "Detecting section transitions\u2026")
         transitions = vocalfx.detect_transitions(audio, sr)
 
-        prog(80, "Building SFX layer…")
-        sfx = vocalfx.build_sfx_layer(len(audio), sr, transitions,
-                                      seed=M.new_beat_seed())
+        # Normalized WAV on disk = the separation source from here on.
+        vocalfx.write_wav(norm_wav + ".tmp", audio, sr)
+        os.replace(norm_wav + ".tmp", norm_wav)
+        del audio
 
-        prog(88, "Writing layers…")
+        eng = vocalfx.engine_name()
         base = f"{job_id[:8]}_{safe_name(title, 'separate')}"
-        layers = {"vocals": vocals, "inst": inst, "sfx": sfx}
+        voc_mm_path = os.path.join(OUTPUT_DIR, f"{base}-vocals.npy")
+        inst_mm_path = os.path.join(OUTPUT_DIR, f"{base}-inst.npy")
+        mm_paths = [voc_mm_path, inst_mm_path]
+        voc_mm = np.lib.format.open_memmap(voc_mm_path, mode="w+",
+                                           dtype=np.float32,
+                                           shape=(total, 2))
+        inst_mm = np.lib.format.open_memmap(inst_mm_path, mode="w+",
+                                            dtype=np.float32,
+                                            shape=(total, 2))
+
+        seg_n = int(60 * sr)
+        ov_n = int(2 * sr)
+        wins = list(_cp.chunk_windows(total, seg_n, ov_n))
+        fade = np.linspace(0, 1, ov_n, dtype=np.float32)[:, None]
+        prev_v = prev_i = None
+        seg_wav = os.path.join(OUTPUT_DIR, f"{job_id[:8]}_sep-seg.wav")
+        for ci, s0, e0 in wins:
+            with _sf.SoundFile(norm_wav) as f:
+                f.seek(s0)
+                seg = f.read(e0 - s0, dtype="float32", always_2d=True)
+            wav_write(seg_wav, sr,
+                      (np.clip(seg, -1, 1) * 32767).astype(np.int16))
+            del seg
+
+            def _sp(p, ci=ci):
+                prog(8 + int(((ci + p / 100.0) / len(wins)) * 62),
+                     f"Separating vocals ({eng})\u2026 {int(p)}%")
+
+            v, i2 = vocalfx.separate_track(seg_wav, sr, _sp)
+            v = v.astype(np.float32)
+            i2 = i2.astype(np.float32)
+            n = min(len(v), e0 - s0)
+            if prev_v is not None and n > ov_n:
+                v[:ov_n] = prev_v * (1 - fade) + v[:ov_n] * fade
+                i2[:ov_n] = prev_i * (1 - fade) + i2[:ov_n] * fade
+            voc_mm[s0:s0 + n] = v[:n]
+            inst_mm[s0:s0 + n] = i2[:n]
+            prev_v = v[n - ov_n:n].copy() if n > ov_n else None
+            prev_i = i2[n - ov_n:n].copy() if n > ov_n else None
+        voc_mm.flush()
+        inst_mm.flush()
+        del voc_mm, inst_mm
+        try:
+            os.remove(seg_wav)
+        except OSError:
+            pass
+
+        prog(80, "Building SFX layer\u2026")
+        sfx = vocalfx.build_sfx_layer(total, sr, transitions,
+                                      seed=M.new_beat_seed()).astype(np.float32)
+
+        prog(88, "Writing layers\u2026")
         result = {"engine": eng, "transitions": len(transitions),
                   "duration": round(dur_s, 1)}
-        for key, arr in layers.items():
+
+        def _write_stem(key, arr=None, mm_path=None):
             wav_path = os.path.join(OUTPUT_DIR, f"{base}-{key}.wav")
             mp3_path = os.path.join(OUTPUT_DIR, f"{base}-{key}.mp3")
-            tmp = wav_path + ".tmp"
-            wav_write(tmp, SR, vocalfx._pcm16(arr))
-            os.replace(tmp, wav_path)
-            ok = encode_mp3(wav_path, mp3_path)
-            result[f"{key}_wav"] = os.path.basename(wav_path)
-            if ok:
+            with _sf.SoundFile(wav_path, "w", sr, 2, "PCM_16") as out:
+                src_arr = np.load(mm_path, mmap_mode="r") if mm_path else arr
+                for b0 in range(0, total, sr * 30):
+                    out.write(src_arr[b0:b0 + sr * 30])
+                if mm_path:
+                    del src_arr
+            if encode_mp3(wav_path, mp3_path):
                 result[f"{key}_mp3"] = os.path.basename(mp3_path)
+            result[f"{key}_wav"] = os.path.basename(wav_path)
+
+        _write_stem("vocals", mm_path=voc_mm_path)
+        _write_stem("inst", mm_path=inst_mm_path)
+        _write_stem("sfx", arr=sfx)
+        del sfx
+        for p in mm_paths + [norm_wav]:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
 
         set_job(job_id, status="done", progress=100,
-                message=f"Done — {eng}, {len(transitions)} SFX transitions",
+                message=f"Done \u2014 {eng}, {len(transitions)} SFX transitions",
                 result=result)
     except Exception as e:
+        for p in mm_paths + [norm_wav]:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
         set_job(job_id, status="error", progress=0, message=f"Error: {e}")
 
 
@@ -4850,7 +4925,7 @@ def api_admin_feedback_status(fid):
 
 @app.get("/rokdabus")
 def rokdabus_page():
-    return render_template("rokdabus.html", active="rokdabus")
+    return render_template("rokdabus.html", active="rockdabus")
 
 
 # ------------------------------------------------- Rokdabus Prhyme chat
