@@ -375,6 +375,7 @@ document.getElementById('f').addEventListener('submit', async (e) => {
         html += '<div style="color:#00e5a0;margin-bottom:8px;">✅ Finished masters ready to download:</div>';
         pd.pending.forEach(function(p) {
           html += '<div style="margin:6px 0;">' + (p.title || p.file) + ' ';
+          html += '<audio controls preload="metadata" src="/temp_master/' + p.job_id.substring(0,8) + '/' + encodeURIComponent(p.file) + '" style="width:100%;height:32px;margin:6px 0;"></audio>';
           html += '<div style="text-align:right;"><a href="/temp_master/' + p.job_id.substring(0,8) + '/' + encodeURIComponent(p.file) + '" download onclick="keepMasterBg(\'' + p.job_id + '\',this)" style="position:relative;z-index:300;background:#00e5a0;color:#000;padding:16px 22px;min-height:56px;font-size:17px;font-weight:700;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-block;">⬇ Download</a></div></div>';
         });
         html += '</div>';

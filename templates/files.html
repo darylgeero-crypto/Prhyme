@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prhyme™ File Manager</title>
+<style>
+body { background: #0a0a0a; color: #eee; font-family: sans-serif; margin: 0; padding: 15px; }
+h1 { color: #00e5a0; font-size: 1.3em; }
+.section { margin: 15px 0; }
+.section h2 { font-size: 1em; color: #888; border-bottom: 1px solid #333; padding-bottom: 5px; }
+.file { background: #1a1a1a; border: 1px solid #333; border-radius: 6px; padding: 10px; margin: 8px 0; display: flex; justify-content: space-between; align-items: center; }
+.file-info { flex: 1; }
+.file-name { font-weight: bold; word-break: break-all; }
+.file-meta { font-size: 0.8em; color: #888; }
+.file-actions { display: flex; gap: 8px; }
+.btn { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em; }
+.btn-dl { background: #00e5a0; color: #000; }
+.btn-del { background: #ff4444; color: #fff; }
+.btn-play { background: #333; color: #fff; }
+audio { width: 100%; margin-top: 8px; }
+.empty { color: #666; font-style: italic; }
+</style>
+</head>
+<body>
+<h1>📁 Prhyme™ File Manager</h1>
+<div style="margin:16px 0;padding:16px;background:#1a1a2e;border-radius:8px;">
+  <h3 style="margin:0 0 12px 0;">☁️ Cloud Backup</h3>
+  <p style="color:#888;font-size:14px;margin:0 0 12px 0;">Back up all your tracks, beats, and projects. Download the backup file and keep it safe.</p>
+  <button onclick="createBackup()" style="background:#00e5a0;color:#000;padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;margin-right:10px;">⬇ Create Backup</button>
+  <button onclick="document.getElementById('restoreFile').click()" style="background:#4a4a6a;color:#fff;padding:10px 20px;border:none;border-radius:6px;cursor:pointer;">⬆ Restore Backup</button>
+  <input type="file" id="restoreFile" accept=".zip" style="display:none" onchange="restoreBackup(this)">
+  <div id="backupStatus" style="margin-top:12px;color:#888;font-size:14px;"></div>
+</div>
+<script>
+async function createBackup() {
+  const s = document.getElementById('backupStatus');
+  s.textContent = 'Creating backup...';
+  try {
+    const r = await fetch('/api/backup/create', {method:'POST'});
+    if (!r.ok) throw new Error('Backup failed');
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'prhyme-backup-' + new Date().toISOString().slice(0,10) + '.zip';
+    a.click();
+    s.textContent = '✅ Backup downloaded! Save it somewhere safe.';
+  } catch(e) { s.textContent = '❌ ' + e.message; }
+}
+async function restoreBackup(input) {
+  const s = document.getElementById('backupStatus');
+  if (!input.files[0]) return;
+  s.textContent = 'Restoring...';
+  const fd = new FormData();
+  fd.append('file', input.files[0]);
+  try {
+    const r = await fetch('/api/backup/restore', {method:'POST', body:fd});
+    const d = await r.json();
+    s.textContent = d.ok ? '✅ ' + d.message : '❌ ' + d.error;
+    if (d.ok) setTimeout(()=>location.reload(), 1500);
+  } catch(e) { s.textContent = '❌ ' + e.message; }
+}
+</script>
+<div id="files">Loading...</div>
+<script>
+async function loadFiles() {
+  try {
+    const r = await fetch('/api/files');
+    const d = await r.json();
+    if (!d.ok) { document.getElementById('files').textContent = 'Error loading files'; return; }
+    let html = '';
+    const sections = [
+      ['outputs', '🎵 Generated Tracks'],
+      ['uploads', '📤 Uploads'],
+      ['temp', '⏳ Temp A/B Previews']
+    ];
+    for (const [key, title] of sections) {
+      html += '<div class="section"><h2>' + title + '</h2>';
+      const files = d.files[key] || [];
+      if (files.length === 0) {
+        html += '<div class="empty">No files</div>';
+      } else {
+        for (const f of files) {
+          const size = f.size > 1048576 ? (f.size/1048576).toFixed(1)+'MB' : Math.round(f.size/1024)+'KB';
+          const isAudio = /\.(mp3|wav|ogg|m4a|flac|opus)$/i.test(f.name);
+          html += '<div class="file"><div class="file-info">';
+          html += '<div class="file-name">' + f.name + '</div>';
+          html += '<div class="file-meta">' + size + ' • ' + f.modified + '</div>';
+          if (isAudio) {
+            const src = key === 'temp' ? '/preview/' + encodeURIComponent(f.name) : '/download/' + encodeURIComponent(f.name);
+            html += '<audio controls preload="metadata" src="' + src + '" style="height:30px;"></audio>';
+          }
+          html += '</div><div class="file-actions">';
+          if (key !== 'temp') {
+            html += '<button class="btn btn-dl" onclick="downloadFile(\\'' + key + '\\',\\'' + f.name + '\\')">⬇</button>';
+          }
+          html += '<button class="btn btn-del" onclick="deleteFile(\\'' + key + '\\',\\'' + f.name + '\\')">🗑</button>';
+          html += '</div></div>';
+        }
+      }
+      html += '</div>';
+    }
+    document.getElementById('files').innerHTML = html;
+  } catch(e) {
+    document.getElementById('files').textContent = 'Error: ' + e.message;
+  }
+}
+function downloadFile(folder, name) {
+  window.location.href = '/download/' + encodeURIComponent(name) + '?dl=1';
+}
+async function deleteFile(folder, name) {
+  if (!confirm('Delete ' + name + '?')) return;
+  try {
+    const r = await fetch('/api/files/delete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({folder: folder, name: name})
+    });
+    const d = await r.json();
+    if (d.ok) loadFiles();
+    else alert('Delete failed: ' + (d.error || 'unknown'));
+  } catch(e) { alert('Delete failed'); }
+}
+loadFiles();
+setInterval(loadFiles, 10000);
+</script>
+</body>
+</html>
