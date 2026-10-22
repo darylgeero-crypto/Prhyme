@@ -7,6 +7,7 @@
 .pl-tools .txt:focus{outline:none;border-color:#fff}
 .pl-tools .btn{background:transparent;border:1px solid #727272;color:#fff;border-radius:50%;width:44px;height:44px;font-size:18px}
 .pl-row{display:flex;align-items:center;gap:12px;padding:8px;border-radius:8px;background:transparent;border:none;margin-bottom:2px;cursor:pointer;transition:background .2s}
+.pl-thumb{width:40px;height:40px;border-radius:6px;object-fit:cover;flex:0 0 auto;background:#222}
 .pl-row:hover{background:#2a2a2a}
 .pl-row:active{transform:scale(.99)}
 .pl-row.playing{background:#2a2a2a}
@@ -437,6 +438,7 @@ Up next</h3>
     for (var i = 0; i < view.length; i++) {
       var t = view[i];
       h.push('<div class="pl-row' + (t.id === curId ? " playing" : "") + '" data-id="' + t.id + '">' +
+        '<img class="pl-thumb" loading="lazy" src="' + (t.thumb || ("/api/player/thumb/" + t.id)) + '" onerror="this.style.display=\'none\'" alt="">' +
         '<div class="pl-name">' + esc(t.name) + '</div>' +
         '<span class="pl-src">' + esc(t.source) + "</span>" +
         '<span class="pl-meta">' + esc(t.ext.toUpperCase()) + " · " + fmtSize(t.size) + "</span></div>");

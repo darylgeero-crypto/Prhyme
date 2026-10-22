@@ -2,7 +2,7 @@
 // App shell (HTML pages, CSS, JS, icons) is cached on first visit so the app
 // still opens on flaky connections. Anything under /api/ and job
 // downloads always go to the network; nothing is cached.
-const CACHE = 'prhyme-shell-v2';
+const CACHE = 'prhyme-shell-v4';
 const SHELL = [
   '/',
   '/static/manifest.webmanifest',

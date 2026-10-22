@@ -9,6 +9,7 @@ h1 { color: #00e5a0; font-size: 1.3em; }
 .section { margin: 15px 0; }
 .section h2 { font-size: 1em; color: #888; border-bottom: 1px solid #333; padding-bottom: 5px; }
 .file { background: #1a1a1a; border: 1px solid #333; border-radius: 6px; padding: 10px; margin: 8px 0; display: flex; justify-content: space-between; align-items: center; }
+.fthumb { width: 46px; height: 46px; border-radius: 6px; object-fit: cover; flex: 0 0 auto; margin-right: 10px; background: #222; }
 .file-info { flex: 1; }
 .file-name { font-weight: bold; word-break: break-all; }
 .file-meta { font-size: 0.8em; color: #888; }
@@ -83,7 +84,12 @@ async function loadFiles() {
         for (const f of files) {
           const size = f.size > 1048576 ? (f.size/1048576).toFixed(1)+'MB' : Math.round(f.size/1024)+'KB';
           const isAudio = /\.(mp3|wav|ogg|m4a|flac|opus)$/i.test(f.name);
-          html += '<div class="file"><div class="file-info">';
+          html += '<div class="file">';
+          if (isAudio) {
+            const tsrc = f.thumb || ('/api/files/thumb?folder=' + key + '&name=' + encodeURIComponent(f.name));
+            html += '<img class="fthumb" loading="lazy" src="' + tsrc + '" onerror="this.style.display=\'none\'" alt="">';
+          }
+          html += '<div class="file-info">';
           html += '<div class="file-name">' + f.name + '</div>';
           html += '<div class="file-meta">' + size + ' • ' + f.modified + '</div>';
           if (isAudio) {

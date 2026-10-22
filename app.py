@@ -7182,11 +7182,19 @@ def api_files():
                 if os.path.isfile(fpath):
                     try:
                         stat = os.stat(fpath)
-                        result[key].append({
+                        entry = {
                             "name": fname,
                             "size": stat.st_size,
                             "modified": time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime)),
-                        })
+                        }
+                        # Auto-thumbnail (2026-10-22): generated from the
+                        # track's own metadata/art on first request, cached.
+                        if os.path.splitext(fname)[1].lower() in (
+                                ".mp3", ".wav", ".ogg", ".m4a", ".flac", ".opus"):
+                            from urllib.parse import quote as _q
+                            entry["thumb"] = ("/api/files/thumb?folder=" + key
+                                              + "&name=" + _q(fname))
+                        result[key].append(entry)
                     except:
                         pass
     return jsonify({"ok": True, "files": result})
@@ -7237,6 +7245,39 @@ def api_files_delete():
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)})
     return jsonify({"ok": False, "error": "File not found"})
+
+@app.get("/api/files/thumb")
+def api_files_thumb():
+    """Auto-generated track thumbnail (trackthumb.py): embedded cover art
+    when the file carries it, otherwise a cover built from its metadata —
+    real waveform, genre-coloured, title/duration. Cached on disk."""
+    folder = request.args.get("folder", "outputs")
+    fname = request.args.get("name", "")
+    safe = secure_filename(fname)
+    if safe != fname or not safe:
+        return ("", 404)
+    dirs = {
+        "outputs": OUTPUT_DIR,
+        "uploads": os.path.join(os.path.dirname(OUTPUT_DIR), "uploads"),
+        "temp": os.path.join(OUTPUT_DIR, "temp_ab"),
+    }
+    d = dirs.get(folder)
+    if not d:
+        return ("", 404)
+    fpath = os.path.join(d, safe)
+    if not os.path.isfile(fpath):
+        return ("", 404)
+    try:
+        import trackthumb
+        tp = trackthumb.get_or_make_thumb(
+            fpath, os.path.join(OUTPUT_DIR, "thumbs_cache"))
+    except Exception:
+        tp = None
+    if not tp:
+        return ("", 404)
+    resp = send_file(tp, mimetype="image/jpeg")
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
 
 @app.get("/preview/<path:fname>")
 def preview(fname):

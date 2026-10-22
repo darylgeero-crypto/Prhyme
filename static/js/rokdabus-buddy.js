@@ -284,16 +284,25 @@ storeSet("rb_buddy_min", m ? "1" : "0");
 buddy.classList.toggle("min", m);
 if (m) { hideBubble(); closePanel(); }
 }
+function dismissBuddy() {
+/* Daryl (2026-10-22): tap him while he's open -> he slides away and
+   disappears (down to the small dot, which brings him back). */
+hideBubble(); closePanel();
+buddy.classList.add("rb-away");
+setTimeout(function () {
+setMinimized(true);
+buddy.classList.remove("rb-away");
+}, 470);
+}
 disc.addEventListener("click", function () {
 if (panel.hidden) {
 openPanel();
 } else {
-closePanel();
-showBubble(pick(tipsFor(page)), 5000);
+dismissBuddy();
 }
 });
-dot.addEventListener("click", function () { setMinimized(false); });
-panelMin.addEventListener("click", function () { setMinimized(true); });
+dot.addEventListener("click", function () { setMinimized(false); setTimeout(buddyEntrance, 60); });
+panelMin.addEventListener("click", function () { dismissBuddy(); });
 tipBtn.addEventListener("click", function () {
 var t = pick(tipsFor(page));
 panelTip.textContent = t;
@@ -610,6 +619,69 @@ if (gn) gn.addEventListener("click", function () {
 if (gd) gd.addEventListener("click", function () { endWalk("Walkthrough closed. The dropdowns below still explain every function."); });
 var _origOpenPanel = openPanel;
 openPanel = function () { _origOpenPanel(); renderGuideList(); };
+
+/* === Buddy entrance (2026-10-22, Daryl spec): when the buddy pops out he
+   shrinks from the larger pic of himself (the big centered background
+   Rokdabus) down into his corner spot. Home uses heroShrink below. === */
+function buddyEntrance() {
+  try {
+    if (!disc || buddy.classList.contains("min")) return;
+    var src = document.querySelector(".page-motif img") || document.querySelector(".home-bg-mascot") || document.querySelector(".hero-mascot");
+    if (!src) return;
+    var sr = src.getBoundingClientRect(), dr = disc.getBoundingClientRect();
+    if (!sr.width || !dr.width) return;
+    var c = src.cloneNode();
+    c.removeAttribute("id");
+    c.style.cssText = "position:fixed;z-index:1500;pointer-events:none;margin:0;object-fit:contain;left:" + sr.left + "px;top:" + sr.top + "px;width:" + sr.width + "px;height:" + sr.height + "px;transition:all .95s cubic-bezier(.5,-.1,.2,1);";
+    c.style.opacity = ".85";
+    document.body.appendChild(c);
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      c.style.left = dr.left + "px"; c.style.top = dr.top + "px";
+      c.style.width = dr.width + "px"; c.style.height = dr.height + "px";
+      c.style.opacity = ".2"; c.style.borderRadius = "50%";
+    }); });
+    setTimeout(function () {
+      c.remove();
+      disc.classList.add("rb-arrive");
+      setTimeout(function () { disc.classList.remove("rb-arrive"); }, 950);
+    }, 1000);
+  } catch (e) {}
+}
+if (page !== "home") {
+  setTimeout(buddyEntrance, 750);
+}
+
+/* === Floating notes (2026-10-22, Daryl): notes pop up at random spots
+   and float away, on every page. === */
+(function () {
+  try {
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    var motif = document.querySelector(".page-motif");
+    var heroNotes = document.querySelector(".float-notes");
+    var box = null, inHero = false;
+    if (motif && getComputedStyle(motif).display !== "none") { box = motif; }
+    else if (heroNotes) { box = heroNotes; inHero = true; }
+    if (!box) return;
+    var glyphs = ["♪", "♫", "♩", "♬", "𝄞"];
+    var alive = 0;
+    function spawn() {
+      if (document.hidden || alive >= 5) return;
+      var s = document.createElement("span");
+      s.className = "pm-pop";
+      s.textContent = glyphs[Math.floor(Math.random() * glyphs.length)];
+      s.style.left = (3 + Math.random() * 92) + "%";
+      s.style.fontSize = (15 + Math.random() * 17) + "px";
+      if (inHero) { s.style.bottom = "-8px"; }
+      var dur = 3400 + Math.random() * 1800;
+      s.style.animation = "pmFloat " + dur + "ms ease-out forwards";
+      box.appendChild(s);
+      alive++;
+      setTimeout(function () { s.remove(); alive--; }, dur + 120);
+    }
+    setTimeout(spawn, 900);
+    setInterval(spawn, 1750);
+  } catch (e) {}
+})();
 
 /* === Homepage shrink (2026-10-22): after the startup intro, the big
    hero Rokdabus shrinks down into the buddy in the corner. === */

@@ -187,12 +187,37 @@ def _stream_file(path):
 def api_player_files():
     force = request.args.get("refresh") == "1"
     tracks = get_tracks(force=force)
+    for t in tracks:
+        # Auto-thumbnail URL (generated from metadata on first request).
+        t["thumb"] = "/api/player/thumb/" + t["id"]
     return jsonify({
         "ok": True,
         "count": len(tracks),
         "sources": [label for label, _ in _source_dirs()],
         "files": tracks,
     })
+
+
+@bp.get("/api/player/thumb/<file_id>")
+def api_player_thumb(file_id):
+    path = get_path(file_id)
+    if not path or not os.path.isfile(path) or not _OUTPUTS_DIR:
+        return Response(status=404)
+    try:
+        import trackthumb
+        tp = trackthumb.get_or_make_thumb(
+            path, os.path.join(_OUTPUTS_DIR, "thumbs_cache"))
+    except Exception:
+        tp = None
+    if not tp:
+        return Response(status=404)
+    try:
+        with open(tp, "rb") as f:
+            data = f.read()
+    except OSError:
+        return Response(status=404)
+    return Response(data, mimetype="image/jpeg",
+                    headers={"Cache-Control": "public, max-age=86400"})
 
 
 @bp.get("/api/player/stream/<file_id>")
