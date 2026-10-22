@@ -1712,6 +1712,26 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         else:
             vp_fx = vp
 
+        # 🔊 Vocal prominence (2026-10-22, Daryl's order): adaptive
+        # mastering must catch spots where the background beat overpowers
+        # the vocal and lift the vocal there — automatically. Keep mode
+        # re-sums the stems at unity, so a vocal buried in the source used
+        # to stay buried. Only the vocal is lifted, only where it is
+        # present but under the beat; the beat is never touched and no
+        # words are ever cut.
+        if _keep_original and _keep_inst is not None and _ADAPTIVE_AVAILABLE \
+                and mopts.get("vocal_prominence", True):
+            try:
+                vp_fx, _prom_rep = adaptive_master.lift_buried_vocals(
+                    vp_fx, _keep_inst, SR)
+                if _prom_rep and _prom_rep.get("lifted"):
+                    prog(64, f"🔊 Vocal prominence — lifted "
+                             f"{_prom_rep['lifted']} buried spot(s) "
+                             f"(worst {_prom_rep['worst_before_db']:.0f} dB → "
+                             f"{_prom_rep['worst_after_db']:.0f} dB)")
+            except Exception as _pe:
+                print(f"vocal prominence skipped: {_pe}")
+
         prog(65, "Mixing — balanced vocal/instrumental…")
         boost_db = float(mopts.get("vocal_boost_db", 1.5))
         need = int(intro + _vlen + 1 * SR)

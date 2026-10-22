@@ -203,3 +203,128 @@ def adapt_mopts_for_section(base_mopts, characteristics):
         mopts['multiband'] = True  # Polish sustained tones
 
     return mopts
+
+
+# ------------------------------------------------------- vocal prominence
+# Daryl's order (2026-10-22): adaptive mastering must DETECT spots where
+# the background beat overpowers the vocal and fix them automatically.
+# The old chain re-summed the separated stems at unity, so a vocal that
+# was buried in the source stayed buried, and the old QA check only
+# measured master-vs-original CHANGE, never the absolute balance.
+# These helpers measure the absolute vocal-vs-beat margin per window
+# from the stems the chain already has, and lift ONLY the vocal, ONLY
+# where it is present but under the beat. The beat is never touched and
+# gain is never taken away from the vocal.
+
+def _band_db(x, sr, lo=300.0, hi=3400.0):
+    """Energy of a mono window inside the vocal band [lo, hi] Hz, in dB."""
+    import numpy as np
+    n = len(x)
+    if n == 0:
+        return -120.0
+    spec = np.abs(np.fft.rfft(x * np.hanning(n))) ** 2
+    f = np.fft.rfftfreq(n, 1.0 / sr)
+    e = np.sum(spec[(f >= lo) & (f <= hi)]) + 1e-12
+    return float(10.0 * np.log10(e / n))
+
+
+def vocal_prominence_map(voc, inst, sr, win_s=2.0):
+    """Per-window vocal prominence from two stems (float arrays, (n, ch)).
+
+    Prominence is judged INSIDE the vocal band (300-3400 Hz): broadband
+    stem RMS is meaningless here because the beat is broadband while the
+    vocal stem is band-limited by construction (a broadband comparison
+    reads ~-9 dB even on a balanced mix — measured on Damicksup,
+    2026-10-22). Returns (margins_db, present_mask, vocal_band_db).
+    A window is vocal-present when its vocal-band energy is clearly
+    above the separation noise floor.
+    """
+    import numpy as np
+    n = min(len(voc), len(inst))
+    w = max(1, int(win_s * sr))
+    nwin = n // w
+    margins = np.full(nwin, np.nan, dtype=np.float64)
+    vdb = np.full(nwin, -120.0, dtype=np.float64)
+    present = np.zeros(nwin, dtype=bool)
+    for i in range(nwin):
+        s, e = i * w, (i + 1) * w
+        v = voc[s:e].astype(np.float64, copy=False)
+        b = inst[s:e].astype(np.float64, copy=False)
+        if v.ndim > 1:
+            v = v.mean(axis=1)
+        if b.ndim > 1:
+            b = b.mean(axis=1)
+        vv = _band_db(v, sr)
+        bb = _band_db(b, sr)
+        vdb[i] = vv
+        margins[i] = vv - bb
+        present[i] = vv > -58.0
+    return margins, present, vdb
+
+
+def lift_buried_vocals(voc, inst, sr, dip_db=4.0, headroom_db=1.0,
+                       max_lift_db=6.0, win_s=2.0):
+    """Lift the vocal stem in the spots where the beat overpowers it.
+
+    The track's own baseline (median in-band margin over vocal-present
+    windows) defines 'normal' for this song. Windows dipping more than
+    dip_db below baseline are lifted toward (baseline - headroom_db),
+    capped at max_lift_db. Per-window gains are smoothed (3-window
+    moving average, then linear ramps) so the lift breathes instead of
+    stepping. Windows at/above the dip threshold — and windows with no
+    real vocal — are left exactly as they are. The beat is never
+    touched and gain is never taken away from the vocal.
+
+    Returns (corrected_vocal_float32, report_dict).
+    """
+    import numpy as np
+    voc32 = voc.astype(np.float32, copy=False)
+    margins, present, vdb = vocal_prominence_map(voc32, inst, sr, win_s)
+    nwin = len(margins)
+    report = {"windows": int(nwin), "present": int(present.sum()),
+              "lifted": 0, "baseline_db": None,
+              "worst_before_db": None, "worst_after_db": None}
+    if nwin == 0 or not present.any():
+        return voc32, report
+    pres_margins = margins[present]
+    baseline = float(np.median(pres_margins))
+    report["baseline_db"] = baseline
+    report["worst_before_db"] = float(np.min(pres_margins))
+    target = baseline - headroom_db
+    # Never lift near-silence (intros, gaps): a window only counts as a
+    # buried vocal when its band energy is within 45 dB of the track's
+    # typical vocal-present level. (Damicksup's 0-2s intro window has a
+    # dipped margin but sits ~60 dB under the real content.)
+    aud_floor = float(np.median(vdb[present])) - 45.0
+    dipped = present & (vdb > aud_floor) & (margins < baseline - dip_db)
+    need = np.where(dipped,
+                    np.clip(target - np.nan_to_num(margins, nan=target),
+                            0.0, max_lift_db),
+                    0.0)
+    report["lifted"] = int((need > 0.05).sum())
+    if report["lifted"] == 0:
+        report["worst_after_db"] = report["worst_before_db"]
+        return voc32, report
+    # Smooth the gain curve so lifts fade in/out over ~3 windows.
+    if nwin >= 3:
+        ker = np.array([0.25, 0.5, 0.25])
+        padded = np.pad(need, (1, 1), mode="edge")
+        need_s = np.convolve(padded, ker, mode="valid")
+    else:
+        need_s = need
+    # Build a per-sample gain curve: window gains joined by linear ramps
+    # centred on each window.
+    w = max(1, int(win_s * sr))
+    n = min(len(voc32), nwin * w)
+    centers = (np.arange(nwin) * w + w // 2).astype(np.float64)
+    xs = np.arange(n, dtype=np.float64)
+    gain_db = np.interp(xs, centers, need_s)
+    gain = np.power(10.0, gain_db / 20.0).astype(np.float32)
+    out = voc32[:n] * gain[:, None]
+    if len(voc32) > n:
+        out = np.concatenate([out, voc32[n:]], axis=0)
+    m2, p2, _ = vocal_prominence_map(out, inst, sr, win_s)
+    if p2.any():
+        report["worst_after_db"] = float(np.min(m2[p2]))
+    report["max_lift_db"] = float(np.max(need_s))
+    return out.astype(np.float32, copy=False), report
