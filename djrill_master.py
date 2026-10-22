@@ -220,6 +220,9 @@ _RLB_A = [1.0, -1.99004745483398, 0.99007225036621]
 
 
 def integrated_lufs(x, sr):
+    if x.shape[0] > _LONG_N:
+        return lufs_from_blocks(
+            (x[i:i + 60 * sr] for i in range(0, x.shape[0], 60 * sr)), sr)
     y = signal.lfilter(_PRE_B, _PRE_A, x, axis=0)
     y = signal.lfilter(_RLB_B, _RLB_A, y, axis=0)
     blk, hop = int(sr * 0.4), int(sr * 0.1)
@@ -242,7 +245,116 @@ def integrated_lufs(x, sr):
     return float(-0.691 + 10 * np.log10(np.mean(10 ** (g2 / 10))))
 
 
+# ------------------------------------------------------------ long-track blocks
+# 2026-10-21 overhaul: full-track float64 copies of a 20-min master need
+# >1 GB (true_peak alone resamples 4x). Above _LONG_N samples the helpers
+# below process 60s blocks with carried filter state — same math, flat RAM.
+_LONG_N = 240 * 44100
+
+
+def _lufs_gate(ms_list):
+    """Shared gating tail of integrated_lufs (block mean-square list)."""
+    ms = np.array(ms_list)
+    if ms.size == 0:
+        return float("-inf")
+    lufs = -0.691 + 10 * np.log10(np.maximum(ms, 1e-12))
+    gated = lufs[lufs > -70]
+    if gated.size == 0:
+        return float("-inf")
+    mean_loud = -0.691 + 10 * np.log10(np.mean(10 ** (gated / 10)))
+    g2 = gated[gated > mean_loud - 10]
+    if g2.size == 0:
+        return float("-inf")
+    return float(-0.691 + 10 * np.log10(np.mean(10 ** (g2 / 10))))
+
+
+def lufs_from_blocks(blocks, sr):
+    """integrated_lufs over an iterator of float blocks (any length).
+    K-weighting runs block-wise with carried lfilter state (zero initial
+    conditions, exactly like one-shot lfilter); 400ms/100ms-hop block
+    mean squares are collected from the filtered stream."""
+    blk, hop = int(sr * 0.4), int(sr * 0.1)
+    zi1 = zi2 = None
+    buf = None
+    buf_start = 0          # global index of buf[0]
+    next_win = 0           # global start of next window
+    total = 0
+    ms = []
+    for b in blocks:
+        if b is None or len(b) == 0:
+            continue
+        if zi1 is None:
+            zshape = (2,) + (b.shape[1:] if b.ndim > 1 else ())
+            zi1 = np.zeros(zshape); zi2 = np.zeros(zshape)
+        y, zi1 = signal.lfilter(_PRE_B, _PRE_A, b, axis=0, zi=zi1)
+        y, zi2 = signal.lfilter(_RLB_B, _RLB_A, y, axis=0, zi=zi2)
+        buf = y if buf is None else np.concatenate([buf, y], axis=0)
+        total += len(y)
+        while next_win + blk <= total:
+            off = next_win - buf_start
+            w = buf[off:off + blk]
+            ms.append(float(np.mean(w ** 2)))
+            next_win += hop
+        # drop consumed samples before the next window start
+        drop = next_win - buf_start
+        if drop > 0:
+            buf = buf[drop:]
+            buf_start = next_win
+    return _lufs_gate(ms)
+
+
+def true_peak_from_blocks(blocks, sr, oversample=4):
+    """true_peak over an iterator of float blocks. Each ~60s core is
+    resampled with 1s of real context on both sides (taken from the
+    stream itself), so block edges match a one-shot resample."""
+    guard = int(sr * 1.0)
+    step = int(sr * 60)
+    buf = None            # samples [buf_start, buf_start+len(buf))
+    buf_start = 0
+    core = 0              # global start of next unprocessed core
+    peak = 0.0
+    total = 0
+    done_feeding = False
+    it = iter(blocks)
+    while True:
+        # fill until we can process one core (core + trailing guard) or EOF
+        while not done_feeding and (buf is None or
+               (buf_start + len(buf)) < core + step + guard):
+            try:
+                b = next(it)
+            except StopIteration:
+                done_feeding = True
+                break
+            if b is None or len(b) == 0:
+                continue
+            total += len(b)
+            buf = b if buf is None else np.concatenate([buf, b], axis=0)
+        if buf is None or core >= total:
+            break
+        core_end = min(core + step, total)
+        a = max(0, core - guard)
+        bnd = min(total, core_end + guard)
+        seg = buf[a - buf_start:bnd - buf_start]
+        up = signal.resample_poly(seg, oversample, 1, axis=0)
+        lo = (core - a) * oversample
+        hi = lo + (core_end - core) * oversample
+        peak = max(peak, float(np.max(np.abs(up[lo:hi]))))
+        core = core_end
+        # drop everything before (core - guard): no longer needed
+        new_start = max(0, core - guard)
+        if new_start > buf_start:
+            buf = buf[new_start - buf_start:]
+            buf_start = new_start
+        if done_feeding and core >= total:
+            break
+    return peak
+
+
 def true_peak(x, sr, oversample=4):
+    if x.shape[0] > _LONG_N:
+        return true_peak_from_blocks(
+            (x[i:i + 60 * sr] for i in range(0, x.shape[0], 60 * sr)),
+            sr, oversample)
     up = signal.resample_poly(x, oversample, 1, axis=0)
     return float(np.max(np.abs(up)))
 

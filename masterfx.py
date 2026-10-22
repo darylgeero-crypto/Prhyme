@@ -110,8 +110,67 @@ def mono_check(x):
             "fold_loss_db": round(float(loss), 2)}
 
 
+def _report_card_long(pcm16, sr):
+    """Block-wise report_card for long masters (>4 min): identical numbers,
+    but never holds a full-track float64 copy (2026-10-21 overhaul — the
+    one-shot version needs >1 GB on a 20-min track and got servers killed)."""
+    n = len(pcm16)
+    blk = 60 * sr
+    nch = pcm16.shape[1] if pcm16.ndim > 1 else 1
+    sum_l = sum_r = sum_l2 = sum_r2 = sum_lr = 0.0
+    mid_ms = side_ms = 0.0
+    stereo_peak = mono_peak = 0.0
+    cnt = 0
+    for i in range(0, n, blk):
+        xb = pcm16[i:i + blk].astype(np.float64) / 32768.0
+        if xb.ndim == 1:
+            xb = xb[:, None]
+        l = xb[:, 0]; r = xb[:, 1] if xb.shape[1] > 1 else xb[:, 0]
+        sum_l += float(np.sum(l)); sum_r += float(np.sum(r))
+        sum_l2 += float(np.sum(l * l)); sum_r2 += float(np.sum(r * r))
+        sum_lr += float(np.sum(l * r)); cnt += len(l)
+        mid = (l + r) / 2; side = (l - r) / 2
+        mid_ms += float(np.sum(mid * mid)); side_ms += float(np.sum(side * side))
+        stereo_peak = max(stereo_peak, float(np.max(np.abs(xb))))
+        mono_peak = max(mono_peak, float(np.max(np.abs(mid))))
+    def gen():
+        for i in range(0, n, blk):
+            yield pcm16[i:i + blk].astype(np.float64) / 32768.0
+    lufs = M.lufs_from_blocks(gen(), sr)
+    tp = M.true_peak_from_blocks(gen(), sr)
+    tp_db = 20 * np.log10(tp + 1e-12)
+    peak_db = 20 * np.log10(stereo_peak + 1e-12)
+    dr = peak_db - (lufs if np.isfinite(lufs) else peak_db)
+    if nch > 1:
+        width = 20 * np.log10((np.sqrt(side_ms / cnt) + 1e-9) / (np.sqrt(mid_ms / cnt) + 1e-9))
+        ml = sum_l / cnt; mr = sum_r / cnt
+        cov = sum_lr - cnt * ml * mr
+        vl = sum_l2 - cnt * ml * ml; vr = sum_r2 - cnt * mr * mr
+        corr = float(cov / (np.sqrt(vl * vr) + 1e-12))
+        loss = 20 * np.log10((mono_peak + 1e-9) / (stereo_peak + 1e-9))
+        mono = {"mono_compatible": bool(corr > 0.3), "correlation": round(corr, 3),
+                "fold_loss_db": round(float(loss), 2)}
+        dc = float(max(abs(ml), abs(mr)))
+    else:
+        width = float("-inf")
+        mono = {"mono_compatible": True, "correlation": 1.0, "fold_loss_db": 0.0}
+        dc = float(abs(sum_l / cnt))
+    return {
+        "lufs": round(float(lufs), 1) if np.isfinite(lufs) else None,
+        "true_peak_dbtp": round(float(tp_db), 2),
+        "dynamic_range_db": round(float(dr), 1),
+        "stereo_width_db": round(float(width), 1) if np.isfinite(width) else None,
+        "dc_offset": round(dc, 5),
+        "no_clipping": bool(tp_db <= -1.0 + 0.05),
+        "mono": mono,
+        "duration_s": round(n / sr, 1),
+    }
+
+
 def report_card(pcm16, sr=SR):
     """24. Detailed mastering report: LUFS, TP, dynamic range, width, DC."""
+    if len(pcm16) > 240 * sr:
+        return _report_card_long(pcm16, sr)
     x = pcm16.astype(np.float64) / 32768.0
     lufs = M.integrated_lufs(x, sr)
     tp = M.true_peak(x, sr)
