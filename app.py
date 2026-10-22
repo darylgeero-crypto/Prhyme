@@ -61,7 +61,7 @@ else:
 import numpy as np
 from scipy.io.wavfile import write as wav_write, read as wav_read
 from scipy import signal
-from flask import Flask, request, render_template, jsonify, send_file, abort, url_for, redirect, session as _flask_session
+from flask import Flask, request, render_template, jsonify, send_file, abort, url_for, session as _flask_session
 from werkzeug.utils import secure_filename
 
 import djrill_master as M
@@ -87,8 +87,7 @@ import vocalfix  # vocal clarity + subtle timing correction (never deletes words
 import vocalfx  # ONLINE-ONLY vocal separator + auto SFX layer (cloud DSP/Demucs)
 import player as player_mod  # offline music player: browse + stream on-device audio
 import trackfx  # creative FX: radio, vinyl, TV, filters, echo (never deletes words)
-import rokdabus as RB  # Rokdabus Prhyme — conversational assistant brain
-import debuglog as _dbg  # persistent 36h debug log (2026-10-21)
+import rockdabus as RB  # Rokdabus Prhyme — conversational assistant brain
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(BASE, "uploads")
@@ -350,40 +349,30 @@ def master_chunked(mix, masterfx, chain, mopts, prog, SR=44100):
             del pcm16
             gc.collect()
 
-        # Splice chunks from disk with crossfades.
-        # 2026-10-21 overhaul: preallocated fill — the old parts-list +
-        # concatenate held ~2x the full track in RAM and OOM-killed
-        # servers on long masters. Peak is now result + one chunk.
+        # Splice chunks from disk with crossfades
         prog(86, "Splicing chunks...")
-        first = np.load(chunk_files[0][2], mmap_mode="r")
-        total_out = 0
-        for idx, (start, end, cf) in enumerate(chunk_files):
-            ln = np.load(cf, mmap_mode="r").shape[0]
-            if idx > 0:
-                ln -= overlap_n
-            if idx < len(chunk_files) - 1:
-                ln -= overlap_n if overlap_n > 0 else 0
-            total_out += ln
-        result = np.empty((total_out,) + first.shape[1:], dtype=first.dtype)
+        # Load first chunk to get shape
+        first = np.load(chunk_files[0][2])
+        n_ch_out = first.shape[1] if first.ndim > 1 else 1
         del first
-        pos = 0
+        # Build output incrementally
+        result_parts = []
         for idx, (start, end, cf) in enumerate(chunk_files):
             data = np.load(cf)
+            # Trim overlap (except first/last)
             if idx > 0:
                 data = data[overlap_n:]
             if idx < len(chunk_files) - 1:
                 data = data[:-overlap_n] if overlap_n > 0 else data
-            result[pos:pos + len(data)] = data
-            pos += len(data)
-            del data
+            result_parts.append(data)
             os.remove(cf)  # Free disk immediately
         import shutil
         shutil.rmtree(spill, ignore_errors=True)
+        # Concatenate
+        result = np.concatenate(result_parts, axis=0)
+        del result_parts
         gc.collect()
-        # 2026-10-21 overhaul: report on the FULL stitched master, not the
-        # last chunk (last_report only described the final chunk's audio).
-        full_report = masterfx.report_card(result, SR)
-        return result, full_report
+        return result, last_report
     except Exception:
         import shutil
         shutil.rmtree(spill, ignore_errors=True)
@@ -638,21 +627,11 @@ _engine_lock = threading.Lock()
 
 def set_job(job_id, **kw):
     with jobs_lock:
-        _is_new = job_id not in jobs
         j = jobs.setdefault(job_id, {"status": "running", "progress": 0,
                                      "message": "Starting…",
                                      "_ts": time.time()})
         j.update(kw)
         j["_ts"] = time.time()  # refresh for TTL
-        if _is_new:
-            _dbg.log("JOB %s START kind=%s title=%s msg=%s" % (
-                job_id[:8], kw.get("_kind", "?"),
-                str(kw.get("_title", ""))[:60],
-                str(kw.get("message", ""))[:60]))
-        if kw.get("status") in ("done", "error"):
-            _dbg.log("JOB %s %s kind=%s msg=%s" % (
-                job_id[:8], kw.get("status"), j.get("_kind", "?"),
-                str(j.get("message", ""))[:140]))
         # 82. record completed jobs to history
         if j.get("status") == "done" and not j.get("_hist"):
             j["_hist"] = True
@@ -772,36 +751,17 @@ def _rate_limit():
             request.path.startswith(_HEAVY_PATHS)
             or request.path.startswith("/api/separate")):
         with jobs_lock:
-            _blocker = None
             for _jid, _j in jobs.items():
                 if (_j.get("_kind") in _HEAVY_KINDS
                         and _j.get("status") == "running"):
-                    # Zombie reap (2026-10-21): a job whose worker died
-                    # (OOM, crash, dead resume thread) sat in "running"
-                    # forever and blocked EVERY heavy POST with a 409 —
-                    # Daryl's "buttons do nothing". Live jobs refresh _ts
-                    # on every progress update; 15 min of silence = dead.
-                    if now - float(_j.get("_ts", now)) > 900:
-                        _dbg.log("GUARD reaped zombie job %s kind=%s "
-                                 "(silent >900s)" % (_jid[:8],
-                                                     _j.get("_kind")))
-                        _j["status"] = "error"
-                        _j["message"] = "Stalled — cleared automatically."
-                        continue
-                    _blocker = (_jid, _j)
-                    break
-            if _blocker is not None:
-                _jid, _j = _blocker
-                _dbg.log("GUARD 409 %s blocked by job %s kind=%s" % (
-                    request.path, _jid[:8], _j.get("_kind")))
-                return jsonify({
-                    "ok": False,
-                    "error": ("One job at a time — a "
-                              + str(_j.get("_kind"))
-                              + " job is still running. "
-                              "Wait for it to finish."),
-                    "active_job_id": _jid,
-                }), 409
+                    return jsonify({
+                        "ok": False,
+                        "error": ("One job at a time — a "
+                                  + str(_j.get("_kind"))
+                                  + " job is still running. "
+                                  "Wait for it to finish."),
+                        "active_job_id": _jid,
+                    }), 409
     return None
 
 
@@ -1215,56 +1175,54 @@ def master_large_sections(src_path, masterfx, chain, mopts, prog, SR=44100, sect
 
         # Master each section sequentially (45s chunks inside)
         # With checkpointing: save each mastered section to disk, skip done ones
-        mastered_files = []
+        mastered_parts = []
         last_report = None
         for idx, sf in enumerate(section_files):
-            pct = 10 + int(70 * idx / len(section_files))
-            # Sections live on DISK (2026-10-21, Daryl): finished chunks
-            # are written out immediately and never held in a RAM list —
-            # holding every section in memory was the long-track OOM.
-            sect_path = os.path.join(tmpdir, f"mastered_sect_{idx:03d}.wav")
+            # Check if this section was already mastered (resume)
             sect_ckpt = None
             if checkpoint_dir:
                 sect_ckpt = os.path.join(checkpoint_dir, f"mastered_sect_{idx:03d}.wav")
-            # Resume: a checkpointed section is reused straight from disk.
-            if sect_ckpt and idx in sections_done and os.path.exists(sect_ckpt):
-                prog(pct, f"Section {idx+1}/{len(section_files)} — already done, skipping…")
-                mastered_files.append(sect_ckpt)
-                continue
+                if idx in sections_done and os.path.exists(sect_ckpt):
+                    prog(10 + int(70 * idx / len(section_files)),
+                         f"Section {idx+1}/{len(section_files)} — already done, skipping…")
+                    # Load from disk
+                    try:
+                        import scipy.io.wavfile as _wv
+                        _sr, _pcm = _wv.read(sect_ckpt)
+                        mastered_parts.append(_pcm)
+                        # Get report from checkpoint if available
+                        continue
+                    except Exception:
+                        sections_done.discard(idx)  # re-do if load fails
+            pct = 10 + int(70 * idx / len(section_files))
             prog(pct, f"Mastering section {idx+1}/{len(section_files)}…")
             pcm16, report = master_chunked(sf, masterfx, chain, mopts,
                                           lambda p, m: prog(pct, m), SR)
             last_report = report
-            import scipy.io.wavfile as _wv
-            try:
-                _wv.write(sect_path, SR, pcm16)
-            except Exception:
-                pass
+            # Save to disk for crash recovery
             if sect_ckpt:
                 try:
+                    import scipy.io.wavfile as _wv
                     _wv.write(sect_ckpt, SR, pcm16)
                     sections_done.add(idx)
                     _save_ckpt(len(section_files), sections_done, "mastering")
                 except Exception:
                     pass
-            del pcm16
-            mastered_files.append(sect_path)
+            mastered_parts.append(pcm16)
             import gc
             gc.collect()
 
-        # Stitch with 2s crossfades via the ONE shared stitcher
-        # (chunkpipe.stitch_files): streaming disk-to-disk, only one
-        # section plus a crossfade tail in RAM at a time.
+        # Stitch with 2s crossfades.
+        # master_chunked returns int16; convert to float [-1, 1] for the
+        # crossfade math, then back to int16. (Float WAV values must be
+        # in [-1, 1] — int16-scale floats would clip catastrophically.)
         prog(85, "Stitching sections…")
-        _stitched = os.path.join(tmpdir, "stitched.wav")
-        chunkpipe.stitch_files(mastered_files, _stitched, xfade_n, SR,
-                               prog=lambda f, m: prog(85 + int(10 * f), m))
-        import soundfile as _sf
-        result, _ = _sf.read(_stitched, dtype="int16", always_2d=True)
+        # Shared stitch (chunkpipe): float crossfades, then back to int16.
+        result = chunkpipe.stitch_parts(mastered_parts, xfade_n)
+        result = np.clip(result, -1.0, 1.0)
+        result = (result * 32767).astype(np.int16)
 
-        # 2026-10-21 overhaul: report on the FULL stitched master, not the
-        # last section (report_card is block-based and RAM-safe >4 min).
-        return result, masterfx.report_card(result, SR)
+        return result, last_report
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -1304,18 +1262,7 @@ def master_adaptive(src_path, masterfx, chain, mopts, prog, SR=44100, checkpoint
             return master_chunked(src_path, masterfx, chain, mopts, prog, SR)
         
         prog(5, f"Found {len(sections)} distinct sections — adaptive mastering…")
-
-        # RAM guard (2026-10-21): the adaptive path holds the decoded
-        # track in RAM. Very long tracks stay on the disk-streamed
-        # large-sections chain instead of risking an OOM kill.
-        _total_samp = sections[-1][1] if sections else 0
-        if _total_samp and _total_samp > 10 * 60 * SR:
-            prog(4, "Long track — using large-section mastering…")
-            return master_large_sections(src_path, masterfx, chain, mopts,
-                                         prog, SR,
-                                         checkpoint_dir=checkpoint_dir,
-                                         job_id=job_id)
-
+        
         # Convert src to WAV if needed for section extraction
         import soundfile as sf
         data, file_sr = sf.read(src_path, dtype='float32')
@@ -1385,16 +1332,49 @@ def master_adaptive(src_path, masterfx, chain, mopts, prog, SR=44100, checkpoint
             del data
             import gc; gc.collect()
             
-            # Stitch with crossfades via the ONE shared stitcher
-            # (chunkpipe.stitch_files): streaming disk-to-disk, only one
-            # section plus a crossfade tail in RAM at a time.
+            # Stitch with crossfades — STREAMING: only 2 sections in RAM at once
             prog(80, "Stitching sections (streaming)…")
+            import soundfile as sf
+            
             stitched_path = os.path.join(sect_tmpdir, "stitched.wav")
-            chunkpipe.stitch_files(section_files, stitched_path, xfade_n,
-                                   SR, prog=lambda f, m: prog(80 + int(12 * f), m))
+            
+            # Open output file for writing
+            # We'll build it incrementally
+            with sf.SoundFile(stitched_path, mode='w', samplerate=SR, channels=2, subtype='PCM_16') as out:
+                prev_tail = None  # Last xfade_n samples of previous section (float32)
+                n_files = len(section_files)
+                fade_out, fade_in = chunkpipe.fade_ramps(xfade_n)
 
-            # Read stitched result back as int16 (the return contract)
+                for idx, spath in enumerate(section_files):
+                    prog(80 + int(12 * idx / max(1, n_files)),
+                         f"Stitching {idx+1}/{n_files}…")
+                    is_last = (idx == n_files - 1)
+                    cur_data, _ = sf.read(spath, dtype='float32', always_2d=True)
 
+                    if prev_tail is not None and len(cur_data) >= xfade_n:
+                        overlap = prev_tail * fade_out + cur_data[:xfade_n] * fade_in
+                        out.write(overlap)
+                        body = cur_data[xfade_n:]
+                    else:
+                        body = cur_data
+
+                    if is_last:
+                        out.write(body)
+                        prev_tail = None
+                    else:
+                        if len(body) > xfade_n:
+                            out.write(body[:-xfade_n])
+                            prev_tail = body[-xfade_n:].copy()
+                        else:
+                            out.write(body)
+                            prev_tail = None
+
+                    del cur_data, body
+                    import gc; gc.collect()
+            
+            # Read stitched result (streaming read in chunks to avoid RAM spike)
+            # For report generation we need the full file, but it's PCM16 on disk
+            # Read it back as int16
             pcm16, _ = sf.read(stitched_path, dtype='int16', always_2d=True)
             # Convert stereo to expected format (keep as-is, report_card handles it)
             
@@ -1467,13 +1447,15 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                 _dur = float(_r.stdout.strip())
             except Exception:
                 _dur = 0
-            # Adaptive auto-detect ON (2026-10-21, Daryl's order): the
-            # adaptive chain detects tempo/volume changes itself and
-            # masters per section; uniform tracks fall back to the proven
-            # chains inside master_adaptive. Explicit flag still honored.
+            # Adaptive mastering is explicit opt-in only (auto-detect disabled
+            # 2026-10-19: stitching OOMs on long tracks — proven chain by default)
+            # Auto-detect: enable adaptive for tracks with tempo/energy changes
             _adaptive_flag = mopts.get("adaptive_mastering", None)
             if _adaptive_flag is None:
-                _adaptive_flag = True
+                # Default OFF (2026-10-20, Daryl's order): long tracks use the
+                # proven master_large_sections stitching from the locked
+                # working backup. Adaptive only when explicitly requested.
+                _adaptive_flag = False
             _use_adaptive = bool(_adaptive_flag) and _ADAPTIVE_AVAILABLE
             if _dur > 4 * 60:  # >4 minutes: use sectioned mastering
                 if _use_adaptive:
@@ -1649,12 +1631,6 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                 print(f"beat ring save failed: {_be}")
         prog(58, "Polishing vocal (EQ + gentle compression)…")
         vp = M.polish_vocal(vocal)
-        _vlen = vocal.shape[0]
-        # 2026-10-21 crash fix #2: the vocal chain runs in float32 and the
-        # raw vocal buffer is freed NOW — holding it (float64) alongside
-        # vp + chain outputs was a third of the low-memory-kill peak.
-        vp = vp.astype(np.float32, copy=False)
-        del vocal
 
         # ✨ Vocal polish: gentle denoise + presence + de-ess (never deletes)
         if mopts.get("vocal_polish", True):
@@ -1692,7 +1668,7 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
 
         prog(65, "Mixing — balanced vocal/instrumental…")
         boost_db = float(mopts.get("vocal_boost_db", 1.5))
-        need = int(intro + _vlen + 1 * SR)
+        need = int(intro + vocal.shape[0] + 1 * SR)
         if _keep_original:
             # Keep original: use polished audio directly, no beat mixing
             mix = vp_fx.copy()
@@ -1774,26 +1750,13 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         except Exception as _e:
             print(f"spill failed: {_e}, using in-RAM")
             _mix_arg = mix
-        # Adaptive auto-detect ON (2026-10-21, Daryl's order): detects
-        # tempo/volume changes and masters per section; uniform tracks
-        # fall back to the proven chain inside master_adaptive.
+        # Adaptive mastering is explicit opt-in only (auto-detect disabled
+        # 2026-10-19: stitching OOMs on long tracks — proven chain by default)
         _adaptive_flag_n = mopts.get("adaptive_mastering", None)
         if _adaptive_flag_n is None:
-            _adaptive_flag_n = True
-        if _adaptive_flag_n and _ADAPTIVE_AVAILABLE and not isinstance(_mix_arg, str):
-            # Adaptive runs on EVERY master (2026-10-21, Daryl): small
-            # in-RAM mixes used to skip it silently and fall to the plain
-            # chain. Spill the mix to disk so the analyzer can section it.
-            try:
-                _aspill = os.path.join(tdir, "_mix_adaptive.wav")
-                _am = np.clip(_mix_arg, -1.0, 1.0)
-                wav_write(_aspill, SR, (_am * 32767).astype(np.int16))
-                del _am
-                _mix_arg = _aspill
-                if not _spill_wav:
-                    _spill_wav = _aspill
-            except Exception as _ae:
-                print(f"adaptive spill failed: {_ae}, using standard chain")
+            # Default OFF (2026-10-20, Daryl's order): proven chain by
+            # default, adaptive only when explicitly requested.
+            _adaptive_flag_n = False
         _use_adaptive_normal = bool(_adaptive_flag_n) and _ADAPTIVE_AVAILABLE and isinstance(_mix_arg, str)
         if _use_adaptive_normal:
             pcm16, report = master_adaptive(
@@ -2669,19 +2632,6 @@ def store_audio(fn):
 
 # ===== Prhyme Social (Community Platform) =====
 
-@app.get("/legal")
-def legal_hub():
-    # The legal hub lives at /terms + /privacy (billing blueprint);
-    # /legal lands on the Terms so the address people guess works.
-    return redirect("/terms")
-
-
-@app.get("/social")
-def social_alias():
-    # The community feed IS the social page (renders social.html).
-    return redirect("/community")
-
-
 @app.get("/community")
 def community_page():
     return render_template("social.html")
@@ -3404,8 +3354,8 @@ def _start_beat_job(data):
     duration = None
     if length in lightbeat.STANDARD_DURATIONS:
         duration = float(lightbeat.STANDARD_DURATIONS[length])
-        # 2026-10-21 (Daryl): no lite-mode duration cap — full songs run
-        # their real length (2:30 / 3:00 / 3:30 all selectable + honored).
+        if _lite and duration > 150.0:
+            duration = 150.0
         n_bars = min(160, max(16, int(round(duration / (240.0 / bpm)))))
     elif length.startswith("loop"):
         try:
@@ -3422,6 +3372,8 @@ def _start_beat_job(data):
     seed = data.get("seed")
     import random as _r
     seed = int(seed) if seed not in (None, "") else M.new_beat_seed()
+    if _lite and duration is None:
+        n_bars = min(n_bars, 16)
     # beat FX options (all optional)
     fx = {
         "fills": bool(data.get("fills")),
@@ -3861,8 +3813,11 @@ def _gen_lyrics(data):
                     "adlibs": {"hook": ["yeah!", "woo!"], "verse": ["uh", "yeah"]}}, 200
     except Exception as _e:
         import traceback as _tb
-        with open("/storage/emulated/0/djrill/mobile/gemini_debug.log", "a") as _lf:
-            _lf.write("Gemini error: " + str(_e) + "\n" + _tb.format_exc() + "\n")
+        try:
+            with open(os.path.join(BASE, "gemini_debug.log"), "a") as _lf:
+                _lf.write("Gemini error: " + str(_e) + "\n" + _tb.format_exc() + "\n")
+        except Exception:
+            pass
     theme = (data.get("theme") or "").strip()[:80]
     mood = (data.get("mood") or "").strip()[:40]
     genre = data.get("genre", "HipHop")
@@ -4474,7 +4429,7 @@ def api_admin_feedback_status(fid):
 
 @app.get("/rokdabus")
 def rokdabus_page():
-    return render_template("rokdabus.html", active="rokdabus")
+    return render_template("rockdabus.html", active="rokdabus")
 
 
 # ------------------------------------------------- Rokdabus Prhyme chat
@@ -5775,33 +5730,14 @@ def api_master_keep():
     tdir = _temp_master_dir(job_id)
     if not os.path.isdir(tdir):
         return jsonify({"ok": False, "error": "Master no longer in temp"}), 404
-    # Pick the actual master audio file. The temp dir also holds
-    # checkpoint.json / mopts.json / source.* — the old sorted-first-file
-    # picker grabbed checkpoint.json for most titles, "saved" that, and
-    # deleted the real master (Daryl's dead Download button, 2026-10-21).
-    _audio_exts = (".mp3", ".wav", ".flac", ".ogg", ".m4a", ".opus",
-                   ".aac", ".aiff", ".aif")
-    _cands = []
-    for fn in os.listdir(tdir):
-        low = fn.lower()
-        if fn.startswith("source.") or low.endswith(".tmp.wav"):
-            continue
-        if low in ("checkpoint.json", "mopts.json"):
-            continue
-        if not low.endswith(_audio_exts):
-            continue
-        _p = os.path.join(tdir, fn)
-        if os.path.isfile(_p):
-            _cands.append((fn, os.path.getsize(_p)))
     master_file = None
-    if _cands:
-        _pref = [c for c in _cands if "_prhymemaster" in c[0]]
-        master_file = (_pref or _cands)[0][0] if len((_pref or _cands)) == 1 \
-            else max(_pref or _cands, key=lambda c: c[1])[0]
+    for fn in sorted(os.listdir(tdir)):
+        if fn.startswith("source.") or fn.endswith(".tmp.wav"):
+            continue
+        if os.path.isfile(os.path.join(tdir, fn)):
+            master_file = fn
+            break
     if not master_file:
-        _dbg.log("KEEP-FAIL job=%s reason=no-master-file dir=%s" % (
-            job_id[:8],
-            sorted(os.listdir(tdir)) if os.path.isdir(tdir) else "MISSING"))
         return jsonify({"ok": False, "error": "No master file found"}), 404
     sfn = secure_filename(master_file)
     if sfn != master_file:
@@ -5831,7 +5767,6 @@ def api_master_keep():
         player_mod.refresh()
     except Exception:
         pass
-    _dbg.log("KEEP job=%s file=%s" % (job_id[:8], os.path.basename(dst)))
     return jsonify({"ok": True, "file": os.path.basename(dst)})
 
 @app.post("/api/master/discard")
@@ -5870,7 +5805,6 @@ def temp_master(jobid, fname):
         abort(404)
     ext = os.path.splitext(safe)[1].lower()
     mime = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".flac": "audio/flac", ".ogg": "audio/ogg", ".m4a": "audio/mp4", ".opus": "audio/opus", ".aiff": "audio/aiff", ".aif": "audio/aiff", ".wma": "audio/x-ms-wma", ".aac": "audio/aac"}
-    _dbg.log("DL temp job=%s file=%s" % (jid, safe))
     return send_file(p, mimetype=mime.get(ext, "audio/mpeg"))
 
 @app.get("/files")
@@ -6204,7 +6138,6 @@ def api_dj_smart_next():
 
 
 if __name__ == "__main__":
-    _dbg.install("prhyme")
     print("Djrill Mobile — http://127.0.0.1:5000")
     # SECURITY: bind to localhost only — never expose to the network.
     app.run(host="127.0.0.1", port=5000, threaded=True)
