@@ -24,8 +24,33 @@ import numpy as np
 
 SR = 44100
 W, H, FPS = 1280, 720, 30
-FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-FONT_REG = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+def _find_font(bold=True):
+    """Resolve a DejaVu font path on whatever machine this runs on.
+    Was hardcoded to a Debian path that does not exist on Termux, which
+    killed every video render with PIL 'cannot open resource'
+    (fixed 2026-10-21)."""
+    import glob as _glob
+    name = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
+    cands = [
+        f"/usr/share/fonts/truetype/dejavu/{name}",
+        "/data/data/com.termux/files/usr/share/fonts/TTF/" + name,
+        os.path.join(os.environ.get("PREFIX", ""),
+                     "share/fonts/TTF", name) if os.environ.get("PREFIX") else "",
+        "/system/fonts/" + ("Roboto-Bold.ttf" if bold else "Roboto-Regular.ttf"),
+    ]
+    for c in cands:
+        if c and os.path.isfile(c):
+            return c
+    for pat in ("/usr/share/fonts/**/DejaVu*.ttf",
+                "/data/data/com.termux/files/usr/share/fonts/**/*.ttf"):
+        hits = sorted(_glob.glob(pat, recursive=True))
+        if hits:
+            return hits[0]
+    return name
+
+
+FONT = _find_font(True)
+FONT_REG = _find_font(False)
 
 
 def load_audio_mono(path):
