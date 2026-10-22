@@ -363,7 +363,42 @@ def _estimate_grid_offset(onsets, bpm, dur):
     return best_off
 
 
-def fix_vocal_timing(x, sr=SR, bpm=90.0, max_shift_s=0.030):
+def _breath_spans(mono, phrases, sr=SR):
+    """Find breath/gap regions inside phrases: stretches between words
+    whose level sits in the breath band (well below word level, above the
+    silence floor) for at least 60 ms. Breaths get translated rigidly by
+    the timing warp (anchors around them carry the local shift) — never
+    stretched, never gated out. Daryl's rule, 2026-10-21."""
+    spans = []
+    win = int(0.01 * sr)
+    n = max(1, len(mono) // win)
+    if n == 0:
+        return spans
+    rms = np.sqrt(np.mean(mono[:n * win].reshape(n, win) ** 2, axis=1) + 1e-12)
+    for (p0, p1) in phrases:
+        i0, i1 = int(p0 * sr) // win, min(n, int(p1 * sr) // win)
+        if i1 - i0 < 6:
+            continue
+        seg = rms[i0:i1]
+        peak = seg.max()
+        if peak <= 0:
+            continue
+        lo_thr, hi_thr = peak * 0.02, peak * 0.22
+        in_b = (seg > lo_thr) & (seg < hi_thr)
+        s = None
+        for j, b in enumerate(in_b):
+            if b and s is None:
+                s = j
+            elif not b and s is not None:
+                if (j - s) * 0.01 >= 0.06:
+                    spans.append(((i0 + s) * win / sr, (i0 + j) * win / sr))
+                s = None
+        if s is not None and (len(in_b) - s) * 0.01 >= 0.06:
+            spans.append(((i0 + s) * win / sr, i1 * win / sr))
+    return spans
+
+
+def fix_vocal_timing(x, sr=SR, bpm=90.0, max_shift_s=0.060):
     """Nudge vocal phrases toward the beat grid.
 
     Piecewise-linear time warp anchored at phrase boundaries (fixed) and
@@ -413,6 +448,7 @@ def fix_vocal_timing(x, sr=SR, bpm=90.0, max_shift_s=0.030):
     src_pts = [0.0]
     dst_pts = [0.0]
     n_fixed = 0
+    prev_end = 0.0
     for (p0, p1) in phrases:
         start_idx = len(dst_pts)
         src_pts.append(p0)
@@ -420,9 +456,17 @@ def fix_vocal_timing(x, sr=SR, bpm=90.0, max_shift_s=0.030):
         in_ph = onsets[(onsets >= p0) & (onsets <= p1)]
         shift = 0.0
         if len(in_ph):
-            err = in_ph[0] - nearest_grid(in_ph[0])
-            if 0.005 < abs(err) <= max_shift_s:
-                shift = -float(err)
+            # phrase shift = MEDIAN error of its onsets (robust: one bad
+            # onset detection can't yank the whole phrase)
+            ph_errs = np.array([t - nearest_grid(t) for t in in_ph])
+            med_err = float(np.median(ph_errs))
+            if 0.005 < abs(med_err) <= max_shift_s:
+                shift = -med_err
+            # never eat more than the preceding silence (keep >=30 ms of
+            # it) when shifting a phrase earlier
+            if shift < 0:
+                gap = p0 - prev_end
+                shift = max(shift, -(max(0.0, gap - 0.030)))
         # warp interior onsets with monotonic, ratio-limited corrections
         prev_s, prev_d = p0, p0 + shift
         for t in in_ph[1:]:
@@ -449,6 +493,18 @@ def fix_vocal_timing(x, sr=SR, bpm=90.0, max_shift_s=0.030):
             n_fixed += 1
         src_pts.append(p1)
         dst_pts.append(p1 + shift)
+        prev_end = p1
+    # breaths: anchor pairs around each breath span carrying the local
+    # shift, so the warp translates breaths rigidly (rate stays ~1.0
+    # across them) instead of stretching them.
+    try:
+        for (b0, b1) in _breath_spans(mono, phrases, sr):
+            for tb in (b0, b1):
+                sh = float(np.interp(tb, src_pts, dst_pts)) - tb
+                src_pts.append(tb)
+                dst_pts.append(tb + sh)
+    except Exception:
+        pass
     src_pts.append(dur)
     dst_pts.append(dur)
 
@@ -472,32 +528,52 @@ def fix_vocal_timing(x, sr=SR, bpm=90.0, max_shift_s=0.030):
 def _piecewise_warp(xs, src_pts, dst_pts):
     """Resample xs so src_pts map to dst_pts. Compress/extend only.
 
-    Chunked float32 version (2026-10-21 crash fix #2): the original built
-    ~7 full-track float64 temporaries (time maps, index arrays, two fancy-
-    indexed copies of the whole track) — over 1 GB on a 3.5-minute song.
-    Same piecewise-linear map and same linear interpolation, computed in
-    10-second blocks into a preallocated float32 output.
+    Quality rebuild (2026-10-21, Daryl: "that fucky sound"): the old warp
+    sampled with LINEAR interpolation — a 2-tap blend that low-passes
+    everything it touches, smearing consonant attacks, sibilance and
+    breaths. This version:
+      * smooths the time map with a monotone cubic (PCHIP) through the
+        anchors, so the local rate is continuous — no rate kinks sitting
+        on word attacks;
+      * samples with a 32-tap Hann-windowed sinc (bandlimited), the same
+        class of interpolator studio resamplers use — HF content
+        survives the warp.
+    Same anchors, same output length, same never-delete guarantees.
+    Chunked float32 so long tracks stay RAM-flat.
     """
+    from scipy.interpolate import PchipInterpolator
     n = xs.shape[0]
     n_out = int(round(dst_pts[-1] * SR))
     n_out = max(n_out, 16)
     xs32 = xs if xs.dtype == np.float32 else xs.astype(np.float32)
-    out = np.empty((n_out, xs32.shape[1]), dtype=np.float32)
-    block = 10 * SR
+    nch = xs32.shape[1]
+    out = np.empty((n_out, nch), dtype=np.float32)
+    fmap = PchipInterpolator(dst_pts, src_pts, extrapolate=False)
+    TAPS = 16  # windowed-sinc half-width (32 taps total)
+    taps_off = np.arange(-TAPS + 1, TAPS + 1, dtype=np.float64)
+    block = 2 * SR
     pos = 0
     while pos < n_out:
         end = min(n_out, pos + block)
-        t_out = (np.arange(pos, end, dtype=np.float64) / SR)
-        t_in = np.interp(t_out, dst_pts, src_pts)
-        np.clip(t_in, 0, (n - 1) / SR, out=t_in)
-        idx = t_in * SR
+        m = end - pos
+        t_out = np.arange(pos, end, dtype=np.float64) / SR
+        t_in = fmap(t_out)
+        t_in = np.nan_to_num(t_in, nan=0.0)
+        np.clip(t_in, 0.0, (n - 1) / SR, out=t_in)
+        x = t_in * SR  # fractional source positions
         del t_out, t_in
-        i0 = np.floor(idx).astype(np.int32)
-        i1 = np.minimum(i0 + 1, n - 1)
-        frac = (idx - i0)[:, None]
-        del idx
-        out[pos:end] = xs32[i0] * (1.0 - frac) + xs32[i1] * frac
-        del i0, i1, frac
+        base = np.floor(x).astype(np.int64)
+        idx = base[:, None] + taps_off[None, :].astype(np.int64)  # (m, 32)
+        d = x[:, None] - idx.astype(np.float64)                  # distance
+        # Hann-windowed sinc kernel
+        w = np.sinc(d) * (0.5 + 0.5 * np.cos(np.pi * d / TAPS))
+        w = np.where(np.abs(d) < TAPS, w, 0.0)
+        wsum = np.sum(w, axis=1, keepdims=True)
+        w = (w / np.maximum(wsum, 1e-12)).astype(np.float32)
+        idx_c = np.clip(idx, 0, n - 1)
+        gathered = xs32[idx_c]                                    # (m, 32, ch)
+        out[pos:end] = np.einsum('mt,mtc->mc', w, gathered).astype(np.float32)
+        del x, base, idx, d, w, idx_c, gathered
         pos = end
     return out
 
