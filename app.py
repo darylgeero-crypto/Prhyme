@@ -2940,51 +2940,121 @@ def api_daryl_beat():
 @app.post("/api/dj/mixplay")
 def api_dj_mixplay():
     """Rokdabus generates a curated infinite mix playlist.
-    Smart ordering: energy arc + key compatibility + BPM flow."""
+
+    Real DJ sequencing (2026-10-21 upgrade): BPM and energy are read from
+    each track (bpm parsed from the filename, energy estimated from bpm +
+    genre keywords in the filename), tracks are chained so consecutive
+    BPMs stay close, and ordering follows an energy arc — "festival"
+    (default) models a festival set: mid-energy opener, build, peak at
+    ~70% through, cooldown finish. Every track carries a transition plan
+    for the next one (beatmatch blend when BPMs are close, EQ sweep when
+    they are not) so the player can mix like a DJ instead of hard-cutting.
+    """
     try:
         data = request.get_json(force=True, silent=True) or {}
         genre = data.get("genre")
-        energy_arc = data.get("energy_arc", "rise")
+        energy_arc = data.get("energy_arc", "festival")
         count = min(50, max(5, int(data.get("count", 20))))
 
-        # Get library tracks
         import glob as _glob
+        import random as _random
+        import re as _re
         lib_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+        _HI = ("drill", "trap", "dubstep", "metal", "hardstyle", "dnb",
+               "drumnb", "phonk", "edm", "techno")
+        _LO = ("lofi", "ambient", "chill", "jazz", "blues", "classical",
+               "soul", "acoustic")
+
+        def _meta(fn):
+            base = os.path.basename(fn)
+            m = _re.search(r"(\d{2,3})\s*bpm", base, _re.I)
+            bpm = float(m.group(1)) if m else 120.0
+            low = base.lower()
+            energy = 1.0 + max(0.0, min(9.0, (bpm - 65.0) / 11.0))
+            if any(k in low for k in _HI):
+                energy += 1.5
+            if any(k in low for k in _LO):
+                energy -= 2.0
+            return bpm, max(1, min(10, int(round(energy))))
+
         tracks = []
         if os.path.exists(lib_dir):
             for fn in _glob.glob(os.path.join(lib_dir, "*.mp3")) + _glob.glob(os.path.join(lib_dir, "*.wav")):
-                # Skip temp files
                 if "temp" in fn:
                     continue
+                bpm, energy = _meta(fn)
                 tracks.append({
                     "path": fn,
                     "url": "/download/" + os.path.basename(fn),
                     "title": os.path.splitext(os.path.basename(fn))[0].replace("_", " "),
-                    "bpm": 120,  # TODO: detect actual BPM
-                    "energy": 5,
+                    "bpm": bpm,
+                    "energy": energy,
                 })
+
+        if genre:
+            g = str(genre).lower()
+            match = [t for t in tracks if g in t["title"].lower()]
+            if len(match) >= 3:
+                tracks = match
 
         if not tracks:
             return jsonify({"ok": False, "error": "No tracks in library"}), 400
 
-        # Smart ordering: sort by energy for arc
-        import random
-        if energy_arc == "rise":
-            # Start chill, build up
-            tracks.sort(key=lambda t: t["energy"])
-        elif energy_arc == "chill":
-            tracks.sort(key=lambda t: t["energy"], reverse=True)
-        else:  # wave: alternate
-            tracks.sort(key=lambda t: t["energy"])
-            # Interleave low/high
-            mid = len(tracks) // 2
-            low, high = tracks[:mid], tracks[mid:]
-            tracks = [x for pair in zip(low, high) for x in pair]
+        # --- energy arc: target energy per position -------------------
+        n = min(count, len(tracks))
+        if energy_arc == "chill":
+            targets = [10.0 - 7.0 * (i / max(1, n - 1)) for i in range(n)]
+        elif energy_arc == "rise":
+            targets = [3.0 + 7.0 * (i / max(1, n - 1)) for i in range(n)]
+        elif energy_arc == "wave":
+            import math as _math
+            targets = [6.0 + 3.5 * _math.sin(i * 2.4) for i in range(n)]
+        else:  # festival: opener 6 -> build -> peak ~70% -> cooldown
+            targets = []
+            for i in range(n):
+                x = i / max(1, n - 1)
+                if x < 0.7:
+                    targets.append(6.0 + 4.0 * (x / 0.7))
+                else:
+                    targets.append(10.0 - 6.0 * ((x - 0.7) / 0.3))
 
-        # Shuffle within energy bands for variety, keep arc
-        random.shuffle(tracks)
+        # Greedy assignment: nearest energy to target, penalize BPM jumps
+        # from the previous pick so blends stay smooth; small seeded jitter
+        # inside the penalty keeps repeat calls from being identical.
+        rng = _random.Random(int(time.time()) // 3600)
+        pool = tracks[:]
+        ordered = []
+        prev_bpm = None
+        for tgt in targets:
+            def _score(t, _tgt=tgt, _prev=prev_bpm):
+                s = abs(t["energy"] - _tgt) * 3.0
+                if _prev:
+                    s += abs(t["bpm"] - _prev) / 18.0
+                return s + rng.random() * 0.3
+            nxt = min(pool, key=_score)
+            pool.remove(nxt)
+            ordered.append(nxt)
+            prev_bpm = nxt["bpm"]
+        # Remaining pool appended in energy order if count > arc length.
+        pool.sort(key=lambda t: t["energy"])
+        ordered.extend(pool[: max(0, count - len(ordered))])
+        ordered = ordered[:count]
 
-        return jsonify({"ok": True, "tracks": tracks[:count], "count": len(tracks[:count])})
+        # --- transition plan to the next track ------------------------
+        for i, t in enumerate(ordered):
+            if i + 1 < len(ordered):
+                d = abs(ordered[i + 1]["bpm"] - t["bpm"])
+                if d <= 6:
+                    t["transition"] = {"type": "beatmatch", "fade_s": 8}
+                elif d <= 16:
+                    t["transition"] = {"type": "eq_sweep", "fade_s": 6}
+                else:
+                    t["transition"] = {"type": "echo_out", "fade_s": 4}
+            else:
+                t["transition"] = {"type": "loop", "fade_s": 8}
+
+        return jsonify({"ok": True, "tracks": ordered,
+                        "count": len(ordered), "arc": energy_arc})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 

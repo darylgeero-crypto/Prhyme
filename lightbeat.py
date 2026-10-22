@@ -18,6 +18,11 @@ except ImportError:
     _soundx = None
     _SOUNDX_AVAILABLE = False
 
+try:
+    import beatvariants as _BV
+except ImportError:
+    _BV = None
+
 SR = 44100
 
 # Standard full-song durations: label -> seconds. Passed as duration="3:00"
@@ -1740,7 +1745,14 @@ def generate_beat(genre, bpm, bars, seed=None, artist=None, progress_cb=None,
       bars (1-4), intensity ("subtle"/"balanced"/"bold"),
       sequence ("ascending"/"descending"/"alternating").
     """
+    _raw_genre = genre
     genre = normalize_genre(genre)
+    if _BV is not None:
+        # Canonical genres that used to alias to a generic fallback
+        # (RnB, Gospel, EDM, ...) get their own variant family's base.
+        _bv_base = _BV.base_for(_raw_genre)
+        if _bv_base in _PATTERNS:
+            genre = _bv_base
     bpm = min(200.0, max(50.0, float(bpm)))
     step_dur = 60.0 / bpm / 4.0
     bar_dur = step_dur * 16
@@ -1765,6 +1777,9 @@ def generate_beat(genre, bpm, bars, seed=None, artist=None, progress_cb=None,
     # Dedicated stream for Fibonacci bursts: enabling bursts must not
     # alter any existing layer's output.
     rng3 = np.random.default_rng((seed or 0) ^ 0xF1B0457)
+    # Dedicated stream for variant families: rolling a variant must not
+    # perturb the core, extra-layer or Fibonacci random sequences.
+    rng4 = np.random.default_rng((seed or 0) ^ 0xB17A5EED)
     _fib_cfg = normalize_fib_bursts(fib_bursts)
     _fib_burst_bars = _fib_cfg["bars"] if _fib_cfg else 0
     _fib_level = _FIB_BURST_LEVELS[_fib_cfg["intensity"]] if _fib_cfg else 0.0
@@ -1783,6 +1798,15 @@ def generate_beat(genre, bpm, bars, seed=None, artist=None, progress_cb=None,
         fill_style = st["fill"]
     else:
         pat = dict(_PATTERNS[genre])  # copy: era flavors mutate below
+        if _BV is not None:
+            try:
+                _vlabel, _vmel, _vcombo = _BV.apply_variant(
+                    pat, _raw_genre, rng4)
+                if _vmel is not None:
+                    pat["melody"] = _vmel != "none"
+                    pat["melody_inst"] = _vmel
+            except Exception:
+                pass
         hat_style = "pattern"
         bass_style = kitd["bass"]
         melody_style = pat["melody_inst"] if pat["melody"] else "none"
