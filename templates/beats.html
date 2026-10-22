@@ -242,6 +242,14 @@
   <div class="jobpct" id="jobPct">0%</div>
   <button id="cancelBeatBtn" type="button" style="display:none;margin:8px 0;background:#3a0d0d;color:#ff6b6b;border:1px solid #ff6b6b;padding:10px 16px;border-radius:8px;cursor:pointer;font-weight:600;" onclick="cancelBeatJob()">⛔ Cancel beat</button>
   <div id="jobResult" class="result"></div>
+  <div class="btnrow" style="margin-top:10px">
+    <button id="matchLyricsBtn" class="btn alt" type="button">✎ Generate matching lyrics</button>
+  </div>
+  <div id="matchLyricsOut" class="hidden">
+    <div class="draft-banner">AI-GENERATED DRAFT LYRICS — not written by the artist.</div>
+    <div id="matchLyricsMeta" class="stats"></div>
+    <pre id="matchLyricsText" class="lyrics-text"></pre>
+  </div>
 </div>
 {% endblock %}
 {% block scripts %}
@@ -407,5 +415,36 @@ async function pollBeatJob(jobId){ var out=document.getElementById("jobResult");
     btn._rt = setTimeout(function(){ taps = []; btn.textContent = '\u{1F446} Tap tempo'; }, 2000);
   });
 })();
+
+/* ---------- matching lyrics for this beat ---------- */
+document.getElementById("matchLyricsBtn").addEventListener("click", async () => {
+  const out = document.getElementById("matchLyricsOut");
+  const meta = document.getElementById("matchLyricsMeta");
+  const pre = document.getElementById("matchLyricsText");
+  const g = document.querySelector('[name="genre"]');
+  const b = document.querySelector('[name="bpm"]');
+  const m = document.querySelector('[name="melody"]');
+  out.classList.remove("hidden");
+  meta.textContent = "Writing lyrics that fit this beat…";
+  pre.textContent = "";
+  try {
+    const r = await fetch("/api/match/lyrics", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({genre: g ? g.value : "HipHop",
+        bpm: b ? parseFloat(b.value) || 90 : 90,
+        melody: m ? m.value : null})});
+    const j = await r.json();
+    if (!j.ok) { meta.textContent = "Error: " + (j.error || "match failed"); return; }
+    const p = j.profile || {};
+    meta.textContent = "Matched profile: theme " + (p.theme || "") + " · " +
+      (p.cadence_set || "") + " cadence · " + (p.rhyme_scheme || "") +
+      " · ~" + (p.syl_target || "?") + " syllables/line · energy " +
+      (p.energy ?? "?");
+    const order = ["verse1", "hook", "verse2", "verse3", "bridge", "outro"];
+    const secs = j.sections || {};
+    pre.textContent = order.filter(k => secs[k])
+      .map(k => secs[k].join("\n")).join("\n\n");
+  } catch (e) { meta.textContent = "Failed: " + e.message; }
+});
 </script>
 {% endblock %}

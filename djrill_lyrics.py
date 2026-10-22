@@ -1921,7 +1921,8 @@ def generate_song_lyrics_ex(seed, genre="HipHop", theme="street",
                             custom_words=None, hook_first=False,
                             story_arc=False, call_response=False,
                             internal_rhyme=False, multi_boost=False,
-                            artist=None, explicit=False, bpm=None):
+                            artist=None, explicit=False, bpm=None,
+                            cadence_set=None):
     """Coherent narrative lyric generator.
 
     artist: artist name from ARTIST_PROFILES (style emulation only) or None.
@@ -1945,7 +1946,7 @@ def generate_song_lyrics_ex(seed, genre="HipHop", theme="street",
         pool.syl_ceiling = pool.bpm_cap + 2
     pool.keywords = _hook_keywords(song["hook"])
     words = [w.strip() for w in (custom_words or []) if w.strip()][:12]
-    cadence_set = _cadence_set_for(artist_prof)
+    cadence_set = cadence_set or _cadence_set_for(artist_prof)
 
     for vi, key in enumerate(("verse1", "verse2", "verse3")):
         want = _VERSE_BEATS[vi % 3]

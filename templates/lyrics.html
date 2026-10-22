@@ -130,7 +130,9 @@
   <div class="btnrow">
     <button id="copyBtn" class="btn">⧉ Copy text</button>
     <button id="lrcBtn" class="btn alt">⬇ LRC file</button>
+    <button id="matchBeatBtn" class="btn alt" type="button">🎛 Matching beat</button>
   </div>
+  <div id="matchBeatOut" class="stats"></div>
   <div id="lyricsStats" class="stats"></div>
   <div id="lyricsAdlibs" class="stats"></div>
 </div>
@@ -273,6 +275,45 @@ document.getElementById("lrcBtn").addEventListener("click", () => {
   a.download = "prhyme-lyrics.lrc";
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+});
+
+/* ---------- matching beat for these lyrics ---------- */
+document.getElementById("matchBeatBtn").addEventListener("click", async () => {
+  const out = document.getElementById("matchBeatOut");
+  const lines = document.getElementById("lyricsText").value
+    .split("\n").map(l => l.trim()).filter(Boolean);
+  if (!lines.length) { out.textContent = "Generate lyrics first."; return; }
+  const themeEl = document.querySelector('[name="lyric_theme"], [name="theme"]');
+  out.textContent = "Building a beat that fits these lyrics…";
+  try {
+    const r = await fetch("/api/match/beat", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({sections: {verse1: lines},
+        theme: themeEl ? themeEl.value : "street"})});
+    const j = await r.json();
+    if (!j.ok) { out.textContent = "Error: " + (j.error || "match failed"); return; }
+    const p = j.profile || {}, job = (j.beat || {}).job_id;
+    out.textContent = "Matched profile: " + (j.beat_spec.genre || "") + " · " +
+      (p.bpm || "?") + " BPM · " + (j.beat_spec.melody || "") +
+      " · energy " + (p.energy ?? "?") + " — rendering…";
+    if (!job) return;
+    for (let i = 0; i < 300; i++) {
+      await new Promise(r2 => setTimeout(r2, 2000));
+      const jr = await (await fetch("/api/job/" + job)).json();
+      if (jr.status === "done") {
+        const mp3 = jr.result && jr.result.mp3;
+        out.innerHTML = "✅ Matching beat ready — " + (j.beat_spec.genre || "") +
+          " · " + (p.bpm || "?") + " BPM · " + (j.beat_spec.melody || "") +
+          (mp3 ? "<br><audio controls preload=\"metadata\" src=\"/download/" +
+            encodeURIComponent(mp3) + "\" style=\"width:100%;height:32px;margin:6px 0;\"></audio>" : "");
+        return;
+      }
+      if (jr.status === "error" || jr.status === "cancelled") {
+        out.textContent = "Beat " + jr.status + ": " + (jr.message || "");
+        return;
+      }
+    }
+  } catch (e) { out.textContent = "Failed: " + e.message; }
 });
 </script>
 {% endblock %}

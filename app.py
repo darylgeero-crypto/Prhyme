@@ -4569,7 +4569,8 @@ def _gen_lyrics(data):
             multi_boost=bool(data.get("multi_boost")),
             artist=artist,
             explicit=bool(data.get("parental_advisory") or data.get("explicit")),
-            bpm=float(data.get("bpm") or 90))
+            bpm=float(data.get("bpm") or 90),
+            cadence_set=data.get("cadence_set") or None)
         _txt_check = L.format_lyrics_txt(song, title="check")
         _fp, _words = _fingerprint(_txt_check)
         _too_similar = False
@@ -4608,7 +4609,8 @@ def _gen_lyrics(data):
             multi_boost=bool(data.get("multi_boost")),
             artist=artist,
             explicit=bool(data.get("parental_advisory") or data.get("explicit")),
-            bpm=float(data.get("bpm") or 90))
+            bpm=float(data.get("bpm") or 90),
+            cadence_set=data.get("cadence_set") or None)
     txt = L.format_lyrics_txt(song, title=song.get("title") or (theme or "Untitled"))
     lrc = L.format_lyrics_lrc(song, float(data.get("bpm") or 90),
                               title=song.get("title") or "Untitled")
@@ -5272,6 +5274,86 @@ def api_freestyle_prompts():
     payload, status = _freestyle_prompts(
         request.get_json(force=True, silent=True))
     return jsonify(payload), status
+
+
+# --------------------------------------------------------------- match engine
+# Beats <-> lyrics that fit each other (tempo / energy / melody), via
+# derived song-DNA profiles (matchgen.py). Nothing is copied from any
+# original work — both sides are generated, and the match is parameter
+# derivation only.
+import matchgen as _matchgen
+
+
+def _sections_from_payload(payload):
+    """Sections dict from a _gen_lyrics payload; the Gemini path may
+    return flat text instead — chunk it into verses for profiling."""
+    secs = payload.get("sections")
+    if secs:
+        return secs
+    txt = payload.get("lyrics") or payload.get("text") or ""
+    lines = [l for l in txt.splitlines() if l.strip()]
+    out = {}
+    for i in range(0, len(lines), 16):
+        out[f"verse{i // 16 + 1}"] = lines[i:i + 16]
+    return out
+
+
+@app.post("/api/match/beat")
+def api_match_beat():
+    """Generate a beat matched to lyrics: pass the lyrics request
+    params (genre/theme/seed...) and/or ready `sections`. Returns the
+    song-DNA profile + the beat job payload."""
+    data = request.get_json(force=True, silent=True) or {}
+    sections = data.get("sections")
+    theme = data.get("theme") or "street"
+    if not sections:
+        payload, status = _gen_lyrics(data)
+        if status != 200 or not payload.get("ok"):
+            return jsonify(payload), status
+        sections = _sections_from_payload(payload)
+    spec, profile = _matchgen.beat_spec_from_lyrics(
+        sections, theme=theme, seed=data.get("seed"))
+    beat_payload, beat_status = _start_beat_job(spec)
+    return jsonify({"ok": True, "profile": profile, "beat_spec": spec,
+                    "sections": sections,
+                    "beat": beat_payload}), beat_status
+
+
+@app.post("/api/match/lyrics")
+def api_match_lyrics():
+    """Generate lyrics matched to a beat: pass the beat params
+    (genre/bpm/melody/seed). Returns the profile + lyrics payload."""
+    data = request.get_json(force=True, silent=True) or {}
+    spec, profile = _matchgen.lyrics_spec_from_beat(
+        genre=data.get("genre", "HipHop"), bpm=data.get("bpm", 90),
+        melody_inst=data.get("melody"), seed=data.get("seed"),
+        artist=data.get("artist"))
+    payload, status = _gen_lyrics(spec)
+    if status == 200 and payload.get("ok"):
+        payload = dict(payload)
+        payload["profile"] = profile
+        payload["lyrics_spec"] = spec
+    return jsonify(payload), status
+
+
+@app.post("/api/match/prompter")
+def api_match_prompter():
+    """Freestyle prompter pair: lyrics + a beat generated to fit them.
+    Returns profile, sections, flat prompter text and the beat job —
+    the page sets its BPM from the profile and loads both halves."""
+    data = request.get_json(force=True, silent=True) or {}
+    theme = data.get("theme") or "street"
+    payload, status = _gen_lyrics(data)
+    if status != 200 or not payload.get("ok"):
+        return jsonify(payload), status
+    sections = _sections_from_payload(payload)
+    spec, profile = _matchgen.beat_spec_from_lyrics(
+        sections, theme=theme, seed=data.get("seed"))
+    beat_payload, beat_status = _start_beat_job(spec)
+    return jsonify({"ok": True, "profile": profile, "beat_spec": spec,
+                    "sections": sections,
+                    "lyrics_text": _matchgen.sections_to_text(sections),
+                    "beat": beat_payload}), beat_status
 
 
 @app.get("/api/freestyle/beats")

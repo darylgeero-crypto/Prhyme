@@ -1351,8 +1351,194 @@ def _koto(sr, freq, dur=0.7):
     return _cap_peak(_stereo(sig * 0.38))
 
 
+# ------------------------------------------------- phone instruments
+# Grafted 2026-10-22 (phone port): these 15 lead instruments
+# lived only in the phone's lightbeat; merged so phone, deploy
+# and Render share ONE canonical engine. Bodies are the phone's
+# originals, unchanged.
+
+
+def _grandpiano(sr, freq, dur=0.8):
+    """Bright grand piano: crisp attack, rich harmonics, longer sustain."""
+    n = int(sr * dur)
+    t = np.arange(n) / sr
+    sig = (np.sin(2 * np.pi * freq * t) * np.exp(-t * 4.0)
+           + 0.5 * np.sin(2 * np.pi * 2 * freq * t) * np.exp(-t * 7.0)
+           + 0.25 * np.sin(2 * np.pi * 3 * freq * t) * np.exp(-t * 12.0)
+           + 0.1 * np.sin(2 * np.pi * 4 * freq * t) * np.exp(-t * 20.0))
+    return _stereo(sig * 0.4)
+
+def _epiano(sr, freq, dur=1.0):
+    """Rhodes electric piano: tine attack, warm tremolo sustain."""
+    n = int(sr * dur)
+    t = np.arange(n) / sr
+    trem = 1.0 + 0.15 * np.sin(2 * np.pi * 4.5 * t)
+    sig = (np.sin(2 * np.pi * freq * t) * np.exp(-t * 3.0)
+           + 0.3 * np.sin(2 * np.pi * 2 * freq * t) * np.exp(-t * 5.0)
+           + 0.08 * np.sin(2 * np.pi * 3.98 * freq * t) * np.exp(-t * 9.0)) * trem
+    return _stereo(sig * 0.42)
+
+def _trumpet(sr, freq, dur=0.6):
+    """Trumpet lead: bright, brassy, with vibrato."""
+    n = int(sr * dur)
+    t = np.arange(n) / sr
+    vib = 1.0 + 0.008 * np.sin(2 * np.pi * 6.0 * t)
+    sig = (np.sin(2 * np.pi * freq * vib * t)
+           + 0.6 * np.sin(2 * np.pi * 2 * freq * t)
+           + 0.35 * np.sin(2 * np.pi * 3 * freq * t)
+           + 0.15 * np.sin(2 * np.pi * 4 * freq * t)) * 0.22
+    atk = np.minimum(1.0, t / 0.06)
+    return _stereo(sig * atk * 0.5)
+
+def _strings(sr, freq, dur=1.2):
+    """String section: slow attack, rich vibrato, lush sustain."""
+    n = int(sr * dur)
+    t = np.arange(n) / sr
+    vib = 1.0 + 0.006 * np.sin(2 * np.pi * 5.5 * t)
+    sig = np.zeros(n)
+    for det in (0.997, 1.0, 1.004):
+        sig += np.sin(2 * np.pi * freq * vib * det * t)
+        sig += 0.3 * np.sin(2 * np.pi * 2 * freq * det * t)
+    sig /= 6.0
+    atk = np.minimum(1.0, t / (dur * 0.25))
+    return _stereo(sig * atk * 0.5)
+
+def _violin(sr, freq, dur=1.0):
+    """Solo violin: expressive vibrato, warm bowed tone."""
+    n = int(sr * dur)
+    t = np.arange(n) / sr
+    vib = 1.0 + 0.01 * np.sin(2 * np.pi * 5.0 * t)
+    sig = (np.sin(2 * np.pi * freq * vib * t)
+           + 0.4 * np.sin(2 * np.pi * 2 * freq * t)
+           + 0.2 * np.sin(2 * np.pi * 3 * freq * t)
+           + 0.08 * np.sin(2 * np.pi * 4 * freq * t)) * 0.25
+    atk = np.minimum(1.0, t / 0.12)
+    return _stereo(sig * atk * 0.5)
+
+def _cello(sr, freq, dur=1.0):
+    """Cello: deep, warm, bowed bass."""
+    n = int(sr * dur)
+    t = np.arange(n) / sr
+    vib = 1.0 + 0.007 * np.sin(2 * np.pi * 4.5 * t)
+    sig = (np.sin(2 * np.pi * freq * vib * t)
+           + 0.5 * np.sin(2 * np.pi * 2 * freq * t)
+           + 0.22 * np.sin(2 * np.pi * 3 * freq * t)) * 0.28
+    atk = np.minimum(1.0, t / 0.1)
+    return _stereo(sig * atk * 0.5)
+
+def _guitar(sr, freq, dur=0.6):
+    """Acoustic guitar pluck: bright attack, natural decay."""
+    n = int(sr * dur)
+    t = np.arange(n) / sr
+    sig = (np.sin(2 * np.pi * freq * t) * np.exp(-t * 8.0)
+           + 0.4 * np.sin(2 * np.pi * 2 * freq * t) * np.exp(-t * 12.0)
+           + 0.15 * np.sin(2 * np.pi * 3 * freq * t) * np.exp(-t * 18.0)
+           + 0.05 * np.sin(2 * np.pi * 4.2 * freq * t) * np.exp(-t * 25.0))
+    return _stereo(sig * 0.45)
+
+def _organ(sr, freq, dur=0.9):
+    """Hammond organ: sustained, harmonic drawbars, slight Leslie."""
+    n = int(sr * dur)
+    t = np.arange(n) / sr
+    leslie = 1.0 + 0.1 * np.sin(2 * np.pi * 6.0 * t)
+    sig = (np.sin(2 * np.pi * freq * t)
+           + 0.5 * np.sin(2 * np.pi * 2 * freq * t)
+           + 0.25 * np.sin(2 * np.pi * 3 * freq * t)
+           + 0.12 * np.sin(2 * np.pi * 4 * freq * t)) * leslie
+    sig *= 0.25
+    # Gentle envelope
+    env = np.minimum(1.0, t / 0.05) * np.minimum(1.0, (dur - t) / 0.15 + 0.1)
+    return _stereo(sig * np.clip(env, 0, 1) * 0.5)
+
+def _harp(sr, freq, dur=0.9):
+    """Harp: bright pluck, shimmering overtones."""
+    n = int(sr * dur)
+    t = np.arange(n) / sr
+    sig = (np.sin(2 * np.pi * freq * t) * np.exp(-t * 5.0)
+           + 0.35 * np.sin(2 * np.pi * 2 * freq * t) * np.exp(-t * 8.0)
+           + 0.18 * np.sin(2 * np.pi * 3.01 * freq * t) * np.exp(-t * 12.0)
+           + 0.08 * np.sin(2 * np.pi * 4.5 * freq * t) * np.exp(-t * 18.0))
+    return _stereo(sig * 0.4)
+
+def _kalimba(sr, freq, dur=0.7):
+    """Kalimba/thumb piano: pure sine with high tine harmonic."""
+    n = int(sr * dur)
+    t = np.arange(n) / sr
+    sig = (np.sin(2 * np.pi * freq * t) * np.exp(-t * 7.0)
+           + 0.25 * np.sin(2 * np.pi * 4 * freq * t) * np.exp(-t * 14.0)
+           + 0.08 * np.sin(2 * np.pi * 9.5 * freq * t) * np.exp(-t * 22.0))
+    return _stereo(sig * 0.45)
+
+def _synthlead(sr, freq, dur=0.5):
+    """Sawtooth synth lead: aggressive, modern."""
+    n = int(sr * dur)
+    t = np.arange(n) / sr
+    # Sawtooth via harmonics
+    sig = np.zeros(n)
+    for h in range(1, 9):
+        sig += np.sin(2 * np.pi * h * freq * t) / h
+    sig *= 0.3
+    # Filter sweep feel
+    cutoff = 0.5 + 0.5 * np.exp(-t * 4.0)
+    sig *= cutoff
+    env = np.exp(-t * 3.0)
+    return _stereo(sig * env * 0.4)
+
+def _musicbox(sr, freq, dur=1.3):
+    """Music box: delicate, high, crystalline."""
+    n = int(sr * dur)
+    t = np.arange(n) / sr
+    sig = (np.sin(2 * np.pi * freq * t) * np.exp(-t * 4.0)
+           + 0.4 * np.sin(2 * np.pi * 3 * freq * t) * np.exp(-t * 7.0)
+           + 0.15 * np.sin(2 * np.pi * 8.5 * freq * t) * np.exp(-t * 12.0))
+    return _stereo(sig * 0.35)
+
+def _vibraphone(sr, freq, dur=1.1):
+    """Vibraphone: warm mallet with tremolo."""
+    n = int(sr * dur)
+    t = np.arange(n) / sr
+    trem = 1.0 + 0.25 * np.sin(2 * np.pi * 5.0 * t)
+    sig = (np.sin(2 * np.pi * freq * t) * np.exp(-t * 4.5)
+           + 0.3 * np.sin(2 * np.pi * 4 * freq * t) * np.exp(-t * 8.0)) * trem
+    return _stereo(sig * 0.42)
+
+def _sitar(sr, freq, dur=0.8):
+    """Sitar: buzzing drone, exotic."""
+    n = int(sr * dur)
+    t = np.arange(n) / sr
+    buzz = 1.0 + 0.3 * np.sign(np.sin(2 * np.pi * freq * 2 * t))
+    sig = (np.sin(2 * np.pi * freq * t) * np.exp(-t * 5.0)
+           + 0.3 * np.sin(2 * np.pi * 2 * freq * t) * np.exp(-t * 8.0)) * buzz
+    return _stereo(sig * 0.35)
+
+def _steelpan(sr, freq, dur=0.9):
+    """Steelpan: Caribbean metallic, bright."""
+    n = int(sr * dur)
+    t = np.arange(n) / sr
+    sig = (np.sin(2 * np.pi * freq * t) * np.exp(-t * 5.5)
+           + 0.5 * np.sin(2 * np.pi * 2.01 * freq * t) * np.exp(-t * 9.0)
+           + 0.2 * np.sin(2 * np.pi * 2.98 * freq * t) * np.exp(-t * 14.0))
+    return _stereo(sig * 0.4)
+
+
+
 # Melodic instrument dispatch: name -> function taking (sr, freq).
 _MEL_INST = {
+    "grandpiano": _grandpiano,
+    "epiano": _epiano,
+    "trumpet": _trumpet,
+    "strings": _strings,
+    "violin": _violin,
+    "cello": _cello,
+    "guitar": _guitar,
+    "organ": _organ,
+    "harp": _harp,
+    "kalimba": _kalimba,
+    "synthlead": _synthlead,
+    "musicbox": _musicbox,
+    "vibraphone": _vibraphone,
+    "sitar": _sitar,
+    "steelpan": _steelpan,
     "pluck": _pluck,
     "darkpiano": _piano,
     "bells": _bells,

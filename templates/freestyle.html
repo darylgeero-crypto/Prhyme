@@ -29,6 +29,23 @@
   <audio id="beatAudio" preload="none"></audio>
 </div>
 
+<!-- Matched pair: lyrics + a beat generated to fit them -->
+<div class="form" style="margin-bottom:14px">
+  <div class="row2">
+    <label class="field">
+      <span>Matched pair theme</span>
+      <select id="matchTheme">
+        {% for k, t in themes.items() %}<option value="{{ k }}">{{ t.label }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="field">
+      <span>&nbsp;</span>
+      <button id="matchBtn" class="btn">🎛 Generate matched beat + lyrics</button>
+    </label>
+  </div>
+  <div id="matchStatus" class="stats"></div>
+</div>
+
 <!-- Mode tabs -->
 <div class="btnrow" id="modeTabs" style="margin-bottom:14px">
   <button class="btn modebtn on" data-mode="tele">📜 Teleprompter</button>
@@ -237,6 +254,55 @@ $("metroBtn").addEventListener("click", () => {
     };
     loop();
   } else clearTimeout(clickTimer);
+});
+
+/* ---------- matched pair (beat <-> lyrics) ---------- */
+$("matchBtn").addEventListener("click", async () => {
+  const btn = $("matchBtn"), st = $("matchStatus");
+  btn.disabled = true; btn.textContent = "Matching…";
+  st.textContent = "Writing lyrics, then building a beat that fits them…";
+  try {
+    const r = await fetch("/api/match/prompter", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({theme: $("matchTheme").value,
+        lyric_theme: $("matchTheme").value, genre: ""})});
+    const j = await r.json();
+    if (!j.ok) { st.textContent = "Error: " + (j.error || "match failed"); return; }
+    const p = j.profile || {};
+    $("teleText").value = j.lyrics_text || "";
+    if (p.bpm) {
+      bpmEl.value = p.bpm; bpmVal.textContent = p.bpm;
+      bpmEl.dispatchEvent(new Event("change"));  // re-times the prompter
+    }
+    document.querySelector('[data-mode="tele"]').click();
+    st.textContent = "Lyrics loaded (" + (p.bpm || "?") + " BPM, " +
+      (j.beat_spec.genre || "") + " / " + (j.beat_spec.melody || "") +
+      "). Building the beat…";
+    const job = (j.beat || {}).job_id;
+    if (!job) { st.textContent = "Lyrics loaded — beat did not start."; return; }
+    for (let i = 0; i < 300; i++) {
+      await new Promise(r2 => setTimeout(r2, 2000));
+      const jr = await (await fetch("/api/job/" + job)).json();
+      if (jr.status === "done") {
+        const mp3 = jr.result && jr.result.mp3;
+        if (mp3) {
+          const o = document.createElement("option");
+          o.value = "/download/" + encodeURIComponent(mp3);
+          o.textContent = "🎛 Matched beat — " + (j.beat_spec.genre || "") +
+            " " + (p.bpm || "") + " BPM";
+          beatSel.appendChild(o); beatSel.value = o.value;
+        }
+        st.textContent = "✅ Matched pair ready — tap ▶ Beat, then ▶ Start.";
+        return;
+      }
+      if (jr.status === "error" || jr.status === "cancelled") {
+        st.textContent = "Beat " + jr.status + ": " + (jr.message || "");
+        return;
+      }
+    }
+    st.textContent = "Beat is still rendering — it will appear in the beat picker.";
+  } catch (e) { st.textContent = "Failed: " + e.message; }
+  finally { btn.disabled = false; btn.textContent = "🎛 Generate matched beat + lyrics"; }
 });
 
 /* ---------- mode tabs ---------- */
