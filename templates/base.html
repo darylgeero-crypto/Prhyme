@@ -152,6 +152,13 @@ body.no-banner {
 
 </head>
 <body data-page="{{ active|default('home') }}">
+<!-- Prhyme motif: big translucent Rokdabus + floating notes on every page
+     (Daryl, 2026-10-22 — the homepage look, carried app-wide) -->
+<div class="page-motif" aria-hidden="true">
+  <img src="{{ url_for('static', filename='img/rockdabus.webp') }}" alt="">
+  <span class="pm-note pm-n1">♪</span><span class="pm-note pm-n2">♫</span>
+  <span class="pm-note pm-n3">♩</span><span class="pm-note pm-n4">♬</span>
+</div>
 <!-- ToS Acceptance Gate (required before app use) -->
 <div id="tosGate" class="tos-gate" hidden>
   <div class="tos-box">
@@ -367,6 +374,13 @@ function dismissBanner() {
     </div>
     <div class="rb-buddy-tip" id="rbBuddyTip"></div>
     <div class="rb-buddy-actions" id="rbBuddyActions"></div>
+    <button type="button" class="btn small rb-buddy-voice" id="rbBuddyWalk" style="margin-top:6px">🚶 Walk me through this page</button>
+    <div class="rb-guide-nav" id="rbGuideNav" hidden>
+      <button type="button" class="btn small" id="rbGuideBack">◀ Back</button>
+      <button type="button" class="btn small" id="rbGuideNext">Next ▶</button>
+      <button type="button" class="btn small" id="rbGuideDone">Done</button>
+    </div>
+    <div class="rb-buddy-guide" id="rbBuddyGuide"></div>
     <button type="button" class="btn small rb-buddy-voice" id="rbBuddyVoice">🔇 Voice: off</button>
     <button type="button" class="btn small rb-buddy-voice" id="rbBuddyTipBtn" style="margin-top:6px">💡 Another tip</button>
     <button type="button" class="btn small rb-buddy-voice" id="rbBuddyTipsToggle" style="margin-top:6px">🔔 Tips: on</button>

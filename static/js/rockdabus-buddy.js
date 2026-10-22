@@ -244,6 +244,7 @@ var PAGE_ACTIONS = {
 beats: [["🎲", "BPM idea", "tip"], ["🎧", "DJ Booth", "/dj"], ["💬", "Chat", "/rockdabus"]],
 lyrics: [["💡", "Rhyme idea", "tip"], ["🎛️", "Beats", "/beats"], ["💬", "Chat", "/rockdabus"]],
 dj: [["⚡", "Transition tip", "tip"], ["🎛️", "Beats", "/beats"], ["💬", "Chat", "/rockdabus"]],
+studio: [["💡", "Studio tip", "tip"], ["🎛️", "Beats", "/beats"], ["💬", "Chat", "/rockdabus"]],
 home: [["🚀", "Quick tip", "tip"], ["🎛️", "Make a beat", "/beats"], ["💬", "Chat", "/rockdabus"]],
 default: [["💡", "Tip me", "tip"], ["🎛️", "Beats", "/beats"], ["💬", "Chat", "/rockdabus"]]
 };
@@ -457,4 +458,195 @@ hideBubble();
     }
     dragging = false;
   });
+
+if (!minimized && page !== "rockdabus") {
+  setTimeout(function () {
+    if (!minimized && bubble.hidden && panel.hidden) showBubble(pick(tipsFor(page)), 9000);
+  }, 10500);
+}
+
+/* === Page guides (2026-10-22, Daryl's order): the buddy walks you
+   through setup on each page and explains what every function does.
+   Steps render as dropdowns in the panel; Walk mode steps through them
+   in order, highlighting the real control on the page. === */
+var GUIDES = {
+home: [
+ {t: "Start anywhere", x: "Every card jumps straight into a tool — Master a Track polishes a recording, Make a Beat cooks an instrumental, Draft Lyrics writes bars. There is no wrong door; everything saves as you go.", sel: ".cards"},
+ {t: "Lite Mode", x: "Lite Mode keeps heavy jobs phone-safe: shorter renders, lighter processing, nothing that can crash your device. Leave it ON on a phone, turn it OFF on a strong computer for full power.", sel: "#liteHeroToggle"},
+ {t: "That's me in the corner", x: "Tap my face on any page and I'll explain whatever you're looking at — or hit Walk me through this page and I'll guide you control by control."}
+],
+beats: [
+ {t: "Genre picker", x: "Sets the whole personality of the beat — drum pattern, chord mood, sound palette. All 37 genres have their own patterns pulled from current hits and all-time classics of that style.", sel: "#genreSel"},
+ {t: "BPM (tempo)", x: "Beats per minute = speed. Drill ~140, Trap ~150, BoomBap ~92, House ~124. Match it to how you rap: faster BPM, faster flow. The Tap Tempo button lets you tap out a tempo you hear in your head.", sel: "#bpmInput"},
+ {t: "Artist style", x: "Shapes the beat toward a producer/artist's signature feel — bounce, darkness, swing. It's a style fingerprint, never a copy of anyone's actual song.", sel: "#artistSel"},
+ {t: "Length: Loop vs Full Song", x: "Loop = 16 or 32 bars, perfect for writing over. Full Song builds a complete arrangement — intro, verse, hook, verse, hook, bridge, final hook, outro — with energy that rises and falls like a real record.", sel: "#beatsForm"},
+ {t: "Generate, then Download", x: "Preview first — what you hear is exactly what renders. Download saves the beat to your library and your Downloads folder. Your last 5 beats wait in Recent Generations, so a good one never gets lost."}
+],
+master: [
+ {t: "Upload your recording", x: "MP3, WAV, anything you've got. Your original file is never changed — all the work happens on a copy.", sel: "#f"},
+ {t: "Keep original beat", x: "ON (the default): your beat is preserved exactly and only your VOCALS get processed — polish, clarity, timing nudges — then they're laid back over your untouched beat. OFF: a brand-new beat is generated under your vocals instead.", sel: "#f"},
+ {t: "Automated vs the 32 controls", x: "Automated mode picks sensible settings for you. Turn it OFF and these controls open up: EQ, compression, stereo width, loudness and more. Small moves — 1-2 dB at a time — and A/B as you go.", sel: "#autoMode"},
+ {t: "The mastering chain", x: "Behind the scenes: vocals are separated, polished, timing-fixed to the grid (words are nudged, never cut), mixed, then mastered in chunks to -14 LUFS streaming loudness with a -1 dB true-peak ceiling. Buried vocals get lifted automatically where the beat overpowers them.", sel: "#manualOptions"},
+ {t: "Progress + ETA", x: "The bar shows the whole job as a percentage. In the final stretch it switches to a countdown — that's your encode finishing. Long jobs resume by themselves if the server restarts: same job number, nothing lost.", sel: "#progress"},
+ {t: "A/B, re-render, download", x: "When it lands: A/B plays original vs master back-to-back. The vocal gain slider + Re-render lets you rebalance the vocal and hear it before committing. Download files the master into your library AND your Downloads folder; Discard deletes the temp copy — your original is always safe.", sel: "#out"}
+],
+lyrics: [
+ {t: "Theme + form", x: "Give me a topic, a mood, a story — the more specific, the sharper the bars. 'Rainy bus ride after a double shift' writes better than 'sad'.", sel: "#lyricsForm"},
+ {t: "Artist style + explicit toggle", x: "Style shapes cadence and vocabulary — the flow of an artist, never their actual words. Explicit ON weaves profanity in; OFF keeps it clean for radio and family.", sel: "#lyricsForm"},
+ {t: "Your draft", x: "Everything generated arrives labeled as an AI draft. Edit lines freely — once you've changed over half the words, the credit becomes 'Written by you', because by then it is.", sel: "#lyricsText"},
+ {t: "Copy + .LRC", x: "Copy puts the lyrics on your clipboard. The LRC button exports timed lyric files for karaoke-style players and video captions.", sel: "#copyBtn"}
+],
+dj: [
+ {t: "Two decks", x: "Load a track on each deck from the library (→A and →B buttons). Deck A plays left of the crossfader, Deck B right; middle is both at once.", sel: "#deckA"},
+ {t: "Auto-mix", x: "The smart mixer scores every possible next track by BPM, key and energy, then blends them like a festival set — beatmatched when tempos are close, EQ sweeps or echo-outs when they're not.", sel: "#autoMixBtn"},
+ {t: "Startup mix", x: "This toggle makes Rokdabus start a mix by itself the moment the page opens — a festival arc that climbs to peak energy around 70% through, then cools down.", sel: "#djAutostart"},
+ {t: "Cue points", x: "Set a cue to mark exactly where a drop lands; Go jumps back to it instantly. DJs use cues to restart a blend cleanly when a transition gets messy.", sel: "#cueSetA"}
+],
+studio: [
+ {t: "Add tracks", x: "The studio is an 8-track DAW. Add a track for vocals, one for the beat, one for adlibs — layer them and mix each one separately.", sel: "#addTrackBtn"},
+ {t: "Built-in beat maker", x: "Need a backing track fast? Pick a genre and bars here and the studio cooks one in place, already on the timeline.", sel: "#beatForm"},
+ {t: "Clip panel", x: "Select any clip to trim it, fade it in or out, and set its gain. Fades hide edit clicks; gain balances clips recorded at different levels.", sel: "#clipPanel"},
+ {t: "Export", x: "When the mix sounds right, export the mixdown (one mastered file) or the stems (every track separate, for another engineer or a remix)."}
+],
+player: [
+ {t: "Now playing", x: "Everything you make lives in this library — Generated first, then Music and Downloads. Tap a track and it plays here.", sel: "#nowPlaying"},
+ {t: "EQ drawer", x: "A graphic EQ for playback: lift the low band for weight, the highs for air. Presets give you starting points — trust your ears over the graph.", sel: "#eqPreset"},
+ {t: "Queue controls", x: "Previous / next walk the queue in order. The player remembers where your freshest work is — new downloads land at the top."}
+],
+files: [
+ {t: "Everything you own", x: "Generated tracks, uploads and temp A/B files in one place, each with its own player — hear a track before you decide anything.", sel: "#files"},
+ {t: "Download + delete", x: "Download pulls a copy onto your device. Delete removes it for good; temp A/B files can be previewed but not downloaded — they're comparisons, not keepers."},
+ {t: "Backup", x: "The backup panel snapshots your whole library. If the phone ever dies, a backup is the difference between a bad day and a lost catalog.", sel: "#backupStatus"}
+],
+convert: [
+ {t: "Convert form", x: "Drop any audio file, pick the target format. MP3 for sharing, WAV for quality, FLAC for both, OGG/M4A for compatibility.", sel: "#convertForm"},
+ {t: "Job progress", x: "Conversions run as jobs with the same progress bar as everything else — percentage, then done. The original file is never modified.", sel: "#jobBox"}
+],
+video: [
+ {t: "Video editor", x: "Trim, speed, color grade, rotate, resize, volume, fades and timed text overlays — a real editor, rendered in one pass so nothing degrades.", sel: "#editForm"},
+ {t: "Generator styles", x: "Waveform, canvas and TikTok-style renders turn a track into a video automatically. Pick the audio, pick the look, render.", sel: "#audioFile"},
+ {t: "Join + production", x: "Join Clips stitches 2-6 clips with cuts or dissolves. The Production page builds full-length videos from library tracks — no re-uploading anything.", sel: "#editorBox"}
+],
+separate: [
+ {t: "Separation form", x: "Upload a song and the engine splits it into stems — vocals and instrumental — fully offline, with a DSP engine (no cloud, no upload leaves the phone).", sel: "#sepForm"},
+ {t: "Stem layers", x: "Each stem gets its own player and level. Solo the vocal to hear it naked; mute it to hear exactly what the beat is doing.", sel: "#layersBox"},
+ {t: "Remix the stems", x: "The mix button rebalances the stems into a new version — vocal up, beat down, your call — and renders it as a fresh file.", sel: "#mixBtn"}
+],
+freestyle: [
+ {t: "Pick your beat", x: "Choose a beat and a BPM that matches your flow. The metronome keeps you honest — breathe on the snare.", sel: "#beatSel"},
+ {t: "Modes", x: "Phrase sparks throw you a line to start from; full generation writes complete verses on a theme. Both are labeled AI drafts — your delivery makes them yours.", sel: "#modeTabs"},
+ {t: "Generate", x: "Full verses, hooks and all. Generate three or four, steal the best lines from each — that's how pros actually write.", sel: "#fullGen"}
+],
+default: [
+ {t: "I'm Rockdabus", x: "Tap any function name in this panel and I'll explain what it does. Or hit Walk me through this page and I'll guide you control by control."},
+ {t: "Tips rotate", x: "Every page has its own tips, written for what you're doing there. The Another tip button cycles them."}
+]
+};
+var guideBox = document.getElementById("rbBuddyGuide");
+var guideNav = document.getElementById("rbGuideNav");
+var walkBtn = document.getElementById("rbBuddyWalk");
+var walkList = null, walkIdx = -1;
+function clearGuideHl() {
+  var els = document.querySelectorAll(".rb-guide-hl");
+  for (var i = 0; i < els.length; i++) els[i].classList.remove("rb-guide-hl");
+}
+function renderGuideList() {
+  if (!guideBox) return;
+  var g = GUIDES[page] || GUIDES.default;
+  guideBox.innerHTML = "";
+  g.forEach(function (st) {
+    var d = document.createElement("details");
+    d.className = "rb-guide-item";
+    var sm = document.createElement("summary");
+    sm.textContent = st.t;
+    var p = document.createElement("p");
+    p.textContent = st.x;
+    d.appendChild(sm); d.appendChild(p);
+    guideBox.appendChild(d);
+  });
+}
+function showGuideStep(i) {
+  if (!walkList) return;
+  clearGuideHl();
+  walkIdx = Math.max(0, Math.min(i, walkList.length - 1));
+  var st = walkList[walkIdx];
+  panelTip.textContent = "Step " + (walkIdx + 1) + "/" + walkList.length +
+    ": " + st.t + " — " + st.x;
+  if (st.sel) {
+    var el = document.querySelector(st.sel);
+    if (el) {
+      el.classList.add("rb-guide-hl");
+      try { el.scrollIntoView({block: "center", behavior: "smooth"}); } catch (e) {}
+    }
+  }
+  var back = document.getElementById("rbGuideBack");
+  var next = document.getElementById("rbGuideNext");
+  if (back) back.disabled = walkIdx === 0;
+  if (next) next.textContent = walkIdx === walkList.length - 1 ? "Finish ✓" : "Next ▶";
+}
+function endWalk(msg) {
+  clearGuideHl();
+  walkList = null; walkIdx = -1;
+  if (guideNav) guideNav.hidden = true;
+  if (msg) { panelTip.textContent = msg; showBubble(msg, 5000); }
+}
+if (walkBtn) {
+  walkBtn.addEventListener("click", function () {
+    walkList = GUIDES[page] || GUIDES.default;
+    if (guideNav) guideNav.hidden = false;
+    if (panel.hidden) openPanel();
+    showGuideStep(0);
+  });
+}
+var gb = document.getElementById("rbGuideBack");
+var gn = document.getElementById("rbGuideNext");
+var gd = document.getElementById("rbGuideDone");
+if (gb) gb.addEventListener("click", function () { showGuideStep(walkIdx - 1); });
+if (gn) gn.addEventListener("click", function () {
+  if (walkList && walkIdx >= walkList.length - 1) {
+    endWalk("That's the whole page. You're set — tap me anytime you're stuck. 🎧");
+  } else { showGuideStep(walkIdx + 1); }
+});
+if (gd) gd.addEventListener("click", function () { endWalk("Walkthrough closed. The dropdowns below still explain every function."); });
+var _origOpenPanel = openPanel;
+openPanel = function () { _origOpenPanel(); renderGuideList(); };
+
+/* === Homepage shrink (2026-10-22): after the startup intro, the big
+   hero Rokdabus shrinks down into the buddy in the corner. === */
+if (page === "home") {
+  var shrinkDone = false;
+  function heroShrink() {
+    if (shrinkDone) return; shrinkDone = true;
+    try {
+      var hero = document.querySelector(".hero-mascot");
+      if (!hero || !disc) return;
+      var hr = hero.getBoundingClientRect(), dr = disc.getBoundingClientRect();
+      if (!hr.width || !dr.width) return;
+      var c = hero.cloneNode();
+      c.removeAttribute("id");
+      c.style.cssText = "position:fixed;z-index:1500;pointer-events:none;margin:0;left:" + hr.left + "px;top:" + hr.top + "px;width:" + hr.width + "px;height:" + hr.height + "px;transition:all .95s cubic-bezier(.5,-.1,.2,1);";
+      document.body.appendChild(c);
+      requestAnimationFrame(function () { requestAnimationFrame(function () {
+        c.style.left = dr.left + "px"; c.style.top = dr.top + "px";
+        c.style.width = dr.width + "px"; c.style.height = dr.height + "px";
+        c.style.opacity = ".2"; c.style.borderRadius = "50%";
+      }); });
+      setTimeout(function () {
+        c.remove();
+        disc.classList.add("rb-arrive");
+        setTimeout(function () { disc.classList.remove("rb-arrive"); }, 950);
+      }, 1000);
+    } catch (e) {}
+  }
+  var introEl = document.getElementById("prhymeIntro");
+  if (introEl && "MutationObserver" in window) {
+    var mo2 = new MutationObserver(function () {
+      if (!document.getElementById("prhymeIntro")) {
+        mo2.disconnect(); setTimeout(heroShrink, 400);
+      }
+    });
+    mo2.observe(document.body, {childList: true});
+    setTimeout(function () { mo2.disconnect(); }, 25000);
+  }
+}
 })();
