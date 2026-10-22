@@ -307,11 +307,34 @@ HeavyMetal:[140, 160],
 Breakbeat: [130, 140],
 Dubstep:   [140, 150],
 Reggaeton: [95, 100],
-Phonk:     [130, 140]
+Phonk:     [130, 140],
+RnB:       [85, 95],
+Dancehall: [95, 105],
+Blues:     [80, 110],
+Ambient:   [60, 90],
+Classical: [60, 120],
+Country:   [90, 120],
+EDM:       [128, 150],
+Experimental: [80, 140],
+Pop:       [100, 130],
+LoFi:      [70, 90],
+Jazz:      [90, 140],
+Soul:      [85, 105],
+Gospel:    [90, 120],
+Trance:    [135, 145],
+DrumNB:    [170, 180],
+Garage:    [130, 140],
+Synthwave: [90, 118],
+JerseyClub: [130, 140],
+BaileFunk: [130, 150],
+Afroswing: [100, 110],
+MemphisRap: [130, 150],
+DetroitTechno: [125, 135],
+Hardstyle: [150, 160]
 };
 (function () {
 const KEY = "djrill-genre";
-const VALID = ["HipHop","Drill","Trap","BoomBap","House","Techno","DnB","Afrobeats","RockNRoll","HeavyMetal","Breakbeat","Dubstep","Reggaeton","Phonk"];
+const VALID = ["HipHop","Drill","Trap","BoomBap","RnB","Dancehall","Blues","Ambient","Classical","Country","EDM","Experimental","Pop","RockNRoll","HeavyMetal","LoFi","Afrobeats","Reggaeton","House","Techno","Dubstep","Phonk","Jazz","Soul","Gospel","Trance","DrumNB","Garage","Synthwave","Breakbeat","DnB","JerseyClub","BaileFunk","Afroswing","MemphisRap","DetroitTechno","Hardstyle"];
 function get() {
 const v = localStorage.getItem(KEY);
 return VALID.includes(v) ? v : "HipHop";
