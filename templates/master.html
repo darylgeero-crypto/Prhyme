@@ -73,7 +73,8 @@
   <label><input type="checkbox" name="ab_compare" value="1" checked> Generate A/B compare previews (30s excerpts)</label><br><br>
   <label><input type="checkbox" name="beat_source" value="keep" checked> Keep original beat (uncheck to generate new backing beat)</label><br><br>
   <label>Seed: <input type="number" name="seed" placeholder="Random"></label><br><br>
-  <label><input type="checkbox" name="timing_fix" value="1"> Timing Fix</label><br><br>
+  <label><input type="checkbox" name="timing_fix" value="1" checked> Timing Fix</label><br><br>
+  <label><input type="checkbox" name="vocal_polish" value="1" checked> Vocal Polish (clarity)</label><br><br>
   <label><input type="checkbox" name="stems" value="1"> Export Stems</label><br><br>
   
   </div>
@@ -224,7 +225,21 @@ document.getElementById('f').addEventListener('submit', async (e) => {
   const msg = document.getElementById('msg');
   out.textContent = 'Uploading...';
   prog.style.display = 'none';
+
+  function syncMasterToggles(fd, form) {
+    // Checkboxes only reach FormData when checked; the backend expects
+    // explicit on/off. Send the truth for every toggle (fix 2026-10-21:
+    // Timing Fix / A/B could never be turned off from this page).
+    function set(name, val) { if (val === null) return; if (fd.set) fd.set(name, val); }
+    var t = form.querySelector('[name=timing_fix]');
+    if (t) set('timing_fix', t.checked ? 'on' : 'off');
+    var p = form.querySelector('[name=vocal_polish]');
+    if (p) set('vocal_polish', p.checked ? 'on' : 'off');
+    var a = form.querySelector('[name=ab_compare]');
+    if (a) set('ab_compare', a.checked ? '1' : '0');
+  }
   const fd = new FormData(e.target);
+  syncMasterToggles(fd, e.target);
   try {
     const r = await fetch('/api/master', {method:'POST', body:fd});
     const j = await r.json();
@@ -248,6 +263,7 @@ document.getElementById('f').addEventListener('submit', async (e) => {
       var form = document.querySelector('form');
       if (!form) return;
       var fd = new FormData(form);
+      syncMasterToggles(fd, form);
       fd.set('vocal_boost_db', gain);
       if (typeof toast === 'function') toast('Re-rendering with vocal gain ' + gain + ' dB...');
       fetch('/api/master', {method:'POST', body:fd}).then(function(r){return r.json();}).then(function(j){

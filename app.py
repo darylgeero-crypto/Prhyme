@@ -6062,6 +6062,14 @@ def download(fname):
     if not os.path.isfile(p):
         p = os.path.join(TEMP_BEATS_DIR, safe)
     if not os.path.isfile(p):
+        # Fresh master results sit in per-job temp folders until kept;
+        # the result-screen Download button points here BEFORE keep runs
+        # (was 404 - Daryl's broken download button, fixed 2026-10-21).
+        import glob as _glob
+        _hits = _glob.glob(os.path.join(OUTPUT_DIR, "temp_masters", "*", safe))
+        if _hits:
+            p = _hits[0]
+    if not os.path.isfile(p):
         abort(404)
     # Serve inline (not as attachment) so <audio> elements can stream/play.
     # Explicit MIME types for reliable WebView playback.
