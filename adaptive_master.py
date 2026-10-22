@@ -410,3 +410,155 @@ def lift_buried_vocals(voc, inst, sr, dip_db=4.0, headroom_db=1.0,
     return out.astype(np.float32, copy=False), report
 
 
+
+
+def stem_balance_map(voc, inst, sr, win_s=2.0):
+    """Per-window balance map from two stems: like
+    vocal_prominence_map but also returns the instrumental's in-band
+    levels, which two-way balancing needs (a window can only be
+    balanced when BOTH stems carry real energy there). Returns
+    (margins_db, present_mask, vocal_band_db, inst_band_db)."""
+    import numpy as np
+    n = min(len(voc), len(inst))
+    w = max(1, int(win_s * sr))
+    nwin = n // w
+    margins = np.full(nwin, np.nan, dtype=np.float64)
+    vdb = np.full(nwin, -120.0, dtype=np.float64)
+    bdb = np.full(nwin, -120.0, dtype=np.float64)
+    present = np.zeros(nwin, dtype=bool)
+    for i in range(nwin):
+        s, e = i * w, (i + 1) * w
+        v = voc[s:e].astype(np.float64, copy=False)
+        b = inst[s:e].astype(np.float64, copy=False)
+        if v.ndim > 1:
+            v = v.mean(axis=1)
+        if b.ndim > 1:
+            b = b.mean(axis=1)
+        vv = _band_db(v, sr)
+        bb = _band_db(b, sr)
+        vdb[i] = vv
+        bdb[i] = bb
+        margins[i] = vv - bb
+        present[i] = vv > -58.0
+    return margins, present, vdb, bdb
+
+
+def _smooth3(x):
+    import numpy as np
+    if len(x) >= 3:
+        ker = np.array([0.25, 0.5, 0.25])
+        return np.convolve(np.pad(x, (1, 1), mode="edge"), ker,
+                           mode="valid")
+    return x
+
+
+def balance_gain_curves(voc, inst, sr, dip_db=4.0, headroom_db=1.0,
+                        max_move_db=6.0, win_s=2.0):
+    """Two-way balance curves (Daryl's spec, 2026-10-22): per window,
+    the vocal and the beat move TOWARD EACH OTHER and meet between
+    their gain difference — the quieter side rises by half the gap,
+    the louder side drops by half. A window whose margin sits more
+    than dip_db BELOW the track baseline is buried (vocal up, beat
+    down); more than dip_db ABOVE baseline is vocal-hot (vocal down,
+    beat up). Targets leave headroom_db of margin so balanced windows
+    land just off the baseline instead of slamming onto it. Only
+    windows where both stems carry real energy move — an a cappella
+    break or a beat-only intro is never 'balanced' into mush. Each
+    side's move is capped at max_move_db. Returns (voc_curve_db,
+    inst_curve_db, report) with smoothed per-window gains in dB."""
+    import numpy as np
+    margins, present, vdb, bdb = stem_balance_map(voc, inst, sr, win_s)
+    nwin = len(margins)
+    report = {"windows": int(nwin), "present": int(present.sum()),
+              "moved": 0, "baseline_db": None,
+              "worst_before_db": None, "worst_dev_db": None}
+    zero = np.zeros(max(nwin, 0))
+    if nwin == 0 or not present.any():
+        return zero, zero.copy(), report
+    pres = margins[present]
+    baseline = float(np.median(pres))
+    report["baseline_db"] = baseline
+    report["worst_before_db"] = float(np.min(pres))
+    report["worst_dev_db"] = float(np.max(np.abs(pres - baseline)))
+    target_hi = baseline - headroom_db
+    target_lo = baseline + headroom_db
+    aud_floor_v = float(np.median(vdb[present])) - 45.0
+    bfloor = float(np.median(bdb[present])) - 45.0
+    both = present & (vdb > aud_floor_v) & (bdb > bfloor)
+    dev = np.nan_to_num(margins, nan=baseline) - baseline
+    need = np.zeros(nwin)
+    buried = both & (dev < -dip_db)
+    hot = both & (dev > dip_db)
+    need[buried] = target_hi - margins[buried]
+    need[hot] = target_lo - margins[hot]
+    half = np.clip(need / 2.0, -max_move_db, max_move_db)
+    voc_curve = np.where(need != 0, half, 0.0)
+    inst_curve = np.where(need != 0, -half, 0.0)
+    report["moved"] = int((np.abs(half) > 0.05).sum())
+    return _smooth3(voc_curve), _smooth3(inst_curve), report
+
+
+def _apply_curve_db(x, curve_db, sr, win_s=2.0):
+    """Apply a smoothed per-window dB curve to an in-RAM stem
+    (per-sample linear interpolation between window centers, the
+    same ramp shape lift_buried_vocals uses)."""
+    import numpy as np
+    if len(curve_db) == 0 or not np.any(np.abs(curve_db) > 0.001):
+        return x
+    w = max(1, int(win_s * sr))
+    nwin = len(curve_db)
+    n = min(len(x), nwin * w)
+    centers = (np.arange(nwin) * w + w // 2).astype(np.float64)
+    xs = np.arange(n, dtype=np.float64)
+    gain = np.power(10.0, np.interp(xs, centers, curve_db)
+                    / 20.0).astype(np.float32)
+    out = x[:n] * gain[:, None]
+    if len(x) > n:
+        out = np.concatenate([out, x[n:]], axis=0)
+    return out.astype(np.float32, copy=False)
+
+
+def balance_stems(voc, inst, sr, passes=3, tol_db=0.75, dip_db=4.0,
+                  headroom_db=1.0, max_move_db=6.0, win_s=2.0):
+    """Meet-in-the-middle balancing over up to `passes` measurement
+    passes (Daryl, 2026-10-22: 'can even make 2 or 3 passes over same
+    sections if needed to get them correctly balanced'). Each pass
+    re-measures the corrected stems and moves only what is still out
+    of line; it stops early when the worst deviation from the track
+    baseline is within tol_db. Gain is only ever redistributed
+    between the two stems — words are never cut and neither stem is
+    silenced. Returns (voc, inst, report)."""
+    import numpy as np
+    v = voc.astype(np.float32, copy=False)
+    b = inst.astype(np.float32, copy=False)
+    report = {"passes": 0, "moved": 0, "baseline_db": None,
+              "worst_before_db": None, "worst_after_db": None}
+    for p in range(max(1, int(passes))):
+        vc, ic, rep = balance_gain_curves(v, b, sr, dip_db, headroom_db,
+                                          max_move_db, win_s)
+        if p == 0:
+            report["baseline_db"] = rep["baseline_db"]
+            report["worst_before_db"] = rep["worst_before_db"]
+        if rep["moved"] == 0:
+            break
+        if p > 0 and rep["worst_dev_db"] is not None \
+                and rep["worst_dev_db"] <= tol_db:
+            break
+        v = _apply_curve_db(v, vc, sr, win_s)
+        b = _apply_curve_db(b, ic, sr, win_s)
+        report["passes"] = p + 1
+        report["moved"] += rep["moved"]
+    margins, present, vdb, bdb = stem_balance_map(v, b, sr, win_s)
+    if present.any() and report["baseline_db"] is not None:
+        # 'Worst' is judged only over windows balancing may touch
+        # (both stems carrying real energy) — an a cappella break has
+        # a huge margin by nature and is not a balance failure.
+        aud_floor_v = float(np.median(vdb[present])) - 45.0
+        bfloor = float(np.median(bdb[present])) - 45.0
+        elig = present & (vdb > aud_floor_v) & (bdb > bfloor)
+        pool = margins[elig] if elig.any() else margins[present]
+        report["worst_after_db"] = float(
+            np.max(np.abs(pool - report["baseline_db"])))
+    else:
+        report["worst_after_db"] = report["worst_before_db"]
+    return v, b, report

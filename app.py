@@ -1542,7 +1542,60 @@ def master_adaptive(src_path, masterfx, chain, mopts, prog, SR=44100, checkpoint
         return master_chunked(src_path, masterfx, chain, mopts, prog, SR)
 
 
-def _prominence_prep(src_path, tdir, prog, SR=44100):
+def _fx_any(mopts):
+    """True when any creative FX (trackfx) is switched on in mopts."""
+    return any((mopts or {}).get(k) for k in (
+        "fx_radio", "fx_tv", "fx_vinyl", "fx_hp_on", "fx_lp_on",
+        "fx_echo_on"))
+
+
+def _apply_fx_to_file(path, mopts, bpm, SR=44100):
+    """Apply the trackfx creative chain to an audio file on disk,
+    chunk-wise (30 s blocks, 2 s crossfade overlaps) so long streamed
+    masters get their Full Mix FX too — that path used to skip FX
+    outright (part of Daryl's dead-FX report, 2026-10-22). Replaces
+    the file in place; returns the applied FX names ([] if none)."""
+    import soundfile as sf
+    info = sf.info(path)
+    sr = info.samplerate
+    total = int(info.frames)
+    if total == 0:
+        return []
+    tmp = path + ".fx.wav"
+    block = int(30 * sr)
+    ov = int(2 * sr)
+    applied = []
+    prev_tail = None
+    with sf.SoundFile(path) as fin, sf.SoundFile(
+            tmp, "w", samplerate=sr, channels=info.channels,
+            subtype="PCM_16") as fout:
+        pos = 0
+        while pos < total:
+            end = min(total, pos + block + ov)
+            fin.seek(pos)
+            data = fin.read(end - pos, dtype="float32", always_2d=True)
+            proc, names = trackfx.apply_vocal_fx(
+                data, mopts, bpm=float(bpm))
+            if not applied:
+                applied = names
+            take = min(block, total - pos)
+            chunk = proc[:take]
+            if prev_tail is not None and len(chunk) >= ov:
+                fade_in = np.linspace(0.0, 1.0, ov,
+                                      dtype=np.float32)[:, None]
+                chunk = chunk.copy()
+                chunk[:ov] = prev_tail * (1.0 - fade_in) \
+                    + chunk[:ov] * fade_in
+            fout.write(chunk)
+            prev_tail = proc[take:take + ov].copy() \
+                if len(proc) > take else None
+            pos += take
+            del data, proc, chunk
+    os.replace(tmp, path)
+    return applied
+
+
+def _prominence_prep(src_path, tdir, prog, SR=44100, mopts=None, bpm=90.0):
     """Vocal-balance correction for the >4 min keep fast path.
 
     That path sends the raw source straight to sectioned mastering,
@@ -1599,32 +1652,85 @@ def _prominence_prep(src_path, tdir, prog, SR=44100):
         voc_mm.flush(); inst_mm.flush()
         if sr_in != SR:
             return None, 0
-        curve, rep = adaptive_master.prominence_gain_curve(
-            voc_mm, inst_mm, SR)
-        lifted = int(rep.get("lifted", 0))
-        if lifted == 0:
-            return None, 0
-        # per-sample gain from the window curve (same interp as
-        # lift_buried_vocals), applied segment-wise into the mix file
-        w = int(2.0 * SR)
-        nwin = len(curve)
-        centers = (np.arange(nwin) * w + w // 2).astype(np.float64)
-        out_path = os.path.join(tdir, "prep_mix.wav")
-        with sf.SoundFile(out_path, "w", samplerate=SR, channels=2,
-                          subtype="PCM_16") as out:
+        mopts = mopts or {}
+        fx_target = mopts.get("fx_target", "vocal")
+        fx_names = []
+
+        def _apply_mm(mm, curve):
+            # per-sample gain from a window curve, applied to a memmap
+            # in 30 s steps (never loads the whole stem into RAM)
+            w = int(2.0 * SR)
+            nwin = len(curve)
+            centers = (np.arange(nwin) * w + w // 2).astype(np.float64)
             step = int(30 * SR)
             for s0 in range(0, total, step):
                 s1 = min(total, s0 + step)
                 xs = np.arange(s0, s1, dtype=np.float64)
                 gdb = np.interp(xs, centers, curve)
                 gain = np.power(10.0, gdb / 20.0).astype(np.float32)
-                mixseg = (np.asarray(voc_mm[s0:s1]) * gain[:, None]
+                mm[s0:s1] = np.asarray(mm[s0:s1]) * gain[:, None]
+            mm.flush()
+
+        # Creative FX on the vocal stem, segment-wise, BEFORE balancing
+        # (same order as the standard chain: FX, then balance, then mix).
+        # This fast path used to ignore FX entirely — with the form
+        # parsing bug, that made 'FX Target' a dead control on every
+        # real-length song (Daryl's report, 2026-10-22).
+        if fx_target == "vocal" and _fx_any(mopts):
+            step = int(60 * SR)
+            for s0 in range(0, total, step):
+                s1 = min(total, s0 + step)
+                seg, names = trackfx.apply_vocal_fx(
+                    np.asarray(voc_mm[s0:s1]), mopts, bpm=float(bpm))
+                voc_mm[s0:s1] = seg
+                if not fx_names:
+                    fx_names = names
+                del seg
+            voc_mm.flush()
+
+        # Two-way meet-in-the-middle balance, up to 3 passes over the
+        # same sections (Daryl's spec, 2026-10-22): buried windows get
+        # vocal-up + beat-down, hot windows the reverse, re-measured
+        # after every pass until nothing is still out of line.
+        moved = 0
+        if mopts.get("vocal_prominence", True):
+            for _p in range(3):
+                vc, ic, rep = adaptive_master.balance_gain_curves(
+                    voc_mm, inst_mm, SR)
+                if int(rep.get("moved", 0)) == 0:
+                    break
+                if _p > 0 and rep.get("worst_dev_db") is not None \
+                        and rep["worst_dev_db"] <= 0.75:
+                    break
+                _apply_mm(voc_mm, vc)
+                _apply_mm(inst_mm, ic)
+                moved += int(rep["moved"])
+        mix_fx = fx_target == "mix" and _fx_any(mopts)
+        if moved == 0 and not fx_names and not mix_fx:
+            return None, 0
+        out_path = os.path.join(tdir, "prep_mix.wav")
+        with sf.SoundFile(out_path, "w", samplerate=SR, channels=2,
+                          subtype="PCM_16") as out:
+            step = int(30 * SR)
+            for s0 in range(0, total, step):
+                s1 = min(total, s0 + step)
+                mixseg = (np.asarray(voc_mm[s0:s1])
                           + np.asarray(inst_mm[s0:s1]))
+                if mix_fx:
+                    mixseg, names = trackfx.apply_vocal_fx(
+                        mixseg, mopts, bpm=float(bpm))
+                    if not fx_names:
+                        fx_names = names
                 out.write(mixseg)
                 del mixseg
-        prog(3, f"🔊 Vocal prominence — lifted {lifted} buried "
-                f"spot(s) before section mastering…")
-        return out_path, lifted
+        _bits = []
+        if moved:
+            _bits.append(f"balanced {moved} spot(s) two-way")
+        if fx_names:
+            _bits.append("FX: " + ", ".join(fx_names))
+        prog(3, "🔊 Prep — " + "; ".join(_bits)
+             + " before section mastering…")
+        return out_path, moved
     except JobCancelled:
         raise
     except Exception:
@@ -1715,9 +1821,16 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                 # writes a corrected mix and the section analysis +
                 # mastering below run on THAT — analysis at the
                 # optimum spot, after the balance is fixed.
-                if mopts.get("vocal_prominence", True) and \
-                        _ADAPTIVE_AVAILABLE:
-                    _pp, _nl = _prominence_prep(src_path, tdir, prog, SR)
+                if _ADAPTIVE_AVAILABLE and (
+                        mopts.get("vocal_prominence", True)
+                        or _fx_any(mopts)):
+                    try:
+                        _bpm_f = float(bpm_opt)
+                    except (TypeError, ValueError):
+                        _bpm_f = 90.0
+                    _pp, _nl = _prominence_prep(
+                        src_path, tdir, prog, SR,
+                        mopts=mopts, bpm=_bpm_f)
                     if _pp:
                         src_path = _pp
                 if _use_adaptive:
@@ -1956,25 +2069,27 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         else:
             vp_fx = vp
 
-        # 🔊 Vocal prominence (2026-10-22, Daryl's order): adaptive
-        # mastering must catch spots where the background beat overpowers
-        # the vocal and lift the vocal there — automatically. Keep mode
-        # re-sums the stems at unity, so a vocal buried in the source used
-        # to stay buried. Only the vocal is lifted, only where it is
-        # present but under the beat; the beat is never touched and no
-        # words are ever cut.
+        # 🔊 Two-way balance (2026-10-22, Daryl's spec): per window the
+        # vocal and the beat move TOWARD EACH OTHER and meet between
+        # their gain difference — buried vocal rises while the beat
+        # ducks, vocal-hot spots do the reverse — over up to 3
+        # measurement passes. Keep mode re-sums the stems, so without
+        # this a vocal buried in the source stayed buried. Words are
+        # never cut; gain is only redistributed between the stems.
         if _keep_original and _keep_inst is not None and _ADAPTIVE_AVAILABLE \
                 and mopts.get("vocal_prominence", True):
             try:
-                vp_fx, _prom_rep = adaptive_master.lift_buried_vocals(
-                    vp_fx, _keep_inst, SR)
-                if _prom_rep and _prom_rep.get("lifted"):
-                    prog(64, f"🔊 Vocal prominence — lifted "
-                             f"{_prom_rep['lifted']} buried spot(s) "
-                             f"(worst {_prom_rep['worst_before_db']:.0f} dB → "
-                             f"{_prom_rep['worst_after_db']:.0f} dB)")
+                vp_fx, _keep_inst, _bal_rep = \
+                    adaptive_master.balance_stems(
+                        vp_fx, _keep_inst, SR, passes=3)
+                if _bal_rep and _bal_rep.get("moved"):
+                    prog(64, f"🔊 Balance — {_bal_rep['moved']} spot(s) "
+                             f"met in the middle over "
+                             f"{_bal_rep['passes']} pass(es) "
+                             f"(worst now "
+                             f"{_bal_rep['worst_after_db']:.1f} dB off)")
             except Exception as _pe:
-                print(f"vocal prominence skipped: {_pe}")
+                print(f"vocal balance skipped: {_pe}")
 
         prog(65, "Mixing — balanced vocal/instrumental…")
         boost_db = float(mopts.get("vocal_boost_db", 1.5))
@@ -2146,7 +2261,17 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
             mix, fx_applied = trackfx.apply_vocal_fx(
                 mix, mopts, bpm=float(bpm))
         elif mopts.get("fx_target", "vocal") == "mix" and _streamed:
-            prog(78, "🎛 Mix FX skipped on streamed long master (low-RAM)…")
+            # Streamed long masters get their Full Mix FX too, applied
+            # chunk-wise to the on-disk mix (used to be skipped, which
+            # made the FX Target control feel dead on long songs).
+            try:
+                _fxn = _apply_fx_to_file(_stream_wav, mopts,
+                                         float(bpm), SR)
+                if _fxn:
+                    fx_applied = _fxn
+                    prog(78, "🎛 Creative FX — full mix (streamed)…")
+            except Exception as _fxe:
+                print(f"streamed mix FX skipped: {_fxe}")
 
         # lyric-integrity gate before mastering
         if _streamed:
@@ -3744,6 +3869,12 @@ def api_master():
             return max(lo, min(hi, float(request.form.get(name, default))))
         except (TypeError, ValueError):
             return default
+    def _on(name):
+        # HTML checkboxes in master.html submit "1" when checked (and
+        # nothing when unchecked) — parsing for "on" left every FX and
+        # multiband permanently OFF (Daryl's dead-FX report, 2026-10-22).
+        return (request.form.get(name) or "").strip().lower() in (
+            "on", "1", "true", "yes")
     mopts = {
         "chain": chain,
         "target_lufs": _f("target_lufs", None, -24, -6)
@@ -3751,25 +3882,25 @@ def api_master():
         "ceiling_db": _f("ceiling_db", -1.0, -3.0, -0.3),
         "dither": request.form.get("dither", "on") != "off",
         "deess": _f("deess", 0.0, 0.0, 1.0),
-        "multiband": request.form.get("multiband") == "on",
+        "multiband": _on("multiband"),
         "vocal_boost_db": _f("vocal_boost_db", 1.5, -6.0, 12.0),
         "fade_in": _f("fade_in", 0.5, 0.0, 5.0),
         "fade_out": _f("fade_out", 3.0, 0.0, 10.0),
         "vocal_polish": request.form.get("vocal_polish", "on") != "off",
         "timing_fix": request.form.get("timing_fix", "on") != "off",
         # creative FX (trackfx) — all optional, never delete words
-        "fx_radio": request.form.get("fx_radio") == "on",
-        "fx_tv": request.form.get("fx_tv") == "on",
-        "fx_vinyl": request.form.get("fx_vinyl") == "on",
-        "fx_hp_on": request.form.get("fx_hp_on") == "on",
+        "fx_radio": _on("fx_radio"),
+        "fx_tv": _on("fx_tv"),
+        "fx_vinyl": _on("fx_vinyl"),
+        "fx_hp_on": _on("fx_hp_on"),
         "fx_hp_cut": _f("fx_hp_cut", 120.0, 20.0, 20000.0),
-        "fx_lp_on": request.form.get("fx_lp_on") == "on",
+        "fx_lp_on": _on("fx_lp_on"),
         "fx_lp_cut": _f("fx_lp_cut", 8000.0, 20.0, 20000.0),
-        "fx_echo_on": request.form.get("fx_echo_on") == "on",
+        "fx_echo_on": _on("fx_echo_on"),
         "fx_echo_ms": _f("fx_echo_ms", 375.0, 50.0, 2000.0),
         "fx_echo_fb": _f("fx_echo_fb", 0.35, 0.0, 0.6),
         "fx_echo_mix": _f("fx_echo_mix", 0.30, 0.0, 0.5),
-        "fx_echo_sync": request.form.get("fx_echo_sync") == "on",
+        "fx_echo_sync": _on("fx_echo_sync"),
         "fx_target": request.form.get("fx_target", "vocal")
         if request.form.get("fx_target") in ("vocal", "mix") else "vocal",
         "seed": seed,
