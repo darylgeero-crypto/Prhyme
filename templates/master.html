@@ -177,8 +177,15 @@ function startMasterPoll(jobId, out, prog, bar, msg) {
           var _elapsed = Math.floor((_now - _startTime) / 1000);
           var _since = Math.floor((_now - _lastProgTime) / 1000);
           var pmsg = pj.message || (pj.progress + '%');
-          var _sw = _since > 5 ? ' <span style="color:#00e5a0;font-size:0.8em;">● still working ('+_elapsed+'s)</span>' : '';
-          msg.innerHTML = '<span class="prhyming-flash">Prhyming...</span> <span style="font-size:0.85em;color:#888">'+pmsg+'</span>'+_sw;
+          var _sw = _since > 5 ? ' <span style="color:#00e5a0;font-size:0.8em;">● still working</span>' : '';
+          var _tm = '';
+          if (pj.progress >= 85 && pj.progress < 100 && _elapsed > 3) {
+            var _eta = Math.max(1, Math.round(_elapsed * (100 - pj.progress) / pj.progress));
+            _tm = ' <span style="color:#ffd166;font-size:0.8em;">⏱ ~'+_eta+'s left</span>';
+          } else if (pj.progress > 0 && pj.progress < 85) {
+            _tm = ' <span style="color:#888;font-size:0.8em;">⏱ '+_elapsed+'s</span>';
+          }
+          msg.innerHTML = '<span class="prhyming-flash">Prhyming...</span> <span style="font-size:0.85em;color:#888">'+pmsg+'</span>'+_tm+_sw;
         }
         if (pj.status === 'done') {
           clearInterval(poll);

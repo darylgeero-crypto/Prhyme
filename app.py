@@ -326,7 +326,7 @@ def master_chunked(mix, masterfx, chain, mopts, prog, SR=44100):
         return _master_one(chunk)
 
     n_chunks = int(np.ceil(total / chunk_n))
-    prog(80, f"Mastering in {n_chunks} chunks (streaming from disk)...")
+    prog(80, "Mastering in chunks (streaming from disk)...")
 
     import tempfile
     spill = tempfile.mkdtemp(prefix="mchunks_")
@@ -338,7 +338,7 @@ def master_chunked(mix, masterfx, chain, mopts, prog, SR=44100):
             end = min(total, (i + 1) * chunk_n + (overlap_n if i < n_chunks - 1 else 0))
             chunk = _get_chunk(start, end)
             # Free the chunk reference after use
-            prog(80 + int(5 * i / n_chunks), f"Mastering chunk {i+1}/{n_chunks}...")
+            prog(80 + int(5 * i / n_chunks), f"Mastering… {int(100 * (i + 1) / n_chunks)}% of chunks")
             pcm16, report = _master_one(chunk)
             last_report = report
             del chunk
@@ -640,6 +640,31 @@ class JobCancelled(Exception):
     """Raised inside a job's progress update when the user cancelled it."""
 
 
+def _stamp_master_ckpt(job_id, phase):
+    """Best-effort phase stamp in a master job's checkpoint.json, so the
+    startup resume scan can tell finished / errored / cancelled jobs from
+    truly interrupted ones. No-op when the job has no master temp dir."""
+    try:
+        tdir = _temp_master_dir(job_id)
+        if not os.path.isdir(tdir):
+            return
+        p = os.path.join(tdir, "checkpoint.json")
+        data = {}
+        if os.path.exists(p):
+            try:
+                with open(p) as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+        data["job_id"] = job_id
+        data["phase"] = phase
+        with open(p + ".tmp", "w") as f:
+            json.dump(data, f)
+        os.replace(p + ".tmp", p)
+    except Exception:
+        pass
+
+
 def set_job(job_id, **kw):
     with jobs_lock:
         _is_new = job_id not in jobs
@@ -647,6 +672,8 @@ def set_job(job_id, **kw):
                                      "message": "Starting…",
                                      "_ts": time.time()})
         j.update(kw)
+        if kw.get("status") in ("done", "error", "cancelled"):
+            _stamp_master_ckpt(job_id, kw["status"])
         if (j.get("cancel_requested")
                 and kw.get("status") not in ("done", "error", "cancelled")):
             raise JobCancelled()
@@ -933,7 +960,7 @@ def _resume_interrupted_masters():
                     ck = json.load(f)
             except Exception:
                 continue
-            if ck.get("phase") == "done":
+            if ck.get("phase") in ("done", "error", "cancelled"):
                 continue
             job_id = ck.get("job_id")
             if not job_id:
@@ -1235,10 +1262,10 @@ def master_large_sections(src_path, masterfx, chain, mopts, prog, SR=44100, sect
                 sect_ckpt = os.path.join(checkpoint_dir, f"mastered_sect_{idx:03d}.wav")
             # Resume: a checkpointed section is reused straight from disk.
             if sect_ckpt and idx in sections_done and os.path.exists(sect_ckpt):
-                prog(pct, f"Section {idx+1}/{len(section_files)} — already done, skipping…")
+                prog(pct, f"Sections {int(100 * (idx + 1) / len(section_files))}% — already done, skipping…")
                 mastered_files.append(sect_ckpt)
                 continue
-            prog(pct, f"Mastering section {idx+1}/{len(section_files)}…")
+            prog(pct, f"Mastering sections… {int(100 * (idx + 1) / len(section_files))}%")
             pcm16, report = master_chunked(sf, masterfx, chain, mopts,
                                           lambda p, m: prog(pct, m), SR)
             last_report = report
@@ -1353,7 +1380,7 @@ def master_adaptive(src_path, masterfx, chain, mopts, prog, SR=44100, checkpoint
         try:
             for idx, (start_s, end_s, chars) in enumerate(sections):
                 prog(5 + int(70 * idx / len(sections)),
-                     f"Mastering section {idx+1}/{len(sections)} ({chars['energy']} energy, {chars['tempo']} tempo)…")
+                     f"Mastering sections… {int(100 * (idx + 1) / len(sections))}% ({chars['energy']} energy, {chars['tempo']} tempo)…")
                 
                 # Extract section audio (only this section in RAM).
                 # Sections after the first start xfade_n earlier so the
@@ -1449,16 +1476,40 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                 json.dump(_mopts_save, _mf)
         except Exception:
             pass
-        # No accumulation: a new master job clears older master temp dirs.
+        # Crash-resume discovery (2026-10-22): stamp a checkpoint from the
+        # very start, so ANY interrupted master — not just large-section
+        # ones — is found on startup and resumed under the SAME job id.
+        # Large-sections mastering later overwrites it with per-section
+        # progress (finished sections are then skipped on resume).
+        try:
+            with open(os.path.join(tdir, "checkpoint.json"), "w") as _cf:
+                json.dump({"job_id": job_id, "phase": "processing"}, _cf)
+        except Exception:
+            pass
+        # No accumulation: a new master job clears older master temp dirs
+        # — EXCEPT dirs holding a live checkpoint: those belong to an
+        # interrupted job that must stay resumable (2026-10-22).
         try:
             for _jd in os.listdir(TEMP_MASTERS_DIR):
-                if _jd != job_id[:8]:
-                    temp_master_cleanup(_jd)
+                if _jd == job_id[:8]:
+                    continue
+                _ckp = os.path.join(TEMP_MASTERS_DIR, _jd, "checkpoint.json")
+                try:
+                    with open(_ckp) as _cf2:
+                        if json.load(_cf2).get("phase") not in (
+                                "done", "error", "cancelled"):
+                            continue  # interrupted job — keep for resume
+                except Exception:
+                    pass
+                temp_master_cleanup(_jd)
         except OSError:
             pass
         _sext = os.path.splitext(src_path)[1].lower() or ".wav"
         temp_src = os.path.join(tdir, "source" + _sext)
-        shutil.copy2(src_path, temp_src)
+        # Resume passes the temp dir's own source file back in — copying a
+        # file onto itself raises SameFileError and killed every resume.
+        if os.path.abspath(src_path) != os.path.abspath(temp_src):
+            shutil.copy2(src_path, temp_src)
         src_path = temp_src
         chain = mopts.get("chain", "Streaming")
         # Daryl's fast path: large 'keep original' files use 4-min sections
@@ -1647,7 +1698,7 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
             prog(10, f"Rendering {n_bars} bars of {_beat_genre} beat…")
             beat = render_beat_progress(
                 eng, _beat_genre, bpm, n_bars, seed,
-                lambda b, n: prog(10 + int(45 * b / n), f"Beat bar {b}/{n}…"))
+                lambda b, n: prog(10 + int(45 * b / n), f"Beat… {int(100 * b / n)}%"))
 
         # Structure match: the new beat follows the OG's song structure.
         # Per-bar energy of the original instrumental -> per-bar gain on the
@@ -2219,7 +2270,7 @@ def _run_beats_render(job_id, genre, bpm, n_bars, seed, fx, prog, ckey,
         prog(5, f"Rendering {n_bars} bars at {bpm} BPM…")
         beat = render_beat_progress(
             eng, genre, float(bpm), n_bars, seed,
-            lambda b, n: prog(5 + int(70 * b / n), f"Bar {b}/{n}…"))
+            lambda b, n: prog(5 + int(70 * b / n), f"Beat… {int(100 * b / n)}%"))
         fx = fx or {}
         if fx.get("fills"):
             prog(78, "Adding drum fills…")
@@ -2502,7 +2553,7 @@ def run_daw_beat_job(job_id, genre, bpm, n_bars, seed, clip_name):
         prog(5, f"Rendering {n_bars} bars at {bpm} BPM…")
         beat = render_beat_progress(
             eng, genre, float(bpm), n_bars, seed,
-            lambda b, n: prog(5 + int(80 * b / n), f"Bar {b}/{n}…"))
+            lambda b, n: prog(5 + int(80 * b / n), f"Beat… {int(100 * b / n)}%"))
         prog(88, "Adding to Studio…")
         tmp = os.path.join(OUTPUT_DIR, f"{job_id[:8]}_tmp.wav")
         wav_write(tmp, SR, (np.clip(beat, -1, 1) * 32767).astype(np.int16))
