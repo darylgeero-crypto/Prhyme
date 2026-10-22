@@ -618,13 +618,14 @@ if (page === "home") {
   function heroShrink() {
     if (shrinkDone) return; shrinkDone = true;
     try {
-      var hero = document.querySelector(".hero-mascot");
+      var hero = document.querySelector(".home-bg-mascot") || document.querySelector(".hero-mascot");
       if (!hero || !disc) return;
       var hr = hero.getBoundingClientRect(), dr = disc.getBoundingClientRect();
       if (!hr.width || !dr.width) return;
       var c = hero.cloneNode();
       c.removeAttribute("id");
       c.style.cssText = "position:fixed;z-index:1500;pointer-events:none;margin:0;left:" + hr.left + "px;top:" + hr.top + "px;width:" + hr.width + "px;height:" + hr.height + "px;transition:all .95s cubic-bezier(.5,-.1,.2,1);";
+      c.style.opacity = ".9";
       document.body.appendChild(c);
       requestAnimationFrame(function () { requestAnimationFrame(function () {
         c.style.left = dr.left + "px"; c.style.top = dr.top + "px";
