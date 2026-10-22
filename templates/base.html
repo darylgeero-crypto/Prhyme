@@ -290,6 +290,8 @@ function declineTos() {
     <span class="ico">🎵</span><span class="lbl">Player</span></a>
   <a href="{{ url_for('freestyle_page') }}" class="tab {% if active=='freestyle' %}on{% endif %}">
     <span class="ico">🎤</span><span class="lbl">Freestyle</span></a>
+  <a href="{{ url_for('analytics_page') }}" class="tab {% if active=='analytics' %}on{% endif %}">
+    <span class="ico">📊</span><span class="lbl">Stats</span></a>
   <a href="{{ url_for('rokdabus_page') }}" class="tab {% if active=='rockdabus' %}on{% endif %}">
     <span class="ico">🤖</span><span class="lbl">Rockdabus</span></a>
   <a href="{{ url_for('help_page') }}" class="tab {% if active=='help' %}on{% endif %}">
@@ -303,7 +305,7 @@ function declineTos() {
 </nav>
 
 <!-- Billing: upgrade banner + founding badge (injected by JS) -->
-<div id="billBanner" class="bill-banner" hidden><button class="banner-close" onclick="dismissBanner()" aria-label="Dismiss">&times;</button><span id="bannerText">👋 <a href="/signup">Sign up free</a> — 3-day trial, no card needed.</span></div>
+<div id="billBanner" class="bill-banner" hidden><button class="banner-close" onclick="dismissBanner()" aria-label="Dismiss">&times;</button><span id="bannerText">👋 <a href="/signup">Sign up free</a> — free plan, no card needed.</span></div>
 <script>
 function dismissBanner() {
   var b = document.getElementById("billBanner");
@@ -335,7 +337,7 @@ function dismissBanner() {
       b.dataset.shown = "1";
       b.hidden = false;
       b.style.display = "";
-      t.innerHTML = '👋 <a href="{{ url_for('billing.signup') }}">Sign up free</a> — 3-day trial, no card needed.';
+      t.innerHTML = '👋 <a href="{{ url_for('billing.signup') }}">Sign up free</a> — free plan, no card needed.';
       return;
     }
     if (st.is_founding) {
@@ -350,7 +352,10 @@ function dismissBanner() {
       }
     }
     if (!st.active) {
+      if (localStorage.getItem('banner_dismissed') || document.cookie.indexOf('banner_dismissed=1') !== -1) return;
       var b2 = document.getElementById("billBanner");
+      if (b2.dataset.shown) return;
+      b2.dataset.shown = "1";
       b2.hidden = false;
       var t2 = document.getElementById("bannerText"); b2.style.display = ""; if (t2) t2.innerHTML = '⏸ ' + st.detail + ' <a href="{{ url_for('billing.pricing') }}">Upgrade →</a>';
     }

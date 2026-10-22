@@ -2702,6 +2702,11 @@ def run_stems_job(job_id, project):
 
 @app.post("/api/daw/stems")
 def api_daw_stems():
+    # Stems are pay-per-use ($1) with per-tier allowances — meter them
+    # like beats/masters/videos (the DAW itself stays free).
+    ok, resp = _check_and_log_usage("stems")
+    if not ok:
+        return jsonify(resp), 402
     data = request.get_json(force=True, silent=True) or {}
     project = data.get("project")
     if not isinstance(project, dict) or "tracks" not in project:
@@ -2955,7 +2960,7 @@ def community_page():
 
 @app.get("/analytics")
 def analytics_page():
-    return render_template("analytics.html")
+    return render_template("analytics.html", active="analytics")
 
 @app.get("/api/social/feed")
 def api_social_feed():

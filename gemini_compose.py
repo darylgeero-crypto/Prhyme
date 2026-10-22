@@ -13,8 +13,9 @@ import urllib.error
 import threading
 import time
 
-MODELS = ["gemini-3.8-flash", "gemini-3.7-flash",
-          "gemini-3.6-flash", "gemini-3.5-flash"]
+# Only models proven live (2026-10-21/22): the old 3.5–3.8 names don't
+# exist and burned the whole rotation before the fallback could run.
+MODELS = ["gemini-flash-lite-latest", "gemini-3.1-flash-lite"]
 
 _CACHE_DIR = "/storage/emulated/0/djrill/mobile/.gemini_cache"
 
