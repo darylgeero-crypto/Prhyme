@@ -2912,6 +2912,31 @@ def api_social_overview():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.post("/api/daryl/beat")
+def api_daryl_beat():
+    """Daryl-private beat generation through Optimus (his private brain,
+    :5001, this device only). Other users get the standard engine; Optimus
+    itself never leaves the phone. Rebuilt 2026-10-21 - the original route
+    was lost in the 2026-10-17 app.py revert."""
+    import urllib.request as _ur
+    import json as _json
+    payload = request.get_json(force=True, silent=True) or {}
+    try:
+        req = _ur.Request(
+            "http://127.0.0.1:5001/api/optimus/beat",
+            data=_json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        with _ur.urlopen(req, timeout=300) as r:
+            d = _json.loads(r.read())
+    except Exception as e:
+        return jsonify({"ok": False,
+                        "error": f"Optimus unavailable: {e}"}), 502
+    if d.get("ok") and d.get("path"):
+        import os as _os
+        d["file"] = _os.path.basename(d["path"])
+        d["url"] = "http://127.0.0.1:5001/media/" + d["file"]
+    return jsonify(d), (200 if d.get("ok") else 500)
+
 @app.post("/api/dj/mixplay")
 def api_dj_mixplay():
     """Rokdabus generates a curated infinite mix playlist.
