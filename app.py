@@ -4568,7 +4568,8 @@ def _gen_lyrics(data):
             internal_rhyme=bool(data.get("internal_rhyme")),
             multi_boost=bool(data.get("multi_boost")),
             artist=artist,
-            explicit=bool(data.get("parental_advisory") or data.get("explicit")))
+            explicit=bool(data.get("parental_advisory") or data.get("explicit")),
+            bpm=float(data.get("bpm") or 90))
         _txt_check = L.format_lyrics_txt(song, title="check")
         _fp, _words = _fingerprint(_txt_check)
         _too_similar = False
@@ -4606,7 +4607,8 @@ def _gen_lyrics(data):
             internal_rhyme=bool(data.get("internal_rhyme")),
             multi_boost=bool(data.get("multi_boost")),
             artist=artist,
-            explicit=bool(data.get("parental_advisory") or data.get("explicit")))
+            explicit=bool(data.get("parental_advisory") or data.get("explicit")),
+            bpm=float(data.get("bpm") or 90))
     txt = L.format_lyrics_txt(song, title=song.get("title") or (theme or "Untitled"))
     lrc = L.format_lyrics_lrc(song, float(data.get("bpm") or 90),
                               title=song.get("title") or "Untitled")

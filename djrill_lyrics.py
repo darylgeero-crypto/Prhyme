@@ -1424,13 +1424,18 @@ class _LinePool:
         self.genre = genre
         self.keywords = []  # hook-first: set after the hook is built
         self.syl_cap = None  # breath modeling: hard ceiling when set
+        self.bpm_cap = None  # tempo fit: syllables/bar the BPM can carry
+        self.syl_ceiling = None  # hard-ish ceiling (bpm-derived) that
+        # survives the per-verse breath-cap resets
+        self.last_end = ""  # rhyme chain: previous pair's closing sig
         self.lyrical = _is_lyrical_profile(artist_prof)
         self._init_lines(rng, theme, artist_prof, syl_target)
 
     def new_verse(self):
         """Call at the start of each verse so no line repeats within a verse."""
         self.verse_baseline = dict(self.reuse)
-        self.syl_cap = None
+        self.syl_cap = self.syl_ceiling
+        self.last_end = ""  # chains weave within a verse, not across
 
     def _init_lines(self, rng, theme, artist_prof, syl_target):
         lines = list(VERSE_LINES.get(theme, VERSE_LINES["street"]))
@@ -1453,6 +1458,21 @@ class _LinePool:
                  "payoff": text in _PAYOFF_TEXTS})
         self.syl_target = syl_target
         self.artist_syl = artist_prof.get("syl_range") if artist_prof else None
+        # Rhyme FAMILIES: lines from DIFFERENT authored rhyme keys whose
+        # last-two-words vowel signatures match are multisyllabic slant
+        # rhymes of each other ("motion"/"ocean" families). The authored
+        # groups alone are too small to lock multis from; families give
+        # the pair picker real material. Junk sigs (tiny skeletons that
+        # match by accident) are excluded.
+        self.families = {}
+        for g in self.groups.values():
+            for it in g:
+                sig = it["sig"]
+                if sig and len(sig.replace("|", "")) >= 3:
+                    self.families.setdefault(sig, []).append(it)
+        self.families = {k: v for k, v in self.families.items()
+                         if len(v) >= 3
+                         and len({id(x) for x in v}) >= 3}
 
     def _score(self, item, want_beat, syl_target=None):
         s = 0.0
@@ -1471,6 +1491,10 @@ class _LinePool:
         # breath modeling: hard ceiling after two long lines
         if self.syl_cap is not None and syl > self.syl_cap:
             s += (syl - self.syl_cap) * 3.0
+        # tempo fit: a bar at high BPM physically carries fewer
+        # syllables — penalize lines the tempo cannot hold
+        if self.bpm_cap is not None and syl > self.bpm_cap:
+            s += (syl - self.bpm_cap) * 2.0
         # hook-first: bias toward the hook's keywords (thematic unity)
         if self.keywords:
             tl = item["text"].lower()
@@ -1525,7 +1549,20 @@ class _LinePool:
         """Apply era/region slang slot substitution."""
         return _fill_slots(text, self.slang, self.rng)
 
+    def _ceil_filter(self, group, need=2):
+        """Tempo ceiling: when set, restrict picks to lines the tempo
+        can carry — unless too few qualify, then keep the shortest."""
+        if not self.syl_ceiling:
+            return group
+        under = [it for it in group
+                 if count_syllables(it["text"]) <= self.syl_ceiling]
+        if len(under) >= need:
+            return under
+        by_len = sorted(group, key=lambda it: count_syllables(it["text"]))
+        return by_len[:max(need, len(under))]
+
     def _pick_from(self, group, want_beat, n, syl_target=None):
+        group = self._ceil_filter(group, need=n)
         cands = sorted(group,
                        key=lambda it: self._score(it, want_beat, syl_target))
         picked = []
@@ -1547,11 +1584,54 @@ class _LinePool:
                 pass
         return [self._fill(it["text"]) for it in picked]
 
-    def _pick_pair(self, group, want_beat, syl_target=None):
+    def _pick_pair(self, group, want_beat, syl_target=None, prefer_sig=False):
         """Best rhyming pair: multisyllabic signature matches and
-        internal-rhyme cross-links beat plain end-rhyme."""
+        internal-rhyme cross-links beat plain end-rhyme.
+
+        prefer_sig (rich mode): scan the WHOLE group for a pair whose
+        multisyllabic signatures match and take the best-scoring such
+        pair — the plain top-12 window often buries the only true
+        multi lock under beat/syllable score noise."""
+        group = self._ceil_filter(group, need=2)
         cands = sorted(group,
-                       key=lambda it: self._score(it, want_beat, syl_target))[:12]
+                       key=lambda it: self._score(it, want_beat, syl_target))
+        if prefer_sig:
+            by_sig = {}
+            for it in cands:
+                if it["sig"]:
+                    by_sig.setdefault(it["sig"], []).append(it)
+            lock_pairs = []
+            for v in by_sig.values():
+                for i in range(len(v)):
+                    for j in range(i + 1, len(v)):
+                        lock_pairs.append((v[i], v[j]))
+            if lock_pairs:
+                def _pair_cost(a, b):
+                    sc = (self._score(a, want_beat, syl_target)
+                          + self._score(b, want_beat, syl_target))
+                    if ((a["end1"] and a["end1"] == b["mid"])
+                            or (b["end1"] and b["end1"] == a["mid"])):
+                        sc -= 2.0  # internal cross-link inside the lock
+                    if a["dom"] and a["dom"] == b["dom"]:
+                        sc -= 1.5
+                    if self.last_end and a["mid"] == self.last_end:
+                        sc -= 1.5  # chain continues through the lock
+                    return sc
+                def _woven(a, b):
+                    return ((a["end1"] and a["end1"] == b["mid"])
+                            or (b["end1"] and b["end1"] == a["mid"])
+                            or (self.last_end and a["mid"] == self.last_end))
+                # a lock that ALSO weaves beats a plain lock, even at a
+                # small base-score cost — rich mode exists for both
+                a, b = min(lock_pairs,
+                           key=lambda p: (0 if _woven(*p) else 1,
+                                          _pair_cost(*p)))
+                for it in (a, b):
+                    self.used.add(it["text"])
+                    self.reuse[it["text"]] = self.reuse.get(it["text"], 0) + 1
+                self.last_end = b["end1"]
+                return [self._fill(a["text"]), self._fill(b["text"])]
+        cands = cands[:12]
         best, best_score = None, float("inf")
         for i in range(len(cands)):
             for j in range(i + 1, len(cands)):
@@ -1565,6 +1645,9 @@ class _LinePool:
                     s -= 2.0  # internal rhyme cross-link
                 if a["dom"] and a["dom"] == b["dom"]:
                     s -= 1.5  # vowel flow: locked-in delivery feel
+                if self.last_end and a["mid"] == self.last_end:
+                    s -= 1.5  # rhyme chain: opener picks up the last
+                    # pair's closing sound mid-line (woven scheme)
                 if s < best_score:
                     best_score, best = s, (a, b)
         if best is None:
@@ -1572,6 +1655,7 @@ class _LinePool:
         for it in best:
             self.used.add(it["text"])
             self.reuse[it["text"]] = self.reuse.get(it["text"], 0) + 1
+        self.last_end = best[1]["end1"]
         return [self._fill(best[0]["text"]), self._fill(best[1]["text"])]
 
     def couplet(self, want_beat, rich=False, syl_target=None):
@@ -1579,14 +1663,20 @@ class _LinePool:
         groups = list(self.groups.values())
         self.rng.shuffle(groups)
         if rich:
-            # prefer multisyllabic rhyme sets
+            # prefer multisyllabic rhyme sets: authored groups with long
+            # keys AND cross-key families (same vowel signature)
             groups.sort(key=lambda g: 0 if len(g[0]["rhyme"]) >= 6 else 1)
+            fams = [v for v in self.families.values()
+                    if len({it["rhyme"] for it in v}) >= 2]
+            self.rng.shuffle(fams)
+            groups = fams + groups
         # prefer groups whose best line matches the wanted beat
         groups.sort(key=lambda g: min(self._score(it, want_beat, syl_target)
                                       for it in g))
         for g in groups:
             if len(g) >= 2:
-                return self._pick_pair(g, want_beat, syl_target)
+                return self._pick_pair(g, want_beat, syl_target,
+                                       prefer_sig=rich)
         # fallback: any two lines
         all_lines = [it for g in groups for it in g]
         return self._pick_from(all_lines, want_beat, 2, syl_target)
@@ -1668,11 +1758,17 @@ def _build_verse(pool, n_lines, want_beat, scheme, rich,
         if len(out) >= 2:
             _s1 = count_syllables(out[-1])
             _s2 = count_syllables(out[-2])
-            pool.syl_cap = 8 if (_s1 > 14 and _s2 > 14) else None
+            _breath = 8 if (_s1 > 14 and _s2 > 14) else None
+            _caps = [c for c in (_breath, pool.syl_ceiling)
+                     if c is not None]
+            pool.syl_cap = min(_caps) if _caps else None
         else:
-            pool.syl_cap = None
+            pool.syl_cap = pool.syl_ceiling
         tmpl = templates[(line_idx // 8) % len(templates)]
         t = tmpl[(line_idx // 2) % 4]
+        if getattr(pool, "bpm_cap", None):
+            # scale the cadence grid to what the tempo can carry
+            t = max(6, int(round(t * pool.bpm_cap / 12.0)))
         if scheme == "ABAB":
             out.extend(pool.quatrain_abab(beat, syl_target=t))
             line_idx += 4
@@ -1700,7 +1796,24 @@ def _build_hook(theme, artist_prof, n_lines, rng):
     # prefer short lines for hook punch (structural contrast vs verses)
     ranked = sorted([l[0] for l in lines], key=count_syllables)
     short = ranked[:max(4, len(ranked) // 2)]
+    # rhyme-first ordering: if any closing sound repeats among the
+    # short lines, lead with that family — the hook locks onto it
+    _by_end = {}
+    for l in short:
+        _by_end.setdefault(_end1_sig(l), []).append(l)
+    _fams = [v for k, v in _by_end.items() if k and len(v) >= 2]
+    if _fams:
+        _fams.sort(key=lambda v: count_syllables(v[0]))
+        _lead = _fams[0]
+        short = _lead + [l for l in short if l not in _lead]
     c1 = (short[0], short[1] if len(short) > 1 else short[0])
+    # rhyme lock: the hook's second couplet should land on the same
+    # closing sound as the first (one sound = one earworm)
+    _tgt = _end1_sig(c1[1]) or _end1_sig(c1[0])
+    if _tgt:
+        rest = short[2:]
+        rest.sort(key=lambda l: 0 if _end1_sig(l) == _tgt else 1)
+        short = short[:2] + rest
     c2 = (short[2] if len(short) > 2 else short[0],
           short[3] if len(short) > 3 else short[0])
     pattern = artist_prof.get("hook_pattern", "build") if artist_prof else "build"
@@ -1808,7 +1921,7 @@ def generate_song_lyrics_ex(seed, genre="HipHop", theme="street",
                             custom_words=None, hook_first=False,
                             story_arc=False, call_response=False,
                             internal_rhyme=False, multi_boost=False,
-                            artist=None, explicit=False):
+                            artist=None, explicit=False, bpm=None):
     """Coherent narrative lyric generator.
 
     artist: artist name from ARTIST_PROFILES (style emulation only) or None.
@@ -1826,6 +1939,10 @@ def generate_song_lyrics_ex(seed, genre="HipHop", theme="street",
     song["hook"] = _build_hook(theme, artist_prof, hook_lines, rng)
     pool = _LinePool(rng, theme, artist_prof, syl_target, genre=genre,
                     explicit=explicit)
+    if bpm:
+        # tempo fit: syllables a bar can carry scales against ~90 BPM
+        pool.bpm_cap = max(7, min(18, int(round(12.0 * 90.0 / float(bpm)))))
+        pool.syl_ceiling = pool.bpm_cap + 2
     pool.keywords = _hook_keywords(song["hook"])
     words = [w.strip() for w in (custom_words or []) if w.strip()][:12]
     cadence_set = _cadence_set_for(artist_prof)

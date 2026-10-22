@@ -1439,13 +1439,17 @@ def _place(out, sound, pos):
 # numpy, deterministic per seed (draws come from the caller's rng streams).
 
 
-def _jit(pos, step_dur, rng, amt_ms=0.8):
+def _jit(pos, step_dur, rng, amt_ms=0.8, off_ms=0.0):
     """Micro-timing: Gaussian jitter on a trigger position (samples).
 
     amt_ms ~0.8ms keeps the groove human without smearing the grid.
-    Clamped at 0 so early first-bar hits can't go negative.
+    off_ms is the instrument's POCKET: a fixed bias real players have
+    (kicks push a hair early, snares sit a hair late). Random jitter
+    alone reads as sloppiness; jitter around a per-instrument pocket
+    reads as feel. Clamped at 0 so first-bar hits can't go negative.
     """
-    return max(0, int(pos) + int(rng.normal(0.0, amt_ms / 1000.0 * SR)))
+    return max(0, int(pos) + int(off_ms / 1000.0 * SR)
+               + int(rng.normal(0.0, amt_ms / 1000.0 * SR)))
 
 
 def _darken(hit, velocity):
@@ -1980,6 +1984,27 @@ def generate_beat(genre, bpm, bars, seed=None, artist=None, progress_cb=None,
     # Haas-widened hats (stereo width; kick/808 stay mono)
     chat_haas = _haas(chat_s)
     ohat_haas = _haas(ohat_s)
+    # Round-robin variants: the same one-shot on every hit is the #1
+    # synth tell ("machine-gun" snares/hats). Two extra takes per
+    # instrument, tiny pitch/gain differences, alternated per hit from
+    # the rng2 stream. Skipped for user-supplied samples (their sound,
+    # their choice).
+    snare_rr = [snare_s] if cs.get("snare") is not None else [
+        snare_s,
+        _pitch_shift(snare_s, 0.985) * 0.96,
+        _pitch_shift(snare_s, 1.014) * 1.03]
+    chat_rr = [chat_haas] if cs.get("chat") is not None else [
+        chat_haas,
+        _haas(_pitch_shift(chat_s, 0.99)) * 0.95,
+        _haas(_pitch_shift(chat_s, 1.012)) * 1.04]
+    _rr_i = {"snare": 0, "chat": 0}
+
+    def _rr_pick(kind, variants):
+        _rr_i[kind] += 1
+        if len(variants) == 1:
+            return variants[0]
+        # mostly alternate; occasional repeat keeps it human
+        return variants[(_rr_i[kind] + int(rng2.integers(0, 2))) % len(variants)]
 
     root_midi = int(rng.integers(33, 40))  # A1..G#2 area
     prog = pat["prog"]
@@ -2090,19 +2115,22 @@ def generate_beat(genre, bpm, bars, seed=None, artist=None, progress_cb=None,
         _ksteps = [s for s in pat["kick"]
                    if not (is_fill_bar and s >= 10)]
         for s in _ksteps:
-            _kp = _jit(base + int(s * step_dur * SR), step_dur, rng)
+            _kp = _jit(base + int(s * step_dur * SR), step_dur, rng,
+                       off_ms=-1.5)  # kicks push
             _kv = vel_j(1.0) * (0.55 if soft else 1.0)
             _place(drums, _darken(kick_s * _kv, _kv), _kp)
             if not soft:
                 kick_times.append(_kp)
         for s in pat["snare"]:
-            _sp = _jit(base + int(s * step_dur * SR), step_dur, rng)
+            _sp = _jit(base + int(s * step_dur * SR), step_dur, rng,
+                       off_ms=3.5)  # snares sit in the pocket
             _sv = vel_j(0.9) * (0.55 if soft else 1.0)
             # layered crack: rimshot transient 7ms before backbeats
             if not soft and s in (4, 12):
                 _place(drums, _rimshot(SR, rng2) * _sv * 0.6,
                        max(0, _sp - int(0.007 * SR)))
-            _place(drums, _darken(snare_s * _sv, _sv), _sp)
+            _place(drums, _darken(_rr_pick("snare", snare_rr) * _sv, _sv),
+                   _sp)
         for s in chat_pos:
             pos = s * step_dur
             if s % 2 == 1:  # swung off-16ths push late (16th-note swing)
@@ -2113,9 +2141,12 @@ def generate_beat(genre, bpm, bars, seed=None, artist=None, progress_cb=None,
                 continue
             if soft and s % 4:  # healing: quarters only
                 continue
-            _hp = _jit(base + int(pos * SR), step_dur, rng)
-            _hv = vel_j(0.5) * (0.6 if soft else 1.0)
-            _place(drums, _darken(chat_haas * _hv, _hv), _hp)
+            _hp = _jit(base + int(pos * SR), step_dur, rng, off_ms=0.5)
+            # accent map: a real hat hand breathes with the beat —
+            # quarters land, off-16ths whisper
+            _acc = 1.18 if s % 4 == 0 else (0.92 if s % 2 == 0 else 0.8)
+            _hv = vel_j(0.5) * _acc * (0.6 if soft else 1.0)
+            _place(drums, _darken(_rr_pick("chat", chat_rr) * _hv, _hv), _hp)
         # --- fill-bar arrangement mask: hat + 808 rolls with decay ---
         if is_fill_bar and not sparse and not soft:
             for k in range(8):  # 32nd-note hat roll: pitch decays as it
@@ -2151,7 +2182,8 @@ def generate_beat(genre, bpm, bars, seed=None, artist=None, progress_cb=None,
                 _ov = vel_j(0.55)
                 _place(drums, _darken(ohat_haas * _ov, _ov), _op)
             for s in pat["clap"]:
-                _cp = _jit(base + int(s * step_dur * SR), step_dur, rng)
+                _cp = _jit(base + int(s * step_dur * SR), step_dur, rng,
+                           off_ms=2.0)
                 _cv = vel_j(0.7)
                 _place(drums, _darken(clap_s * _cv, _cv), _cp)
         # --- extra percussive layers (tasteful accents; skip in intro) ---
@@ -2182,8 +2214,9 @@ def generate_beat(genre, bpm, bars, seed=None, artist=None, progress_cb=None,
         if is_fill_bar and fill_style != "none" and not soft:  # snare roll into next phrase
             steps = (14, 15) if fill_style == "minimal" else (12, 13, 14, 15)
             for i, s in enumerate(steps):
-                _place(drums, snare_s * (0.5 + 0.15 * i),
-                       _jit(base + int(s * step_dur * SR), step_dur, rng))
+                _place(drums, _rr_pick("snare", snare_rr) * (0.5 + 0.15 * i),
+                       _jit(base + int(s * step_dur * SR), step_dur, rng,
+                            off_ms=3.5))
 
         # --- ghost hits on odd phrase bars: seeded, subtle, human feel ---
         if layers and not sparse and not soft and phrase_bar in (1, 3) \
@@ -2253,6 +2286,13 @@ def generate_beat(genre, bpm, bars, seed=None, artist=None, progress_cb=None,
                     continue
                 if s // 16 != w4:
                     continue
+                # development: from the 3rd statement on, the player may
+                # lift the phrase's last note (octave / neighbour) or
+                # rest it — the motif grows instead of photocopying
+                if bar >= 8 and i == len(_mot) - 1 and rng2.random() < 0.45:
+                    if rng2.random() < 0.3:
+                        continue  # a rest — space is phrasing too
+                    v = v + (12 if rng2.random() < 0.6 else 2)
                 if heal and heal["fib_scale"]:
                     # exact Fibonacci ratio off the root, +2 octaves
                     f = m2f(root_midi) * FIB_RATIOS[v] * 4.0
