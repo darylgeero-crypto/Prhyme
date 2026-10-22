@@ -37,6 +37,8 @@
       </select>
     </label>
     <button class="btn" id="genMixBtn">⚡ Generate Mix</button>
+    <button class="btn small" onclick="window.rokdabusMixplay()">🎧 Start Rokdabus Mix</button>
+    <button class="btn small alt" id="mixplayStartupBtn" onclick="toggleMixplayStartup()">🚀 Mix on startup: ON</button>
   </div>
   <div id="mixStatus" class="mix-status" style="display:none"></div>
   <div class="mix-gen-row">
@@ -476,7 +478,55 @@ $("autoMixBtn").addEventListener("click", e=>{
   e.target.textContent="🔀 Auto-mix: "+(autoMix?"ON":"OFF");
   e.target.setAttribute("aria-pressed", autoMix);
 });
-const XF_SECS=8;
+/* ---------- Rokdabus Infinite Mixplay ---------- */
+// Rokdabus generates a curated mix: smart ordering by energy arc + key compatibility
+window.rokdabusMixplay = async function(opts) {
+  opts = opts || {};
+  const genre = opts.genre || null;
+  const energyArc = opts.energyArc || 'festival'; // festival, rise, wave, chill
+  try {
+    const r = await fetch('/api/dj/mixplay', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({genre: genre, energy_arc: energyArc, count: 20})
+    });
+    const d = await r.json();
+    if (d.ok && d.tracks && d.tracks.length) {
+      // Load first two tracks and start infinite mix
+      libCache = d.tracks;
+      if (!autoMix) $("autoMixBtn").click(); // enable auto-mix
+      loadTrackToDeck(d.tracks[0], deckA, $("playA"));
+      if (d.tracks[1]) loadTrackToDeck(d.tracks[1], deckB, $("playB"));
+      playDeck(deckA, $("playA"), 0);
+      toast("🎧 Rokdabus mix playing — infinite");
+      if (window.rokdabusSpeak) window.rokdabusSpeak("Mix is live. I'll keep it going forever.");
+      return true;
+    }
+  } catch(e) { console.log('[Mixplay] Error:', e); }
+  // Fallback: use existing library with auto-mix
+  if (!autoMix) $("autoMixBtn").click();
+  toast("🎧 Auto-mix on — infinite");
+  return false;
+};
+
+// Mixplay on startup: check preference (default ON)
+(function(){
+  try {
+    if (localStorage.getItem('rokdabus_mixplay_startup') !== '0') {
+      // Wait for library to load, then start
+      setTimeout(function(){ window.rokdabusMixplay(); }, 3000);
+    }
+  } catch(e){}
+})();
+
+// Toggle startup mixplay
+window.toggleMixplayStartup = function() {
+  const cur = localStorage.getItem('rokdabus_mixplay_startup') !== '0';
+  localStorage.setItem('rokdabus_mixplay_startup', cur ? '0' : '1');
+  const btn = document.getElementById('mixplayStartupBtn');
+  if (btn) btn.textContent = '🚀 Mix on startup: ' + (cur ? 'OFF' : 'ON');
+  toast('Mix on startup ' + (cur ? 'disabled' : 'enabled'));
+};
+let XF_SECS=8;
 function onDeckEnded(d){
   if(window.djrillAmbient) djrillAmbient.userAudioStop();
   if(!autoMix || autoMixing) return;
@@ -495,6 +545,13 @@ function onDeckEnded(d){
     // Load smart-selected track into other deck
     loadTrackToDeck(next, other, oBtn);
     toast("Smart mix → "+next.title);
+  }
+  // DJ transition length: long beatmatch blend when BPMs are close,
+  // shorter EQ-sweep style fade when they are far apart.
+  const _nb = next && (next.bpm || next.currentBpm);
+  if (currentTrack.bpm && _nb) {
+    const _bd = Math.abs(_nb - currentTrack.bpm);
+    XF_SECS = _bd <= 6 ? 8 : (_bd <= 16 ? 6 : 4);
   }
   if(!other.buffer) return;
   autoMixing=true;
