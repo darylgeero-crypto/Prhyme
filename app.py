@@ -1616,11 +1616,16 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         n_bars = int(np.ceil((intro + v_dur + 2 * bar_dur) / bar_dur))
 
         _lite = lite_mode()
-        # Memory guard: vocal + beat + mix buffers.
-        # Lite mode uses the lightweight renderer (fewer numpy temporaries).
-        _nbuf = 2 if (_keep_original and _keep_inst is None) else 4
-        check_audio_budget(vocal.shape[0] * _nbuf, channels=2,
-                           copies=4, label="master", headroom_mb=80)
+        # Memory guard, calibrated to the chain's real peak (2026-10-22):
+        # the old vocal*_nbuf(4) x copies=4 (16x the vocal size) false-fired
+        # "Not enough free memory" on ordinary beat+master jobs. The real
+        # simultaneous peak is vocal + instrumental + beat + polished vocal
+        # + mix ≈ 6 copies; long generate jobs stream beat+mix to disk
+        # (see _stream_long below) and peak at ≈4 copies.
+        _stream_long = (not _keep_original) and v_dur > 180.0
+        check_audio_budget(vocal.shape[0], channels=2,
+                           copies=4 if _stream_long else 6,
+                           label="master", headroom_mb=80)
         if _keep_original:
             prog(10, "Keeping original audio (no new beat)...")
             beat = None
@@ -1632,9 +1637,11 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
             beat = lightbeat.generate_beat(_beat_genre, float(bpm), _lb_bars, seed,
                 progress_cb=lambda f, m: prog(10 + int(40 * f), m or f"Beat {int(f*_lb_bars)}/{_lb_bars}…"))
             _need = int(np.ceil((intro + v_dur + 2 * bar_dur) * SR))
-            if beat.shape[0] < _need:
+            if beat.shape[0] < _need and not _stream_long:
                 _reps = int(np.ceil(_need / beat.shape[0]))
                 beat = np.tile(beat, (_reps, 1))[:_need]
+            # _stream_long: beat stays a short loop in RAM; the streamed
+            # mix build wraps around it on disk (no full-length tile).
         else:
             eng = get_engine()
             prog(10, f"Rendering {n_bars} bars of {_beat_genre} beat…")
@@ -1735,6 +1742,9 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         prog(65, "Mixing — balanced vocal/instrumental…")
         boost_db = float(mopts.get("vocal_boost_db", 1.5))
         need = int(intro + _vlen + 1 * SR)
+        _streamed = False
+        _stream_wav = None
+        _stream_corr = None
         if _keep_original:
             s0 = 0
             if _keep_inst is not None:
@@ -1759,24 +1769,151 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
             elif mix.shape[0] < _src_len:
                 mix = np.pad(mix, ((0, _src_len - mix.shape[0]), (0, 0)))
         else:
-            mix = np.zeros((max(need, beat.shape[0]), 2))
-            mix[:beat.shape[0]] += beat * 0.9
             s0 = int(intro * SR)
-            mix[s0:s0 + vp_fx.shape[0]] += vp_fx * 10 ** (boost_db / 20.0)
-            end = min(mix.shape[0], s0 + vp_fx.shape[0] + int(0.5 * SR))
-            mix = mix[:end]
-        # configurable fades
-        mix = masterfx.apply_fades(
-            mix, float(mopts.get("fade_in", 0.5)),
-            float(mopts.get("fade_out", 3.0)))
+            _total = max(need, beat.shape[0])
+            _end = min(_total, s0 + vp_fx.shape[0] + int(0.5 * SR))
+            if not _stream_long:
+                mix = np.zeros((_total, 2))
+                mix[:beat.shape[0]] += beat * 0.9
+                mix[s0:s0 + vp_fx.shape[0]] += vp_fx * 10 ** (boost_db / 20.0)
+                mix = mix[:_end]
+            else:
+                # LONG beat+master (2026-10-22): stream the mix to disk in
+                # 45s chunks. The in-RAM build held beat + mix + vocal
+                # arrays at once and OOM-killed the phone on long tracks
+                # (Damicksup crashed this chain). The beat spills to a
+                # float WAV (a short lite loop wraps around); fades are
+                # applied per chunk with the same linear ramps
+                # masterfx.apply_fades uses; the vocal-integrity gate is
+                # computed from 1s envelope windows while streaming.
+                import soundfile as _sf
+                prog(65, "Mixing (streamed, low-RAM)…")
+                _beat_wav = os.path.join(tdir, "_beat_spill.wav")
+                _sf.write(_beat_wav, np.ascontiguousarray(
+                    beat, dtype=np.float32), SR, subtype="FLOAT")
+                _blen = int(beat.shape[0])
+                del beat
+                _gain = 10 ** (boost_db / 20.0)
+                _fi = min(_end, int(max(0.0, float(
+                    mopts.get("fade_in", 0.5))) * SR))
+                _fo = min(_end, int(max(0.0, float(
+                    mopts.get("fade_out", 3.0))) * SR))
+                _chunk = 45 * SR
+                _v0, _v1 = s0, min(_end, s0 + vp_fx.shape[0])
+                _env_v, _env_m = [], []
+                _peak = 0.0
+                _float_wav = os.path.join(tdir, "_mix_float.wav")
+                _stream_wav = os.path.join(tdir, "_mix_spill.wav")
+                with _sf.SoundFile(_beat_wav, "r") as _bf, \
+                        _sf.SoundFile(_float_wav, "w", samplerate=SR,
+                                      channels=2, subtype="FLOAT") as _mf:
+                    _pos = 0
+                    while _pos < _end:
+                        _n = min(_chunk, _end - _pos)
+                        # beat chunk (wraps around a short loop)
+                        _bc = np.zeros((_n, 2), dtype=np.float32)
+                        _done = 0
+                        while _done < _n:
+                            _off = (_pos + _done) % _blen
+                            _take = min(_n - _done, _blen - _off)
+                            _bf.seek(_off)
+                            _seg = _bf.read(_take, dtype="float32",
+                                            always_2d=True)
+                            if len(_seg) == 0:
+                                break
+                            _bc[_done:_done + len(_seg)] += _seg
+                            _done += len(_seg)
+                        _mc = _bc * np.float32(0.9)
+                        del _bc
+                        # vocal chunk at its laid position
+                        _vs, _ve = max(_pos, _v0), min(_pos + _n, _v1)
+                        if _ve > _vs:
+                            _mc[_vs - _pos:_ve - _pos] += \
+                                vp_fx[_vs - s0:_ve - s0] * _gain
+                        # fades: same linear ramps as apply_fades
+                        if _fi > 1 and _pos < _fi:
+                            _idx = np.arange(_pos, min(_pos + _n, _fi))
+                            _g = (_idx / float(_fi - 1)).astype(np.float32)
+                            _mc[:len(_idx)] *= _g[:, None]
+                        if _fo > 1 and _pos + _n > _end - _fo:
+                            _st = max(_pos, _end - _fo)
+                            _idx = np.arange(_st, _pos + _n)
+                            _g = (1.0 - (_idx - (_end - _fo))
+                                  / float(_fo - 1)).astype(np.float32)
+                            _mc[_st - _pos:] *= _g[:, None]
+                        # 1s envelope windows for the integrity gate
+                        if _ve > _vs:
+                            for _es in range(_vs, _ve, SR):
+                                _ee = min(_es + SR, _ve)
+                                _segv = vp_fx[_es - s0:_ee - s0]
+                                _segm = _mc[_es - _pos:_ee - _pos]
+                                _env_v.append(float(np.sqrt(np.mean(
+                                    _segv.astype(np.float64) ** 2))))
+                                _env_m.append(float(np.sqrt(np.mean(
+                                    _segm.astype(np.float64) ** 2))))
+                        _pk = float(np.max(np.abs(_mc)))
+                        if _pk > _peak:
+                            _peak = _pk
+                        _mf.write(_mc)
+                        del _mc
+                        _pos += _n
+                try:
+                    os.remove(_beat_wav)
+                except OSError:
+                    pass
+                # Convert the float temp to an int16 spill — the exact
+                # convention the in-RAM spill uses (peak-normalized
+                # PCM16). Downstream readers include stdlib-wave code
+                # that rejects float WAVs ("unknown format: 3" killed
+                # the first rig run of this path, 2026-10-22).
+                with _sf.SoundFile(_float_wav, "r") as _rf, \
+                        _sf.SoundFile(_stream_wav, "w", samplerate=SR,
+                                      channels=2, subtype="PCM_16") as _wf:
+                    _scale = 1.0 / _peak if _peak > 0 else 1.0
+                    while True:
+                        _blk = _rf.read(_chunk, dtype="float32",
+                                        always_2d=True)
+                        if len(_blk) == 0:
+                            break
+                        if _scale != 1.0:
+                            _blk = _blk * np.float32(_scale)
+                        _wf.write(_blk)
+                try:
+                    os.remove(_float_wav)
+                except OSError:
+                    pass
+                if len(_env_v) >= 8:
+                    _ev = np.array(_env_v)
+                    _em = np.array(_env_m)
+                    _ev = _ev - _ev.mean()
+                    _em = _em - _em.mean()
+                    _den = float(np.sqrt(np.sum(_ev ** 2)
+                                         * np.sum(_em ** 2))) + 1e-12
+                    _stream_corr = float(np.sum(_ev * _em) / _den)
+                mix = None
+                _streamed = True
+                print(f"[STREAM] long generate mix streamed to disk: "
+                      f"{_end} samples, integrity corr={_stream_corr}")
+        # configurable fades (streamed mixes were faded chunk-wise
+        # during the build, with the same ramps)
+        if not _streamed:
+            mix = masterfx.apply_fades(
+                mix, float(mopts.get("fade_in", 0.5)),
+                float(mopts.get("fade_out", 3.0)))
         # 🎛 Creative FX on the full mix instead of the vocal
-        if mopts.get("fx_target", "vocal") == "mix":
+        if mopts.get("fx_target", "vocal") == "mix" and not _streamed:
             prog(78, "🎛 Creative FX — full mix…")
             mix, fx_applied = trackfx.apply_vocal_fx(
                 mix, mopts, bpm=float(bpm))
+        elif mopts.get("fx_target", "vocal") == "mix" and _streamed:
+            prog(78, "🎛 Mix FX skipped on streamed long master (low-RAM)…")
 
         # lyric-integrity gate before mastering
-        ok_vox, vox_corr = M.verify_vocal_integrity(vp_fx, mix, s0)
+        if _streamed:
+            vox_corr = _stream_corr if _stream_corr is not None else 0.0
+            ok_vox = _stream_corr is not None and _stream_corr >= 0.70
+        else:
+            ok_vox, vox_corr = M.verify_vocal_integrity(vp_fx, mix, s0)
         if not ok_vox:
             print(f"WARNING: Vocal integrity low (corr={vox_corr:.2f}) -- continuing")
 
@@ -1802,14 +1939,14 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
             pass
         _gc.collect()
         ref_path = mopts.get("reference_path")
-        if ref_path and not _lite:
+        if ref_path and not _lite and not _streamed:
             # Lite skips reference spectrum matching (heavy FFT analysis).
             mix, ref_lufs, deltas = masterfx.match_reference_spectrum(
                 mix, ref_path)
             mopts = dict(mopts, target_lufs=ref_lufs)
         # For large mixes (>3 min), spill to disk first so master_chunked
         # can stream instead of holding the full array in RAM.
-        _mix_arg = mix
+        _mix_arg = _stream_wav if _streamed else mix
         _spill_wav = None
         try:
             import numpy as _np
@@ -1834,7 +1971,7 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                 _gc2.collect()
         except Exception as _e:
             print(f"spill failed: {_e}, using in-RAM")
-            _mix_arg = mix
+            _mix_arg = _stream_wav if _streamed else mix
         # Adaptive auto-detect ON (2026-10-21, Daryl's order): detects
         # tempo/volume changes and masters per section; uniform tracks
         # fall back to the proven chain inside master_adaptive.
