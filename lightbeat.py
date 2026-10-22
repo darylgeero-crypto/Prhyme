@@ -792,14 +792,24 @@ _PERC_VARIANTS = {
 # Named 808 presets: (dur, drive, glide_time). Rendered by _808_preset()
 # at a given pitch via _bass808().
 _808_VARIANTS = {
-    "deep": dict(dur=0.60, drive=1.8, glide_time=0.040),
-    "glide": dict(dur=0.55, drive=2.0, glide_time=0.045),
-    "distorted": dict(dur=0.50, drive=3.5, glide_time=0.035),
-    "subby": dict(dur=0.60, drive=1.2, glide_time=0.050),
-    "punchy": dict(dur=0.42, drive=2.8, glide_time=0.030),
-    "wobble": dict(dur=0.70, drive=2.4, glide_time=0.060),
-    "reese": dict(dur=0.80, drive=1.5, glide_time=0.080),
-    "short": dict(dur=0.30, drive=2.2, glide_time=0.025),
+    "deep": dict(dur=0.70, drive=1.7, glide_time=0.040, harm2=0.34,
+                 harm3=0.16, decay=3.8, click=0.09, start_mult=1.8),
+    "glide": dict(dur=0.60, drive=2.0, glide_time=0.110, harm2=0.32,
+                  harm3=0.13, decay=4.4, click=0.06, start_mult=1.6),
+    "distorted": dict(dur=0.50, drive=4.6, glide_time=0.035, harm2=0.38,
+                      harm3=0.20, decay=5.2, click=0.14, start_mult=1.7),
+    "subby": dict(dur=0.80, drive=1.15, glide_time=0.050, harm2=0.30,
+                  harm3=0.13, decay=3.0, click=0.07, start_mult=1.5),
+    "punchy": dict(dur=0.40, drive=2.9, glide_time=0.028, harm2=0.36,
+                   harm3=0.17, decay=7.0, click=0.30, start_mult=2.3),
+    "wobble": dict(dur=0.75, drive=2.4, glide_time=0.055, harm2=0.34,
+                   harm3=0.14, decay=4.0, click=0.08, start_mult=1.7,
+                   wobble_hz=5.5, wobble_depth=0.45),
+    "reese": dict(dur=0.85, drive=1.6, glide_time=0.070, harm2=0.30,
+                  harm3=0.10, decay=3.4, click=0.05, start_mult=1.4,
+                  detune2=0.004),
+    "short": dict(dur=0.26, drive=2.3, glide_time=0.022, harm2=0.34,
+                  harm3=0.16, decay=9.5, click=0.22, start_mult=2.0),
 }
 
 # ------------------------------------------------------ melodic presets
@@ -1073,22 +1083,47 @@ def _clap(sr, rng, variant="classic"):
 
 
 def _bass808(sr, freq, glide_from=None, dur=0.55, drive=2.0,
-             glide_time=0.045):
+             glide_time=0.045, harm2=0.0, harm3=0.0, decay=5.5,
+             click=0.0, wobble_hz=0.0, wobble_depth=0.0,
+             start_mult=1.6, detune2=0.0):
     """808 with click-free pitch glide via phase accumulation.
 
     glide_from: previous note's frequency (portamento between notes).
     Bigger intervals get a longer slide for that trap glide feel; the
     phase-accumulated sine never clicks, and tanh saturation adds warmth.
+
+    Round 2 (2026-10-22, Daryl's ear): the named presets now carry
+    explicit 2nd/3rd harmonics + an attack click + per-preset decay —
+    a near-pure 55 Hz sine is inaudible on phone speakers, and the old
+    presets differed only in (dur, drive, glide) scalars so they all
+    sounded the same. Harmonics are what let a small speaker imply
+    the sub (missing-fundamental effect). Direct callers that pass no
+    recipe keep the exact old sound (all recipe params default off).
     """
     n = int(sr * dur)
     t = np.arange(n) / sr
-    f0 = glide_from if glide_from else freq * 1.6
+    f0 = glide_from if glide_from else freq * start_mult
     interval = abs(np.log2(max(f0, 1.0) / max(freq, 1.0)))
     gt = glide_time * (1.0 + min(2.0, interval))  # wide jump = longer slide
     f = freq + (f0 - freq) * np.exp(-t / max(0.008, gt))
     phase = 2 * np.pi * np.cumsum(f) / sr
-    sig = np.tanh(drive * np.sin(phase)) * np.exp(-t * 5.5)
-    return _stereo(sig * 0.85)
+    sig = (np.sin(phase) + harm2 * np.sin(2 * phase)
+           + harm3 * np.sin(3 * phase))
+    if detune2:  # reese: a detuned twin beating against the main osc
+        phase2 = 2 * np.pi * np.cumsum(f * (1.0 + detune2)) / sr
+        sig = 0.65 * sig + 0.55 * (np.sin(phase2)
+                                   + harm2 * np.sin(2 * phase2))
+    sig = np.tanh(drive * sig)
+    env = np.exp(-t * decay)
+    if wobble_hz:
+        env = env * (1.0 - wobble_depth
+                     * (0.5 - 0.5 * np.cos(2 * np.pi * wobble_hz * t)))
+    sig = sig * env
+    if click > 0:  # attack pip: defines the hit on small speakers
+        cn = min(n, int(sr * 0.004))
+        sig[:cn] += click * np.sin(2 * np.pi * 1500.0 * t[:cn]) \
+            * np.exp(-t[:cn] * 900.0)
+    return _cap_peak(_stereo(sig * 0.9), 0.95)
 
 
 def _bass_sub(sr, freq, dur=0.6):
@@ -1379,16 +1414,23 @@ def _epiano(sr, freq, dur=1.0):
     return _stereo(sig * 0.42)
 
 def _trumpet(sr, freq, dur=0.6):
-    """Trumpet lead: bright, brassy, with vibrato."""
+    """Trumpet lead (round 2): brass partial stack peaking mid-series,
+    breath noise, late vibrato, release taper. The old 4-sine version
+    measured 354 Hz centroid at C4 — a flute, not a trumpet."""
     n = int(sr * dur)
     t = np.arange(n) / sr
-    vib = 1.0 + 0.008 * np.sin(2 * np.pi * 6.0 * t)
-    sig = (np.sin(2 * np.pi * freq * vib * t)
-           + 0.6 * np.sin(2 * np.pi * 2 * freq * t)
-           + 0.35 * np.sin(2 * np.pi * 3 * freq * t)
-           + 0.15 * np.sin(2 * np.pi * 4 * freq * t)) * 0.22
-    atk = np.minimum(1.0, t / 0.06)
-    return _stereo(sig * atk * 0.5)
+    vib = 1.0 + 0.004 * np.sin(2 * np.pi * 5.5 * t) * np.minimum(1.0, t / 0.25)
+    ph = 2 * np.pi * freq * vib * t
+    w = (1.0, 0.85, 0.95, 0.8, 0.6, 0.45, 0.3, 0.2)
+    sig = sum(a * np.sin((i + 1) * ph) for i, a in enumerate(w))
+    rng = np.random.default_rng(int(freq * 10) + 31)
+    sig = sig + 0.05 * _bp_fft(rng.standard_normal(n).astype(np.float32),
+                               sr, 3000.0, 6000.0)
+    atk = np.minimum(1.0, t / 0.035)
+    env = atk * (0.82 + 0.18 * np.exp(-t * 3.0))
+    rel = np.minimum(1.0, np.maximum(0.0, (dur - t) / 0.05))
+    return _cap_peak(_stereo((sig * env * rel * 0.34).astype(np.float64)), 0.8)
+
 
 def _strings(sr, freq, dur=1.2):
     """String section: slow attack, rich vibrato, lush sustain."""
@@ -1404,27 +1446,51 @@ def _strings(sr, freq, dur=1.2):
     return _stereo(sig * atk * 0.5)
 
 def _violin(sr, freq, dur=1.0):
-    """Solo violin: expressive vibrato, warm bowed tone."""
+    """Solo violin (round 2): full bowed harmonic series, bow noise,
+    vibrato that blooms in after the attack. The old 4-sine stack
+    measured a 303 Hz centroid at C4 — pure fundamental, no bow."""
     n = int(sr * dur)
     t = np.arange(n) / sr
-    vib = 1.0 + 0.01 * np.sin(2 * np.pi * 5.0 * t)
-    sig = (np.sin(2 * np.pi * freq * vib * t)
-           + 0.4 * np.sin(2 * np.pi * 2 * freq * t)
-           + 0.2 * np.sin(2 * np.pi * 3 * freq * t)
-           + 0.08 * np.sin(2 * np.pi * 4 * freq * t)) * 0.25
-    atk = np.minimum(1.0, t / 0.12)
-    return _stereo(sig * atk * 0.5)
+    vibd = 0.006 * np.minimum(1.0, np.maximum(0.0, (t - 0.12) / 0.25))
+    vib = 1.0 + vibd * np.sin(2 * np.pi * 5.5 * t)
+    ph = 2 * np.pi * freq * vib * t
+    sig = np.zeros(n)
+    for k in range(1, 15):
+        a = 1.0 / (k ** 0.85)
+        fk = k * freq
+        if 800.0 <= fk <= 2500.0:
+            a *= 1.35  # body resonance region
+        sig += a * np.sin(k * ph)
+    rng = np.random.default_rng(int(freq * 10) + 47)
+    bow = _bp_fft(rng.standard_normal(n).astype(np.float32), sr,
+                  1800.0, 4500.0)
+    atk = np.minimum(1.0, t / 0.06)
+    env = atk * (0.78 + 0.22 * np.exp(-t * 1.5))
+    rel = np.minimum(1.0, np.maximum(0.0, (dur - t) / 0.06))
+    sig = sig * env + bow * 0.10 * env
+    return _cap_peak(_stereo(sig * rel * 0.16), 0.75)
+
 
 def _cello(sr, freq, dur=1.0):
-    """Cello: deep, warm, bowed bass."""
+    """Cello (round 2): darker bowed series than the violin, stronger
+    fundamental pair, lower bow noise, slower swell."""
     n = int(sr * dur)
     t = np.arange(n) / sr
-    vib = 1.0 + 0.007 * np.sin(2 * np.pi * 4.5 * t)
-    sig = (np.sin(2 * np.pi * freq * vib * t)
-           + 0.5 * np.sin(2 * np.pi * 2 * freq * t)
-           + 0.22 * np.sin(2 * np.pi * 3 * freq * t)) * 0.28
-    atk = np.minimum(1.0, t / 0.1)
-    return _stereo(sig * atk * 0.5)
+    vibd = 0.005 * np.minimum(1.0, np.maximum(0.0, (t - 0.15) / 0.3))
+    vib = 1.0 + vibd * np.sin(2 * np.pi * 4.8 * t)
+    ph = 2 * np.pi * freq * vib * t
+    sig = np.zeros(n)
+    for k in range(1, 11):
+        sig += (1.0 / (k ** 0.9)) * np.sin(k * ph)
+    rng = np.random.default_rng(int(freq * 10) + 61)
+    bow = _bp_fft(rng.standard_normal(n).astype(np.float32), sr,
+                  900.0, 3000.0)
+    atk = np.minimum(1.0, t / 0.09)
+    env = atk * (0.8 + 0.2 * np.exp(-t * 1.2))
+    rel = np.minimum(1.0, np.maximum(0.0, (dur - t) / 0.07))
+    sig = sig * env + bow * 0.07 * env
+    return _cap_peak(_stereo(sig * rel * 0.17), 0.75)
+
 
 def _guitar(sr, freq, dur=0.6):
     """Acoustic guitar pluck: bright attack, natural decay."""
@@ -1470,19 +1536,35 @@ def _kalimba(sr, freq, dur=0.7):
     return _stereo(sig * 0.45)
 
 def _synthlead(sr, freq, dur=0.5):
-    """Sawtooth synth lead: aggressive, modern."""
+    """Synth lead (round 2): twin detuned saw stacks through a
+    lowpass that sweeps shut over the note — an actual analog-lead
+    gesture, at a level that can be heard. Chunked FFT filtering
+    keeps the sweep smooth."""
     n = int(sr * dur)
     t = np.arange(n) / sr
-    # Sawtooth via harmonics
     sig = np.zeros(n)
-    for h in range(1, 9):
-        sig += np.sin(2 * np.pi * h * freq * t) / h
-    sig *= 0.3
-    # Filter sweep feel
-    cutoff = 0.5 + 0.5 * np.exp(-t * 4.0)
-    sig *= cutoff
-    env = np.exp(-t * 3.0)
-    return _stereo(sig * env * 0.4)
+    for det in (0.996, 1.004):
+        for h in range(1, 13):
+            sig += np.sin(2 * np.pi * h * freq * det * t) / h
+    sig = sig / 3.2
+    chunks = 10
+    out = np.zeros(n)
+    edges = np.linspace(0, n, chunks + 1).astype(int)
+    for i in range(chunks):
+        a, b = edges[i], edges[i + 1]
+        if b - a < 16:
+            out[a:b] = sig[a:b]
+            continue
+        seg = sig[a:b]
+        X = np.fft.rfft(seg * np.hanning(len(seg)))
+        fr = np.fft.rfftfreq(len(seg), 1.0 / sr)
+        fc = 6500.0 * (1800.0 / 6500.0) ** (i / max(1, chunks - 1))
+        X = X / (1.0 + (fr / fc) ** 4)
+        out[a:b] = np.fft.irfft(X, len(seg))
+    env = np.minimum(1.0, t / 0.012) * (0.75 + 0.25 * np.exp(-t * 2.0))
+    rel = np.minimum(1.0, np.maximum(0.0, (dur - t) / 0.04))
+    return _cap_peak(_stereo(out * env * rel * 0.5), 0.85)
+
 
 def _musicbox(sr, freq, dur=1.3):
     """Music box: delicate, high, crystalline."""
@@ -1797,7 +1879,13 @@ def _808_preset(sr, freq=55.0, variant="deep", glide_from=None):
     """Render an 808 bass note by preset name at a given pitch."""
     p = _808_VARIANTS.get(variant, _808_VARIANTS["deep"])
     return _bass808(sr, freq, glide_from, dur=p["dur"],
-                    drive=p["drive"], glide_time=p["glide_time"])
+                    drive=p["drive"], glide_time=p["glide_time"],
+                    harm2=p.get("harm2", 0.0), harm3=p.get("harm3", 0.0),
+                    decay=p.get("decay", 5.5), click=p.get("click", 0.0),
+                    wobble_hz=p.get("wobble_hz", 0.0),
+                    wobble_depth=p.get("wobble_depth", 0.0),
+                    start_mult=p.get("start_mult", 1.6),
+                    detune2=p.get("detune2", 0.0))
 
 
 def _melodic(sr, freq=220.0, variant="piano", freqs=None):
@@ -1809,7 +1897,31 @@ def _melodic(sr, freq=220.0, variant="piano", freqs=None):
         _, dur = _MELODIC_VARIANTS.get(variant, ("pad", 1.8))
         return fn(sr, chord, dur=dur)
     fn_name, dur = _MELODIC_VARIANTS.get(variant, ("piano", 0.5))
-    return _MELODIC_FUNCS[fn_name](sr, freq, dur=dur)
+    out = _MELODIC_FUNCS[fn_name](sr, freq, dur=dur)
+    if "_x" in variant:
+        # Expansion takes of a melodic voice used to differ ONLY in
+        # duration — waveform-identical clones in the sound browser.
+        # Give each take its own brightness so it plays as an alternate
+        # performance of the instrument, not a copy.
+        try:
+            _frac = (int(variant.rsplit("_x", 1)[1]) % 10) / 10.0
+        except (ValueError, IndexError):
+            _frac = 0.5
+        out = _darken(out, 0.55 + 0.4 * _frac)
+    # Sibling variants (_dark/_soft) used to differ ONLY in duration —
+    # the same tone twice (Daryl: "nearly identical sounds"). Give the
+    # suffix a real tonal meaning: _dark is lowpass-darkened, _soft is
+    # darkened less with a gentler attack swell.
+    if variant.endswith("_dark"):
+        out = _darken(out, 0.45)
+    elif variant.endswith("_soft"):
+        out = _darken(out, 0.7)
+        n = out.shape[0]
+        atk = min(n, int(sr * 0.02))
+        if atk > 1:
+            ramp = np.linspace(0.25, 1.0, atk, dtype=np.float32)
+            out[:atk] = out[:atk] * ramp[:, None]
+    return out
 
 
 def _fx(sr, rng, variant="impact"):

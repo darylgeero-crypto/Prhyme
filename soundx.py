@@ -304,25 +304,26 @@ def _wurlie(sr, freq, dur=0.6):
 def _lead_saw(sr, freq, dur=0.5):
     n = int(sr * dur); t = np.arange(n) / sr
     sig = np.zeros(n)
-    for k in range(1, 12):
-        sig += (1.0/k) * np.sin(2*np.pi*freq*k*t)
-    sig /= 3.5
+    for det in (0.998, 1.002):
+        for k in range(1, 12):
+            sig += (1.0/k) * np.sin(2*np.pi*freq*k*det*t)
+    sig /= 5.0
     env = np.minimum(1.0, t/0.015) * np.exp(-t*4.0)
-    return _stereo(np.tanh(1.5*sig) * env * 0.35)
+    rel = np.minimum(1.0, np.maximum(0.0, (dur - t) / 0.04))
+    return _cap_peak(_stereo(np.tanh(1.5*sig) * env * rel * 0.55), 0.85)
 
 
 def _lead_square(sr, freq, dur=0.5):
     n = int(sr * dur); t = np.arange(n) / sr
-    sig = np.sign(np.sin(2*np.pi*freq*t))
-    # soften with lowpass-ish: mix with sine
-    sig = 0.6*sig + 0.4*np.sin(2*np.pi*freq*t)
+    # odd-partial stack (a true square's recipe) instead of sign()
+    sig = np.zeros(n)
+    for k in range(1, 12, 2):
+        sig += (1.0/k) * np.sin(2*np.pi*freq*k*t)
+    sig = sig / 1.6 + 0.25*np.sin(2*np.pi*freq*t)
     env = np.minimum(1.0, t/0.015) * np.exp(-t*4.5)
-    return _stereo(sig * env * 0.28)
+    rel = np.minimum(1.0, np.maximum(0.0, (dur - t) / 0.04))
+    return _cap_peak(_stereo(sig * env * rel * 0.5), 0.85)
 
-
-# ---------------------------------------------------------------------------
-# Bass synth functions (non-808 bass textures)
-# ---------------------------------------------------------------------------
 
 def _reese_bass(sr, freq, dur=0.6):
     n = int(sr * dur); t = np.arange(n) / sr
@@ -606,7 +607,9 @@ SNARE_SPEC = {"noise_decay": 0.25, "noise_level": 0.20, "body_freq": 0.22,
 HAT_SPEC = {"dur": 0.25, "decay": 0.30, "level": 0.12}
 CLAP_SPEC = {"burst_decay": 0.30, "tail_decay": 0.30, "level": 0.10}
 # clap bursts are tuples — jitter handled separately below
-BASS808_SPEC = {"dur": 0.20, "drive": 0.30, "glide_time": 0.35}
+BASS808_SPEC = {"dur": 0.20, "drive": 0.30, "glide_time": 0.35,
+                "harm2": 0.40, "harm3": 0.45, "decay": 0.30,
+                "click": 0.50, "start_mult": 0.22}
 PERC_SPEC = {"freq": 0.25, "dur": 0.20}
 FX_SPEC = {"dur": 0.30}
 
