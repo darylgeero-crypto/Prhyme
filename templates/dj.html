@@ -23,8 +23,8 @@
 </div>
 
 <div class="dj-mix-panel">
-  <h3>🎛 Rockdabus Prhyme's Mix</h3>
-  <p class="dj-note"><strong>Let Rockdabus Prhyme take over</strong> — pick a genre and style, and he'll blend original beats into one continuous mix, beatmatched &amp; crossfaded.</p>
+  <h3>🎛 Rokdabus Prhyme's Mix</h3>
+  <p class="dj-note"><strong>Let Rokdabus Prhyme take over</strong> — pick a genre and style, and he'll blend original beats into one continuous mix, beatmatched &amp; crossfaded.</p>
   <div class="mix-gen-row">
     <label>Genre
       <select id="mixGenre" class="txt">
@@ -49,13 +49,13 @@
   <div class="mix-gen-row">
     <label class="check" style="display:flex;align-items:center;gap:8px">
       <input type="checkbox" id="djAutostart" checked>
-      <span>▶ Auto-play Rockdabus Prhyme's mix when this page opens</span>
+      <span>▶ Auto-play Rokdabus Prhyme's mix when this page opens</span>
     </label>
   </div>
 </div>
 
 <div id="djAutoBar" class="dj-autobar" style="display:none">
-  <button class="btn big" id="djAutoPlay">▶ Play Rockdabus Prhyme's mix</button>
+  <button class="btn big" id="djAutoPlay">▶ Play Rokdabus Prhyme's mix</button>
   <span class="dj-note" id="djAutoLabel"></span>
 </div>
 
@@ -634,8 +634,8 @@ $("genMixBtn").addEventListener("click", async ()=>{
       if(pj.status==="done"){
         clearInterval(poll);
         const res=pj.result||{};
-        st.textContent="✅ Rockdabus Prhyme's pick is ready — "+(res.duration||"?")+"s @ "+(res.bpm||"?")+" BPM";
-        toast("Rockdabus Prhyme's pick 🎛");
+        st.textContent="✅ Rokdabus Prhyme's pick is ready — "+(res.duration||"?")+"s @ "+(res.bpm||"?")+" BPM";
+        toast("Rokdabus Prhyme's pick 🎛");
         loadLibrary();
         btn.disabled=false; btn.textContent="⚡ Generate Mix";
       }else if(pj.status==="error"){
@@ -682,7 +682,7 @@ $("djUploadFile").addEventListener("change", async e=>{
   });
 })();
 
-/* ---------- Rockdabus Prhyme auto-mix on page open ---------- */
+/* ---------- Rokdabus Prhyme auto-mix on page open ---------- */
 /* Generates (or reuses) a mix, then shows a big play button. Mobile
    browsers require a tap before audio can start, so auto-play fires
    from that tap — decks & crossfader stay fully manual. */
@@ -707,11 +707,11 @@ $("djUploadFile").addEventListener("change", async e=>{
       const m=/(\d{2,3})bpm/.exec(name);
       if(m) $("bpmA").value=m[1];
       bar.style.display="none";
-      playBtn.disabled=false; playBtn.textContent="▶ Play Rockdabus Prhyme's mix";
+      playBtn.disabled=false; playBtn.textContent="▶ Play Rokdabus Prhyme's mix";
       playDeck(deckA,$("playA"),0);   // audio starts…
       if(deckA.playing){
         startVinylSpin();             // …at the exact same moment the record starts turning
-        toast("🎧 Rockdabus Prhyme is live");
+        toast("🎧 Rokdabus Prhyme is live");
       }else hideSpinOverlay();        // load failed: nothing is playing, dismiss the overlay
     };
   }
@@ -726,7 +726,7 @@ $("djUploadFile").addEventListener("change", async e=>{
       if(await urlOk(url)){ showStart(cached.file,url); return; }
     }
     const genre=(window.djrillGenre&&window.djrillGenre.get())||"HipHop";
-    label.textContent="Rockdabus Prhyme is cooking a "+genre+" mix…";
+    label.textContent="Rokdabus Prhyme is cooking a "+genre+" mix…";
     bar.style.display="flex"; playBtn.style.display="none";
     try{
       const r=await fetch("/api/mix",{method:"POST",headers:{"Content-Type":"application/json"},
@@ -745,7 +745,7 @@ $("djUploadFile").addEventListener("change", async e=>{
             showStart(file,"/download/"+encodeURIComponent(file));
           } else bar.style.display="none";
         }else if(pj.status==="error"){ clearInterval(poll); bar.style.display="none"; }
-        else label.textContent="Rockdabus Prhyme is cooking a "+genre+" mix… "+(pj.progress||0)+"%";
+        else label.textContent="Rokdabus Prhyme is cooking a "+genre+" mix… "+(pj.progress||0)+"%";
       },1200);
     }catch(e){ bar.style.display="none"; }
   })();

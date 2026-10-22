@@ -48,7 +48,7 @@ try { localStorage.setItem(k, v); } catch (e) {}
 var voiceOn = storeGet("rb_buddy_voice", "0") === "1";
 var minimized = storeGet("rb_buddy_min", "0") === "1";
 var GREETINGS = {
-home: "Yo, welcome to Prhyme™! I'm Rockdabus — your pocket producer. Tap me anytime. 🎧",
+home: "Yo, welcome to Prhyme™! I'm Rokdabus — your pocket producer. Tap me anytime. 🎧",
 beats: "Let's cook! 🔥 What vibe today — Drill, Trap, BoomBap?",
 lyrics: "Pen game ready? ✎ Give me a theme and let's write.",
 dj: "Booth's hot. 🎧 I'll keep the energy right.",
@@ -58,7 +58,7 @@ master: "Final polish? Leave headroom and let it breathe. ✨",
 convert: "Got audio? I'll flip it. 🔄",
 video: "Visuals for the track? Let's make it move. 🎬",
 help: "Need a hand? That's literally my job. 🤖",
-default: "Rockdabus in the building. Need a hand?"
+default: "Rokdabus in the building. Need a hand?"
 };
 var TIPS = {
 home: [
@@ -130,7 +130,7 @@ video: [
 "Longer tracks take longer to render. Plug in your phone for big jobs.",
 "Preview before you download — rendering twice wastes battery."
 ],
-rockdabus: [
+rokdabus: [
 "I'm Rokdabus — ask me anything about making music. Beats, lyrics, mixing, I know it all.",
 "Voice mode lets you talk to me hands-free. Great when you're cooking and can't type.",
 "I can also control the app — try 'make a drill beat at 140 BPM' and watch me work."
@@ -215,7 +215,7 @@ function paintVoice() {
 var label = voiceOn ? "🔊 Voice: on" : "🔇 Voice: off";
 voiceBtn.textContent = label;
 bubbleVoice.textContent = voiceOn ? "🔊" : "🔇";
-bubbleVoice.title = voiceOn ? "Mute Rockdabus" : "Unmute Rockdabus";
+bubbleVoice.title = voiceOn ? "Mute Rokdabus" : "Unmute Rokdabus";
 }
 function toggleVoice() {
 voiceOn = !voiceOn;
@@ -241,12 +241,12 @@ speak("Voice on. Let's make something.");
 }
 }
 var PAGE_ACTIONS = {
-beats: [["🎲", "BPM idea", "tip"], ["🎧", "DJ Booth", "/dj"], ["💬", "Chat", "/rockdabus"]],
-lyrics: [["💡", "Rhyme idea", "tip"], ["🎛️", "Beats", "/beats"], ["💬", "Chat", "/rockdabus"]],
-dj: [["⚡", "Transition tip", "tip"], ["🎛️", "Beats", "/beats"], ["💬", "Chat", "/rockdabus"]],
-studio: [["💡", "Studio tip", "tip"], ["🎛️", "Beats", "/beats"], ["💬", "Chat", "/rockdabus"]],
-home: [["🚀", "Quick tip", "tip"], ["🎛️", "Make a beat", "/beats"], ["💬", "Chat", "/rockdabus"]],
-default: [["💡", "Tip me", "tip"], ["🎛️", "Beats", "/beats"], ["💬", "Chat", "/rockdabus"]]
+beats: [["🎲", "BPM idea", "tip"], ["🎧", "DJ Booth", "/dj"], ["💬", "Chat", "/rokdabus"]],
+lyrics: [["💡", "Rhyme idea", "tip"], ["🎛️", "Beats", "/beats"], ["💬", "Chat", "/rokdabus"]],
+dj: [["⚡", "Transition tip", "tip"], ["🎛️", "Beats", "/beats"], ["💬", "Chat", "/rokdabus"]],
+studio: [["💡", "Studio tip", "tip"], ["🎛️", "Beats", "/beats"], ["💬", "Chat", "/rokdabus"]],
+home: [["🚀", "Quick tip", "tip"], ["🎛️", "Make a beat", "/beats"], ["💬", "Chat", "/rokdabus"]],
+default: [["💡", "Tip me", "tip"], ["🎛️", "Beats", "/beats"], ["💬", "Chat", "/rokdabus"]]
 };
 function buildActions() {
 var box = document.getElementById("rbBuddyActions");
@@ -302,7 +302,7 @@ showBubble(t);
 voiceBtn.addEventListener("click", toggleVoice);
 bubbleVoice.addEventListener("click", toggleVoice);
 bubbleChat.addEventListener("click", function () {
-window.location.href = "/rockdabus";
+window.location.href = "/rokdabus";
 });
 document.addEventListener("change", function (e) {
 if (e.target && e.target.id === "genreGlobal") {
@@ -358,7 +358,7 @@ showBubble(pick(tipsFor(page)), 8000);
 buddy.classList.toggle("min", minimized);
 paintVoice();
 buildActions();
-if (!minimized && page !== "rockdabus") {
+if (!minimized && page !== "rokdabus") {
 var delay = page === "home" ? 8000 : 1500; 
 setTimeout(function () {
 if (!minimized) showBubble(GREETINGS[page] || GREETINGS.default, 7000);
@@ -459,7 +459,7 @@ hideBubble();
     dragging = false;
   });
 
-if (!minimized && page !== "rockdabus") {
+if (!minimized && page !== "rokdabus") {
   setTimeout(function () {
     if (!minimized && bubble.hidden && panel.hidden) showBubble(pick(tipsFor(page)), 9000);
   }, 10500);
@@ -538,7 +538,7 @@ freestyle: [
  {t: "Generate", x: "Full verses, hooks and all. Generate three or four, steal the best lines from each — that's how pros actually write.", sel: "#fullGen"}
 ],
 default: [
- {t: "I'm Rockdabus", x: "Tap any function name in this panel and I'll explain what it does. Or hit Walk me through this page and I'll guide you control by control."},
+ {t: "I'm Rokdabus", x: "Tap any function name in this panel and I'll explain what it does. Or hit Walk me through this page and I'll guide you control by control."},
  {t: "Tips rotate", x: "Every page has its own tips, written for what you're doing there. The Another tip button cycles them."}
 ]
 };

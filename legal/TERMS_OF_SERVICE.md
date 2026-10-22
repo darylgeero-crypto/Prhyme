@@ -35,7 +35,7 @@
 
 ## 1. DEFINITIONS
 
-1.1. **"Service"** means the Prhyme™ mobile application, web application, progressive web application, desktop application, and any associated websites, APIs, servers, and services operated by Prhyme, including all features such as beat generation, lyric generation, DJ tools, mastering, sound kits, the Rockdabus Prhyme assistant, and any future features.
+1.1. **"Service"** means the Prhyme™ mobile application, web application, progressive web application, desktop application, and any associated websites, APIs, servers, and services operated by Prhyme, including all features such as beat generation, lyric generation, DJ tools, mastering, sound kits, the Rokdabus Prhyme assistant, and any future features.
 
 1.2. **"AI-Generated Content"** means any lyrics, beats, instrumentals, melodies, arrangements, mixes, masters, videos, images, or other creative output produced in whole or in substantial part by the automated generative systems of the Service, including but not limited to template-based generators, machine-learning models, algorithmic composition engines, and any output labeled "AI-GENERATED DRAFT" by the Service.
 
@@ -79,7 +79,7 @@
 
 4.1. **Limited License.** Subject to these Terms and payment of applicable fees, Prhyme grants you a limited, non-exclusive, non-transferable, non-sublicensable, revocable license to access and use the Service for personal, non-commercial or commercial creative purposes as permitted by your Subscription tier.
 
-4.2. **No Ownership in the Service.** The Service, including all software, algorithms, models, sound synthesis engines, designs, trademarks (including Prhyme™ and Rockdabus Prhyme), and documentation, is and remains the exclusive property of Prhyme. Nothing in these Terms transfers any ownership interest in the Service to you.
+4.2. **No Ownership in the Service.** The Service, including all software, algorithms, models, sound synthesis engines, designs, trademarks (including Prhyme™ and Rokdabus Prhyme), and documentation, is and remains the exclusive property of Prhyme. Nothing in these Terms transfers any ownership interest in the Service to you.
 
 4.3. **Restrictions.** You shall not: (a) reverse-engineer, decompile, or attempt to extract source code or model weights; (b) circumvent access controls, paywalls, or license enforcement; (c) use automated means to scrape or bulk-download content; (d) resell, redistribute, or sublicense access to the Service; (e) use the Service to develop a competing product.
 

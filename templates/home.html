@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<!-- Prhyme™ cinematic intro v2: particles → turntable materialize → vinyl spin-up → Rockdabus burst → title -->
+<!-- Prhyme™ cinematic intro v2: particles → turntable materialize → vinyl spin-up → Rokdabus burst → title -->
 <div id="prhymeIntro" class="prhyme-intro" role="dialog" aria-label="Welcome to Prhyme" style="position:fixed;inset:0;z-index:1000;background:#0a0a12;display:flex;align-items:center;justify-content:center;flex-direction:column;"><div style="font-size:42px;font-weight:bold;color:#fff;letter-spacing:2px;"><span class="prhyming-flash">Prhyming</span></div>
   <canvas class="intro-particles" id="introParticles" aria-hidden="true"></canvas>
   <div class="intro-vignette" aria-hidden="true"></div>
@@ -17,7 +17,7 @@
   <div class="intro-flash" aria-hidden="true"></div>
   <div class="intro-shockwave" aria-hidden="true"></div>
   <div class="intro-shockwave sw2" aria-hidden="true"></div>
-  <img class="intro-mascot" id="introMascot" src="{{ url_for('static', filename='img/rockdabus.webp') }}" alt="Rockdabus Prhyme">
+  <img class="intro-mascot" id="introMascot" src="{{ url_for('static', filename='img/rokdabus.webp') }}" alt="Rokdabus Prhyme">
   <div class="intro-title"><span>P</span><span>r</span><span>h</span><span>y</span><span>m</span><span>e</span><span class="tm">™</span></div>
   <div class="intro-tagline">Your phone is a studio now</div>
   <div class="intro-prhyming"><span class="prhyming-flash">Prhyming</span></div>
@@ -36,7 +36,7 @@
 {% endif %}
 <section class="hero home-bg">
   <div class="home-bg-graphic" aria-hidden="true">
-    <img class="home-bg-mascot" src="{{ url_for('static', filename='img/rockdabus.webp') }}" alt="">
+    <img class="home-bg-mascot" src="{{ url_for('static', filename='img/rokdabus.webp') }}" alt="">
     <div class="home-bg-vignette"></div>
   </div>
   <div class="hero-inner">
@@ -46,7 +46,7 @@
     <div class="hero-eq" aria-hidden="true">
       {% for i in range(24) %}<span style="--d:{{ (i*37)%100/100 }}s"></span>{% endfor %}
     </div>
-    <img class="hero-mascot" src="{{ url_for('static', filename='img/rockdabus.webp') }}" alt="Rockdabus Prhyme — the Prhyme™ mascot">
+    <img class="hero-mascot" src="{{ url_for('static', filename='img/rokdabus.webp') }}" alt="Rokdabus Prhyme — the Prhyme™ mascot">
     <h1 class="hero-title">Prhyme™</h1>
     <div class="hero-prhyming"><span class="prhyming-flash">Prhyming</span></div>
     <p class="hero-sub">Studio-grade beats, mixing &amp; mastering — in your pocket.</p>
@@ -111,7 +111,7 @@
   </a>
   <a class="card" href="{{ url_for('rokdabus_page') }}">
     <div class="card-ico">🤖</div>
-    <div class="card-t">Rockdabus Prhyme</div>
+    <div class="card-t">Rokdabus Prhyme</div>
     <div class="card-d">Chat with your pocket producer — he makes beats &amp; writes lyrics with you.</div>
   </a>
   <a class="card" href="{{ url_for('tutorials_page') }}">

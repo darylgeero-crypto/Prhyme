@@ -7,17 +7,17 @@ const SHELL = [
   '/',
   '/static/manifest.webmanifest',
   '/static/css/style.css',
-  '/static/css/rockdabus-buddy.css',
+  '/static/css/rokdabus-buddy.css',
   '/static/js/app.js',
   '/static/js/onboard.js',
   '/static/js/ambient.js',
-  '/static/js/rockdabus-buddy.js',
+  '/static/js/rokdabus-buddy.js',
   '/static/js/studio.js',
   '/static/img/icon-192.png',
   '/static/img/icon-512.png',
   '/static/img/icon-maskable-512.png',
   '/static/img/apple-touch-icon.png',
-  '/static/img/rockdabus.webp'
+  '/static/img/rokdabus.webp'
 ];
 
 self.addEventListener('install', (e) => {

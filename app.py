@@ -4930,7 +4930,7 @@ def api_admin_feedback_status(fid):
 
 @app.get("/rokdabus")
 def rokdabus_page():
-    return render_template("rokdabus.html", active="rockdabus")
+    return render_template("rokdabus.html", active="rokdabus")
 
 
 # ------------------------------------------------- Rokdabus Prhyme chat

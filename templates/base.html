@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Prhyme™{% if title %} — {{ title }}{% endif %}</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/rockdabus-buddy.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/rokdabus-buddy.css') }}">
 <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
 <meta name="theme-color" content="#0a0a14">
 <meta name="mobile-web-app-capable" content="yes">
@@ -155,7 +155,7 @@ body.no-banner {
 <!-- Prhyme motif: big translucent Rokdabus + floating notes on every page
      (Daryl, 2026-10-22 — the homepage look, carried app-wide) -->
 <div class="page-motif" aria-hidden="true">
-  <img src="{{ url_for('static', filename='img/rockdabus.webp') }}" alt="">
+  <img src="{{ url_for('static', filename='img/rokdabus.webp') }}" alt="">
   <span class="pm-note pm-n1">♪</span><span class="pm-note pm-n2">♫</span>
   <span class="pm-note pm-n3">♩</span><span class="pm-note pm-n4">♬</span>
 </div>
@@ -292,8 +292,8 @@ function declineTos() {
     <span class="ico">🎤</span><span class="lbl">Freestyle</span></a>
   <a href="{{ url_for('analytics_page') }}" class="tab {% if active=='analytics' %}on{% endif %}">
     <span class="ico">📊</span><span class="lbl">Stats</span></a>
-  <a href="{{ url_for('rokdabus_page') }}" class="tab {% if active=='rockdabus' %}on{% endif %}">
-    <span class="ico">🤖</span><span class="lbl">Rockdabus</span></a>
+  <a href="{{ url_for('rokdabus_page') }}" class="tab {% if active=='rokdabus' %}on{% endif %}">
+    <span class="ico">🤖</span><span class="lbl">Rokdabus</span></a>
   <a href="{{ url_for('help_page') }}" class="tab {% if active=='help' %}on{% endif %}">
     <span class="ico">❓</span><span class="lbl">Help</span></a>
   <a href="{{ url_for('billing.pricing') }}" class="tab {% if active=='pricing' %}on{% endif %}">
@@ -363,8 +363,8 @@ function dismissBanner() {
 })();
 </script>
 
-<!-- Rockdabus persistent 3D buddy companion -->
-<div id="rbBuddy" class="rb-buddy" aria-label="Rockdabus assistant">
+<!-- Rokdabus persistent 3D buddy companion -->
+<div id="rbBuddy" class="rb-buddy" aria-label="Rokdabus assistant">
   <div class="rb-buddy-bubble" id="rbBuddyBubble" hidden>
     <div class="rb-buddy-bubble-text" id="rbBuddyText"></div>
     <div class="rb-buddy-bubble-actions">
@@ -374,7 +374,7 @@ function dismissBanner() {
   </div>
   <div class="rb-buddy-panel" id="rbBuddyPanel" hidden>
     <div class="rb-buddy-panel-head">
-      <span>Rockdabus Prhyme</span>
+      <span>Rokdabus Prhyme</span>
       <button type="button" class="btn small" id="rbBuddyMin" title="Minimize">—</button>
     </div>
     <div class="rb-buddy-tip" id="rbBuddyTip"></div>
@@ -390,15 +390,15 @@ function dismissBanner() {
     <button type="button" class="btn small rb-buddy-voice" id="rbBuddyTipBtn" style="margin-top:6px">💡 Another tip</button>
     <button type="button" class="btn small rb-buddy-voice" id="rbBuddyTipsToggle" style="margin-top:6px">🔔 Tips: on</button>
   </div>
-  <button type="button" class="rb-buddy-disc" id="rbBuddyDisc" aria-label="Rockdabus assistant — tap to open">
+  <button type="button" class="rb-buddy-disc" id="rbBuddyDisc" aria-label="Rokdabus assistant — tap to open">
     <span class="rb-buddy-glow"></span>
     <span class="rb-buddy-face"></span>
   </button>
-  <button type="button" class="rb-buddy-dot" id="rbBuddyDot" hidden aria-label="Open Rockdabus">🤖</button>
+  <button type="button" class="rb-buddy-dot" id="rbBuddyDot" hidden aria-label="Open Rokdabus">🤖</button>
 </div>
 
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
-<script src="{{ url_for('static', filename='js/rockdabus-buddy.js') }}"></script>
+<script src="{{ url_for('static', filename='js/rokdabus-buddy.js') }}"></script>
 <script src="{{ url_for('static', filename='js/ambient.js') }}"></script>
 <script src="{{ url_for('static', filename='js/onboard.js') }}"></script>
 {% block scripts %}{% endblock %}

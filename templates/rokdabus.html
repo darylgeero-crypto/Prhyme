@@ -2,9 +2,9 @@
 {% block content %}
 <div class="rb-wrap">
   <div class="rb-head">
-    <img class="rb-avatar" src="{{ url_for('static', filename='img/rockdabus.webp') }}" alt="Rockdabus Prhyme">
+    <img class="rb-avatar" src="{{ url_for('static', filename='img/rokdabus.webp') }}" alt="Rokdabus Prhyme">
     <div class="rb-head-t">
-      <div class="rb-name">Rockdabus Prhyme</div>
+      <div class="rb-name">Rokdabus Prhyme</div>
       <div class="rb-status" id="rbStatus">online — your pocket producer 🎧</div>
     </div>
     <button type="button" id="rbVoiceBtn" class="btn small rb-voice-btn" title="Toggle spoken replies">🔇</button>
@@ -14,8 +14,8 @@
   <div class="rb-chips" id="rbChips"></div>
 
   <form class="rb-input" id="rbForm" autocomplete="off">
-    <button type="button" id="rbMic" class="rb-mic" title="Talk to Rockdabus">🎤</button>
-    <input id="rbText" type="text" placeholder="Ask Rockdabus… (e.g. make me a drill beat at 140)" maxlength="500">
+    <button type="button" id="rbMic" class="rb-mic" title="Talk to Rokdabus">🎤</button>
+    <input id="rbText" type="text" placeholder="Ask Rokdabus… (e.g. make me a drill beat at 140)" maxlength="500">
     <button type="submit" class="rb-send" title="Send">➤</button>
   </form>
   <div class="rb-note hidden" id="rbNote"></div>
@@ -34,7 +34,7 @@
   var voiceBtn = document.getElementById("rbVoiceBtn");
   var note = document.getElementById("rbNote");
   var statusEl = document.getElementById("rbStatus");
-  var AVATAR = "{{ url_for('static', filename='img/rockdabus.webp') }}";
+  var AVATAR = "{{ url_for('static', filename='img/rokdabus.webp') }}";
 
   var sid = null;
   try { sid = sessionStorage.getItem("rb_sid") || null; } catch (e) {}
@@ -207,7 +207,7 @@
     input.value = "";
     var typing = bubble("rb", '<span class="rb-typing"><span></span><span></span><span></span></span>');
     try {
-      var r = await fetch("/api/rockdabus", {
+      var r = await fetch("/api/rokdabus", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({message: text, session_id: sid})
@@ -276,7 +276,7 @@
     });
   }
 
-  // greet on first open (proactive Rockdabus)
+  // greet on first open (proactive Rokdabus)
   setTimeout(function () { send("yo"); }, 400);
 })();
 </script>
