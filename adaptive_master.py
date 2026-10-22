@@ -5,7 +5,7 @@ parameters per section. Wraps the existing master_chunked — does not
 modify the working chain.
 """
 
-def analyze_track_sections(audio_path, sr=44100, window_s=5.0, min_section_s=15.0):
+def _analyze_track_sections_full(audio_path, sr=44100, window_s=5.0, min_section_s=15.0):
     """
     Analyze audio to find natural section boundaries based on:
     - RMS energy changes (volume shifts)
@@ -89,6 +89,17 @@ def analyze_track_sections(audio_path, sr=44100, window_s=5.0, min_section_s=15.
             prev_energy = e
         onset_rates.append(onsets)
     
+    return _sections_from_features(energies, centroids, onset_rates,
+                                   window_n, len(data), min_section_s,
+                                   window_s)
+
+
+def _sections_from_features(energies, centroids, onset_rates,
+                            window_n, total_len, min_section_s,
+                            window_s):
+    """Shared boundary + section logic for both analysis paths."""
+    import numpy as np
+    n_windows = len(energies)
     energies = np.array(energies)
     centroids = np.array(centroids)
     onset_rates = np.array(onset_rates)
@@ -133,7 +144,7 @@ def analyze_track_sections(audio_path, sr=44100, window_s=5.0, min_section_s=15.
         start_w = boundaries[idx]
         end_w = boundaries[idx+1]
         start_s = start_w * window_n
-        end_s = min(end_w * window_n, len(data))
+        end_s = min(end_w * window_n, total_len)
         
         # Characterize this section
         seg_e = np.mean(energies[start_w:end_w])
@@ -163,6 +174,67 @@ def analyze_track_sections(audio_path, sr=44100, window_s=5.0, min_section_s=15.
         }))
     
     return sections
+
+
+
+
+def analyze_track_sections(audio_path, sr=44100, window_s=5.0, min_section_s=15.0):
+    """Section analysis, STREAMED (2026-10-22 optimization).
+
+    The original implementation decoded the whole track into RAM
+    (212 MB for a 20-min song) just to compute 5-second window
+    features. This version reads one window at a time from disk and
+    runs the identical feature/boundary math — same sections out,
+    ~2 MB in RAM. Falls back to the full decode when the file's
+    sample rate differs (the old path resamples) or streaming fails.
+    """
+    import numpy as np
+    try:
+        import soundfile as sf
+        info = sf.info(audio_path)
+        if int(info.samplerate) != int(sr) or int(info.frames) == 0:
+            raise ValueError("stream fallback")
+        total = int(info.frames)
+        window_n = int(window_s * sr)
+        n_windows = total // window_n
+        if n_windows < 2:
+            return [(0, total, {'energy': 'medium', 'tempo': 'stable'})]
+        energies = []
+        centroids = []
+        onset_rates = []
+        freqs = np.fft.rfftfreq(window_n, 1.0 / sr)
+        hann = np.hanning(window_n)
+        hop = window_n // 20
+        with sf.SoundFile(audio_path) as f:
+            for i in range(n_windows):
+                block = f.read(window_n, dtype='float32', always_2d=True)
+                if len(block) < window_n:
+                    block = np.pad(block, ((0, window_n - len(block)), (0, 0)))
+                window = block.mean(axis=1)
+                rms = np.sqrt(np.mean(window ** 2) + 1e-10)
+                energies.append(20 * np.log10(rms + 1e-10))
+                spectrum = np.abs(np.fft.rfft(window * hann))
+                if np.sum(spectrum) > 1e-10:
+                    centroids.append(float(np.sum(freqs * spectrum) / np.sum(spectrum)))
+                else:
+                    centroids.append(0.0)
+                prev_energy = 0
+                onsets = 0
+                for j in range(0, window_n - hop, hop):
+                    frame = window[j:j + hop]
+                    e = np.mean(frame ** 2)
+                    if e > prev_energy * 1.5 and e > 1e-6:
+                        onsets += 1
+                    prev_energy = e
+                onset_rates.append(onsets)
+        return _sections_from_features(np.array(energies),
+                                       np.array(centroids),
+                                       np.array(onset_rates),
+                                       window_n, total, min_section_s,
+                                       window_s)
+    except Exception:
+        return _analyze_track_sections_full(audio_path, sr, window_s,
+                                            min_section_s)
 
 
 def adapt_mopts_for_section(base_mopts, characteristics):
@@ -262,6 +334,42 @@ def vocal_prominence_map(voc, inst, sr, win_s=2.0):
     return margins, present, vdb
 
 
+def prominence_gain_curve(voc, inst, sr, dip_db=4.0, headroom_db=1.0,
+                          max_lift_db=6.0, win_s=2.0):
+    """The per-window lift curve behind lift_buried_vocals, exposed so
+    disk-streamed callers (the >4 min fast path) can apply the same
+    gains segment by segment. Returns (need_s_db, report) where
+    need_s_db is the SMOOTHED per-window lift in dB."""
+    import numpy as np
+    voc32 = voc.astype(np.float32, copy=False)
+    margins, present, vdb = vocal_prominence_map(voc32, inst, sr, win_s)
+    nwin = len(margins)
+    report = {"windows": int(nwin), "present": int(present.sum()),
+              "lifted": 0, "baseline_db": None,
+              "worst_before_db": None, "worst_after_db": None}
+    if nwin == 0 or not present.any():
+        return np.zeros(max(nwin, 0)), report
+    pres_margins = margins[present]
+    baseline = float(np.median(pres_margins))
+    report["baseline_db"] = baseline
+    report["worst_before_db"] = float(np.min(pres_margins))
+    target = baseline - headroom_db
+    aud_floor = float(np.median(vdb[present])) - 45.0
+    dipped = present & (vdb > aud_floor) & (margins < baseline - dip_db)
+    need = np.where(dipped,
+                    np.clip(target - np.nan_to_num(margins, nan=target),
+                            0.0, max_lift_db),
+                    0.0)
+    report["lifted"] = int((need > 0.05).sum())
+    if nwin >= 3:
+        ker = np.array([0.25, 0.5, 0.25])
+        padded = np.pad(need, (1, 1), mode="edge")
+        need_s = np.convolve(padded, ker, mode="valid")
+    else:
+        need_s = need
+    return need_s, report
+
+
 def lift_buried_vocals(voc, inst, sr, dip_db=4.0, headroom_db=1.0,
                        max_lift_db=6.0, win_s=2.0):
     """Lift the vocal stem in the spots where the beat overpowers it.
@@ -279,42 +387,14 @@ def lift_buried_vocals(voc, inst, sr, dip_db=4.0, headroom_db=1.0,
     """
     import numpy as np
     voc32 = voc.astype(np.float32, copy=False)
-    margins, present, vdb = vocal_prominence_map(voc32, inst, sr, win_s)
-    nwin = len(margins)
-    report = {"windows": int(nwin), "present": int(present.sum()),
-              "lifted": 0, "baseline_db": None,
-              "worst_before_db": None, "worst_after_db": None}
-    if nwin == 0 or not present.any():
-        return voc32, report
-    pres_margins = margins[present]
-    baseline = float(np.median(pres_margins))
-    report["baseline_db"] = baseline
-    report["worst_before_db"] = float(np.min(pres_margins))
-    target = baseline - headroom_db
-    # Never lift near-silence (intros, gaps): a window only counts as a
-    # buried vocal when its band energy is within 45 dB of the track's
-    # typical vocal-present level. (Damicksup's 0-2s intro window has a
-    # dipped margin but sits ~60 dB under the real content.)
-    aud_floor = float(np.median(vdb[present])) - 45.0
-    dipped = present & (vdb > aud_floor) & (margins < baseline - dip_db)
-    need = np.where(dipped,
-                    np.clip(target - np.nan_to_num(margins, nan=target),
-                            0.0, max_lift_db),
-                    0.0)
-    report["lifted"] = int((need > 0.05).sum())
+    need_s, report = prominence_gain_curve(voc32, inst, sr, dip_db,
+                                           headroom_db, max_lift_db,
+                                           win_s)
     if report["lifted"] == 0:
         report["worst_after_db"] = report["worst_before_db"]
         return voc32, report
-    # Smooth the gain curve so lifts fade in/out over ~3 windows.
-    if nwin >= 3:
-        ker = np.array([0.25, 0.5, 0.25])
-        padded = np.pad(need, (1, 1), mode="edge")
-        need_s = np.convolve(padded, ker, mode="valid")
-    else:
-        need_s = need
-    # Build a per-sample gain curve: window gains joined by linear ramps
-    # centred on each window.
     w = max(1, int(win_s * sr))
+    nwin = len(need_s)
     n = min(len(voc32), nwin * w)
     centers = (np.arange(nwin) * w + w // 2).astype(np.float64)
     xs = np.arange(n, dtype=np.float64)
@@ -328,3 +408,5 @@ def lift_buried_vocals(voc, inst, sr, dip_db=4.0, headroom_db=1.0,
         report["worst_after_db"] = float(np.min(m2[p2]))
     report["max_lift_db"] = float(np.max(need_s))
     return out.astype(np.float32, copy=False), report
+
+

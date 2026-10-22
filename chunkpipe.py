@@ -64,7 +64,7 @@ def stitch_parts(parts, xfade_n):
     return result
 
 
-def cut_sections(src_path, outdir, section_s, xfade_s, sr, prefix="sect_"):
+def cut_sections(src_path, outdir, section_s, xfade_s, sr, prefix="sect_", spans_s=None):
     """Split src into section WAVs on disk via ffmpeg (zero RAM).
 
     Section i>0 starts xfade_s earlier and runs xfade_s longer so the
@@ -83,11 +83,16 @@ def cut_sections(src_path, outdir, section_s, xfade_s, sr, prefix="sect_"):
             duration = os.path.getsize(src_path) / 16000.0
         except Exception:
             duration = 0
-    n_sections = int(math.ceil(duration / section_s)) if duration > 0 else 0
+    if spans_s:
+        spans = [(max(0.0, a), min(duration, b)) for a, b in spans_s if b > a]
+    else:
+        n_fixed = int(math.ceil(duration / section_s)) if duration > 0 else 0
+        spans = [(i * section_s, min(duration, (i + 1) * section_s))
+                 for i in range(n_fixed)]
     files = []
-    for i in range(n_sections):
-        start = i * section_s - (xfade_s if i > 0 else 0)
-        length = section_s + (xfade_s if i > 0 else 0)
+    for i, (sec_start, sec_end) in enumerate(spans):
+        start = sec_start - (xfade_s if i > 0 else 0)
+        length = (sec_end - sec_start) + (xfade_s if i > 0 else 0)
         fp = os.path.join(outdir, f"{prefix}{i:03d}.wav")
         subprocess.run(
             ["ffmpeg", "-y", "-i", src_path,

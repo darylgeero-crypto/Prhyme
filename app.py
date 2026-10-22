@@ -9,6 +9,7 @@ fakes a vocal performance. Lyrics output is AI-generated draft material
 only and is always labeled as such.
 """
 import os
+import tempfile
 import re
 import sys
 import uuid
@@ -137,6 +138,15 @@ def temp_beats_register(job_id, base, files, genre, bpm, duration):
 
 # --- Temp masters: per-job dirs, removed on keep/discard/timeout ---
 TEMP_MASTERS_DIR = os.path.join(OUTPUT_DIR, "temp_masters")
+
+def _work_tmpdir(prefix):
+    """Temp dir on the app's real disk, NOT /tmp: /tmp is a 512 MB
+    tmpfs and long-track section files overflow it mid-write
+    (libsndfile 'System error' — root-caused 2026-10-22)."""
+    root = os.path.join(OUTPUT_DIR, "temp_work")
+    os.makedirs(root, exist_ok=True)
+    return tempfile.mkdtemp(prefix=prefix, dir=root)
+
 
 def _temp_master_dir(job_id):
     return os.path.join(TEMP_MASTERS_DIR, str(job_id)[:8])
@@ -329,7 +339,7 @@ def master_chunked(mix, masterfx, chain, mopts, prog, SR=44100):
     prog(80, "Mastering in chunks (streaming from disk)...")
 
     import tempfile
-    spill = tempfile.mkdtemp(prefix="mchunks_")
+    spill = _work_tmpdir("mchunks_")
     chunk_files = []
     last_report = None
     try:
@@ -1185,7 +1195,7 @@ def _match_beat_structure(beat, orig_inst, bar_dur, intro_s):
 
 
 # ---------------------------------------------------------------- large-file section mastering
-def master_large_sections(src_path, masterfx, chain, mopts, prog, SR=44100, section_min=4, checkpoint_dir=None, job_id=None):
+def master_large_sections(src_path, masterfx, chain, mopts, prog, SR=44100, section_min=4, checkpoint_dir=None, job_id=None, plan_sections=None):
     """Daryl's two-level chunking for large 'keep original' files.
     1. Split into 4-min sections via ffmpeg (disk only, zero RAM).
     2. Master each 4-min section sequentially using 45s chunks (master_chunked).
@@ -1231,10 +1241,48 @@ def master_large_sections(src_path, masterfx, chain, mopts, prog, SR=44100, sect
     # Duration + split via the shared chunkpipe (2026-10-20 unification):
     # sections are cut WITH the 2s overlap built in so the stitch blends
     # the same audio moment at every join.
-    _probe_dir = tempfile.mkdtemp(prefix="msect_probe_")
+    _probe_dir = _work_tmpdir("msect_probe_")
+    # Section plan (2026-10-22 optimization): when the adaptive
+    # analysis supplied natural sections, cut on THOSE boundaries
+    # (merged to >=120 s, split to <=360 s for RAM sanity) and adapt
+    # the mastering settings per section, instead of blind 4-min
+    # cuts with one setting for the whole song. Any problem with the
+    # plan and we fall back to the fixed grid, unchanged.
+    _spans = None
+    _span_chars = None
+    if plan_sections:
+        try:
+            _raw = [(a / SR, b / SR, c) for a, b, c in plan_sections
+                    if b > a]
+            # merge: never let a section come out under 120 s — fold
+            # short spans forward into the previous one
+            _m2 = []
+            for a, b, c in _raw:
+                if _m2 and (b - _m2[-1][0]) < 120.0:
+                    _m2[-1][1] = b
+                else:
+                    _m2.append([a, b, c])
+            # split spans > 360 s
+            _sp = []
+            for a, b, c in _m2:
+                while b - a > 360.0:
+                    _sp.append((a, a + 360.0, c))
+                    a += 360.0
+                _sp.append((a, b, c))
+            _spans = [(a, b) for a, b, c in _sp]
+            _span_chars = [c for a, b, c in _sp]
+            prog(5, f"Section plan: {len(_spans)} natural sections…")
+        except Exception:
+            _spans = None
+            _span_chars = None
     try:
         section_files, duration = chunkpipe.cut_sections(
-            src_path, _probe_dir, SECTION_S, XFADE_S, SR)
+            src_path, _probe_dir, SECTION_S, XFADE_S, SR, spans_s=_spans)
+        if _spans and len(section_files) != len(_spans):
+            section_files, duration = chunkpipe.cut_sections(
+                src_path, _probe_dir, SECTION_S, XFADE_S, SR)
+            _spans = None
+            _span_chars = None
     finally:
         pass  # files live in _probe_dir; renamed below
 
@@ -1270,7 +1318,14 @@ def master_large_sections(src_path, masterfx, chain, mopts, prog, SR=44100, sect
                 mastered_files.append(sect_ckpt)
                 continue
             prog(pct, f"Mastering sections… {int(100 * (idx + 1) / len(section_files))}%")
-            pcm16, report = master_chunked(sf, masterfx, chain, mopts,
+            _mopts_i = mopts
+            if _span_chars and idx < len(_span_chars):
+                try:
+                    _mopts_i = adaptive_master.adapt_mopts_for_section(
+                        mopts, _span_chars[idx])
+                except Exception:
+                    _mopts_i = mopts
+            pcm16, report = master_chunked(sf, masterfx, chain, _mopts_i,
                                           lambda p, m: prog(pct, m), SR)
             last_report = report
             import scipy.io.wavfile as _wv
@@ -1327,7 +1382,33 @@ def master_adaptive(src_path, masterfx, chain, mopts, prog, SR=44100, checkpoint
     
     try:
         prog(2, "Analyzing track for tempo/volume changes…")
-        sections = adaptive_master.analyze_track_sections(src_path, sr=SR)
+        sections = None
+        _ana_path = (os.path.join(checkpoint_dir, "analysis.json")
+                     if checkpoint_dir else None)
+        if _ana_path and os.path.exists(_ana_path):
+            try:
+                import soundfile as _sf2
+                _frames = int(_sf2.info(src_path).frames)
+                with open(_ana_path) as _af:
+                    _saved = json.load(_af)
+                if int(_saved.get("frames", -1)) == _frames:
+                    sections = [(int(a), int(b), dict(c))
+                                for a, b, c in _saved["sections"]]
+                    prog(3, "Section analysis reused from checkpoint…")
+            except Exception:
+                sections = None
+        if sections is None:
+            sections = adaptive_master.analyze_track_sections(src_path, sr=SR)
+            if _ana_path:
+                try:
+                    import soundfile as _sf3
+                    with open(_ana_path, "w") as _af2:
+                        json.dump({"frames": int(_sf3.info(src_path).frames),
+                                   "sections": [[int(a), int(b), dict(c)]
+                                                for a, b, c in sections]},
+                                  _af2)
+                except Exception:
+                    pass
         
         # If only 1 section or all sections similar, use standard chain
         if len(sections) <= 1:
@@ -1352,7 +1433,8 @@ def master_adaptive(src_path, masterfx, chain, mopts, prog, SR=44100, checkpoint
             return master_large_sections(src_path, masterfx, chain, mopts,
                                          prog, SR,
                                          checkpoint_dir=checkpoint_dir,
-                                         job_id=job_id)
+                                         job_id=job_id,
+                                         plan_sections=sections)
 
         # Convert src to WAV if needed for section extraction
         import soundfile as sf
@@ -1378,7 +1460,7 @@ def master_adaptive(src_path, masterfx, chain, mopts, prog, SR=44100, checkpoint
         xfade_n = int(XFADE_S * SR)
         
         # Temp dir for section files
-        sect_tmpdir = tempfile.mkdtemp(prefix="adaptive_sect_")
+        sect_tmpdir = _work_tmpdir("adaptive_sect_")
         section_files = []
         
         try:
@@ -1460,6 +1542,95 @@ def master_adaptive(src_path, masterfx, chain, mopts, prog, SR=44100, checkpoint
         return master_chunked(src_path, masterfx, chain, mopts, prog, SR)
 
 
+def _prominence_prep(src_path, tdir, prog, SR=44100):
+    """Vocal-balance correction for the >4 min keep fast path.
+
+    That path sends the raw source straight to sectioned mastering,
+    skipping the standard chain entirely — so buried vocals were never
+    lifted on any real-length song (proven on Damicksup 2026-10-22:
+    35 buried windows before AND after a 'fixed' master). This prep
+    separates the source in 60 s segments (stems on disk as memmaps),
+    builds the prominence gain curve ONCE over the whole track, then
+    writes a corrected mix (lifted vocal + untouched beat) segment by
+    segment. The corrected file is what section analysis and mastering
+    then run on — analysis at the optimum spot, after the balance is
+    fixed. Any failure returns (None, 0) and the master proceeds on
+    the original source.
+    """
+    import soundfile as sf
+    try:
+        info = sf.info(src_path)
+        sr_in = info.samplerate
+        total = int(info.frames)
+        seg_n = int(60 * sr_in)
+        ov_n = int(2 * sr_in)
+        os.makedirs(tdir, exist_ok=True)
+        voc_mm = np.memmap(os.path.join(tdir, "prep_voc.dat"),
+                           dtype="float32", mode="w+",
+                           shape=(total, 2))
+        inst_mm = np.memmap(os.path.join(tdir, "prep_inst.dat"),
+                            dtype="float32", mode="w+",
+                            shape=(total, 2))
+        pos = 0
+        while pos < total:
+            end = min(total, pos + seg_n + (ov_n if pos else 0))
+            start = pos if pos == 0 else pos - ov_n
+            data, _ = sf.read(src_path, start=start, stop=end,
+                              dtype="float32", always_2d=True)
+            if data.shape[1] == 1:
+                data = np.repeat(data, 2, axis=1)
+            segw = os.path.join(tdir, "prep_seg.wav")
+            sf.write(segw, data, sr_in, subtype="FLOAT")
+            try:
+                v, b = vocalfx.separate_track(segw)
+            finally:
+                os.remove(segw)
+            v = np.asarray(v, dtype=np.float32)
+            b = np.asarray(b, dtype=np.float32)
+            if v.shape[1] == 1:
+                v = np.repeat(v, 2, axis=1)
+                b = np.repeat(b, 2, axis=1)
+            write_from = 0 if start == 0 else ov_n
+            take = min(len(v) - write_from, total - pos)
+            voc_mm[pos:pos + take] = v[write_from:write_from + take]
+            inst_mm[pos:pos + take] = b[write_from:write_from + take]
+            pos += take
+            del data, v, b
+        voc_mm.flush(); inst_mm.flush()
+        if sr_in != SR:
+            return None, 0
+        curve, rep = adaptive_master.prominence_gain_curve(
+            voc_mm, inst_mm, SR)
+        lifted = int(rep.get("lifted", 0))
+        if lifted == 0:
+            return None, 0
+        # per-sample gain from the window curve (same interp as
+        # lift_buried_vocals), applied segment-wise into the mix file
+        w = int(2.0 * SR)
+        nwin = len(curve)
+        centers = (np.arange(nwin) * w + w // 2).astype(np.float64)
+        out_path = os.path.join(tdir, "prep_mix.wav")
+        with sf.SoundFile(out_path, "w", samplerate=SR, channels=2,
+                          subtype="PCM_16") as out:
+            step = int(30 * SR)
+            for s0 in range(0, total, step):
+                s1 = min(total, s0 + step)
+                xs = np.arange(s0, s1, dtype=np.float64)
+                gdb = np.interp(xs, centers, curve)
+                gain = np.power(10.0, gdb / 20.0).astype(np.float32)
+                mixseg = (np.asarray(voc_mm[s0:s1]) * gain[:, None]
+                          + np.asarray(inst_mm[s0:s1]))
+                out.write(mixseg)
+                del mixseg
+        prog(3, f"🔊 Vocal prominence — lifted {lifted} buried "
+                f"spot(s) before section mastering…")
+        return out_path, lifted
+    except JobCancelled:
+        raise
+    except Exception:
+        return None, 0
+
+
 def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
     def prog(p, msg):
         set_job(job_id, progress=p, message=msg)
@@ -1538,6 +1709,17 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                 _adaptive_flag = True
             _use_adaptive = bool(_adaptive_flag) and _ADAPTIVE_AVAILABLE
             if _dur > 4 * 60:  # >4 minutes: use sectioned mastering
+                # Vocal-balance correction FIRST (2026-10-22): this
+                # fast path skips the standard vocal chain, so buried
+                # vocals were never lifted on long songs. The prep
+                # writes a corrected mix and the section analysis +
+                # mastering below run on THAT — analysis at the
+                # optimum spot, after the balance is fixed.
+                if mopts.get("vocal_prominence", True) and \
+                        _ADAPTIVE_AVAILABLE:
+                    _pp, _nl = _prominence_prep(src_path, tdir, prog, SR)
+                    if _pp:
+                        src_path = _pp
                 if _use_adaptive:
                     prog(3, f"Large file ({_dur/60:.1f} min) — adaptive sections…")
                     pcm16, report = master_adaptive(
