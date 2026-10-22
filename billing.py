@@ -134,13 +134,18 @@ def signup():
 def terms():
     """Serve the Terms of Service (rendered from legal/TERMS_OF_SERVICE.md)."""
     import os as _os
-    p = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)),
-                      "legal", "TERMS_OF_SERVICE.md")
-    p = _os.path.normpath(p)
-    try:
-        with open(p) as f:
-            md = f.read()
-    except OSError:
+    # 2026-10-21 overhaul: look in the app dir first (Render layout: legal/
+    # ships inside the app root), then the parent (phone layout: djrill/legal).
+    md = None
+    for _base in (_os.path.dirname(__file__),
+                  _os.path.dirname(_os.path.dirname(__file__))):
+        try:
+            with open(_os.path.join(_base, "legal", "TERMS_OF_SERVICE.md")) as f:
+                md = f.read()
+            break
+        except OSError:
+            continue
+    if md is None:
         md = "# Terms of Service\n\nComing soon."
     return render_template("legal.html", active="pricing",
                            title="Terms of Service", content=md)
@@ -150,13 +155,16 @@ def terms():
 def privacy():
     """Serve the Privacy Policy."""
     import os as _os
-    p = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)),
-                      "legal", "PRIVACY_POLICY.md")
-    p = _os.path.normpath(p)
-    try:
-        with open(p) as f:
-            md = f.read()
-    except OSError:
+    md = None
+    for _base in (_os.path.dirname(__file__),
+                  _os.path.dirname(_os.path.dirname(__file__))):
+        try:
+            with open(_os.path.join(_base, "legal", "PRIVACY_POLICY.md")) as f:
+                md = f.read()
+            break
+        except OSError:
+            continue
+    if md is None:
         md = "# Privacy Policy\n\nComing soon."
     return render_template("legal.html", active="pricing",
                            title="Privacy Policy", content=md)
