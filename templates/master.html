@@ -215,11 +215,11 @@ function startMasterPoll(jobId, out, prog, bar, msg) {
               html += '<div style="font-size:0.8em;color:#888;margin-top:4px;">Adjust vocal level and re-render before downloading.</div></div>';
               html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">';
               html += '<button onclick="discardMaster(\'' + jobId + '\')" style="background:#ff4444;color:#fff;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;">🗑 Discard</button>';
-              html += '<a href="' + mUrl + '" download onclick="keepMasterBg(\'' + jobId + '\',this)" style="position:relative;z-index:300;background:#00e5a0;color:#000;padding:16px 22px;min-height:56px;font-size:17px;font-weight:700;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-block;">⬇ Download</a>';
+              html += '<button onclick="keepMaster(\'' + jobId + '\',this)" style="position:relative;z-index:300;background:#00e5a0;color:#000;padding:16px 22px;min-height:56px;font-size:17px;font-weight:700;border:none;border-radius:8px;cursor:pointer;">⬇ Download</button>';
               html += '</div></div>';
               html += '<div style="font-size:0.8em;color:#888;">Temp master — Download saves it to your library, Discard deletes it right away.</div>';
             } else {
-              html += '<div style="text-align:right;"><a href="' + mUrl + '" download style="background:#00e5a0;color:#000;padding:16px 22px;min-height:56px;font-size:17px;font-weight:700;border-radius:8px;text-decoration:none;display:inline-block;">⬇ Download Master</a></div>';
+              html += '<div style="text-align:right;"><button onclick="keepMaster(\'' + jobId + '\',this)" style="position:relative;z-index:300;background:#00e5a0;color:#000;padding:16px 22px;min-height:56px;font-size:17px;font-weight:700;border:none;border-radius:8px;cursor:pointer;">⬇ Download Master</button></div>';
               html += '</div>';
             }
           } else {
@@ -325,19 +325,7 @@ document.getElementById('f').addEventListener('submit', async (e) => {
         if (btn) { btn.disabled = false; btn.textContent = '⬇ Download'; }
       }
     }
-    async function keepMasterBg(jobId, el) {
-      // The anchor's own download already saved the file to the device.
-      // This files the library copy in the background (delayed so the
-      // download stream opens first) and never blocks or alerts over it.
-      setTimeout(async function(){
-        try {
-          const r = await fetch('/api/master/keep', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({job_id: jobId})});
-          const d = await r.json();
-          if (d.ok && el) { el.textContent = '\u2705 Downloaded'; }
-        } catch(e) {}
-      }, 4000);
-    }
-    async function discardMaster(jobId) {
+        async function discardMaster(jobId) {
       if (!confirm('Discard this temp master? It will be deleted immediately.')) return;
       try {
         const r = await fetch('/api/master/discard', {
@@ -376,7 +364,7 @@ document.getElementById('f').addEventListener('submit', async (e) => {
         pd.pending.forEach(function(p) {
           html += '<div style="margin:6px 0;">' + (p.title || p.file) + ' ';
           html += '<audio controls preload="metadata" src="/temp_master/' + p.job_id.substring(0,8) + '/' + encodeURIComponent(p.file) + '" style="width:100%;height:32px;margin:6px 0;"></audio>';
-          html += '<div style="text-align:right;"><a href="/temp_master/' + p.job_id.substring(0,8) + '/' + encodeURIComponent(p.file) + '" download onclick="keepMasterBg(\'' + p.job_id + '\',this)" style="position:relative;z-index:300;background:#00e5a0;color:#000;padding:16px 22px;min-height:56px;font-size:17px;font-weight:700;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-block;">⬇ Download</a></div></div>';
+          html += '<div style="text-align:right;"><button onclick="keepMaster(\'' + p.job_id + '\',this)" style="position:relative;z-index:300;background:#00e5a0;color:#000;padding:16px 22px;min-height:56px;font-size:17px;font-weight:700;border:none;border-radius:8px;cursor:pointer;">⬇ Download</button></div></div>';
         });
         html += '</div>';
         if (out) out.innerHTML = html + out.innerHTML;
