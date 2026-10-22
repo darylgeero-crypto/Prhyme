@@ -375,3 +375,153 @@ def events_to_srt(events, srt_path):
             f.write(f"{i}\n{ts(e['start'])} --> {ts(e['end'])}\n"
                     f"{e.get('line','')}\n\n")
     return srt_path
+
+
+# --- ported from the phone build (2026-10-21): canvas + tiktok
+# renderers existed only on the phone; run_video_job referenced
+# them and every canvas/tiktok render failed on the web deploy.
+# Progress calls adapted to the one-arg callback used here.
+
+def render_canvas_video(audio_path, out_path, title="PRHYME", progress_cb=None):
+    """Spotify Canvas: 8-second vertical loop (720x1280), beat-reactive.
+    Optimized: 15fps, ultrafast preset — renders in seconds."""
+    from PIL import Image, ImageDraw, ImageFont
+    import subprocess, numpy as np
+    W, H = 720, 1280
+    FPS = 15  # Canvas doesn't need 30fps
+    DUR = 8
+    n_frames = DUR * FPS
+
+    x = V.load_audio_mono(audio_path)
+    # Use first 8 seconds of audio for beat analysis
+    seg = x[:int(min(len(x), DUR * SR))]
+    beat = V.beat_envelope(seg)
+    # Pad beat array if needed
+    if len(beat) < n_frames:
+        beat = np.pad(beat, (0, n_frames - len(beat)))
+
+    try:
+        f_big = ImageFont.truetype(V.FONT, 72)
+        f_small = ImageFont.truetype(V.FONT_REG, 28)
+    except Exception:
+        f_big = ImageFont.load_default()
+        f_small = ImageFont.load_default()
+
+    import tempfile, os
+    tmpdir = tempfile.mkdtemp()
+    for fi in range(n_frames):
+        pulse = float(beat[fi]) if fi < len(beat) else 0.0
+        img = Image.new("RGB", (W, H), (10, 10, 20))
+        dr = ImageDraw.Draw(img)
+        # Beat-reactive concentric circles
+        cx, cy = W // 2, H // 2
+        for i in range(5):
+            r = int(80 + i * 60 + pulse * 80)
+            alpha = max(0, 200 - i * 40)
+            dr.ellipse([cx-r, cy-r, cx+r, cy+r], outline=(0, 229, 160, alpha), width=3)
+        # Title with pulse
+        size = 60 + int(pulse * 20)
+        try:
+            f = ImageFont.truetype(V.FONT, size)
+        except Exception:
+            f = f_big
+        tb = dr.textbbox((0,0), title, font=f)
+        dr.text(((W-(tb[2]-tb[0]))/2, H-200), title, font=f, fill=(255,255,255))
+        dr.text(((W-200)/2, 60), "PRHYME™", font=f_small, fill=(0,229,160))
+        img.save(os.path.join(tmpdir, f"f{fi:04d}.png"))
+        if progress_cb and fi % 20 == 0:
+            progress_cb(fi / n_frames)
+
+    # Encode with ultrafast preset for speed
+    cmd = ["ffmpeg", "-y", "-framerate", str(FPS), "-i", os.path.join(tmpdir, "f%04d.png"),
+           "-i", audio_path, "-t", str(DUR), "-c:v", "libx264", "-preset", "ultrafast",
+           "-crf", "28", "-c:a", "aac", "-shortest", "-pix_fmt", "yuv420p", out_path]
+    subprocess.run(cmd, capture_output=True, check=True)
+    import shutil
+    shutil.rmtree(tmpdir, ignore_errors=True)
+    if progress_cb:
+        progress_cb(1.0)
+    return out_path
+
+
+def render_tiktok_video(audio_path, events, out_path, title="PRHYME", progress_cb=None):
+    """TikTok/Reels/Shorts: 9:16 vertical with lyrics, optimized for speed."""
+    from PIL import Image, ImageDraw, ImageFont
+    import subprocess, numpy as np
+    W, H = 720, 1280
+    FPS = 24  # Slightly lower than 30 for speed
+    x = V.load_audio_mono(audio_path)
+    dur = len(x) / SR
+    n_frames = int(dur * FPS)
+    beat = V.beat_envelope(x)
+    if len(beat) < n_frames:
+        beat = np.pad(beat, (0, n_frames - len(beat)))
+
+    try:
+        f_big = ImageFont.truetype(V.FONT, 56)
+        f_small = ImageFont.truetype(V.FONT_REG, 24)
+    except Exception:
+        f_big = ImageFont.load_default()
+        f_small = ImageFont.load_default()
+
+    import tempfile, os
+    tmpdir = tempfile.mkdtemp()
+    ev_idx = 0
+    # Render every 2nd frame and duplicate (halves render time, still smooth)
+    for fi in range(0, n_frames, 2):
+        t = fi / FPS
+        while ev_idx + 1 < len(events) and events[ev_idx + 1]["start"] <= t:
+            ev_idx += 1
+        ev = (events[ev_idx] if events and
+              events[ev_idx]["start"] <= t <= events[ev_idx]["end"] else None)
+        pulse = float(beat[fi]) if fi < len(beat) else 0.0
+
+        img = Image.new("RGB", (W, H), (5, 5, 15))
+        dr = ImageDraw.Draw(img)
+        # Animated gradient bars at top/bottom reacting to beat
+        bar_h = int(20 + pulse * 60)
+        dr.rectangle([0, 0, W, bar_h], fill=(0, 229, 160))
+        dr.rectangle([0, H-bar_h, W, H], fill=(0, 229, 160))
+        # Lyrics centered
+        if ev:
+            line = ev["line"]
+            # Word wrap
+            words = line.split()
+            lines = []
+            cur = ""
+            for w in words:
+                test = cur + " " + w if cur else w
+                tb = dr.textbbox((0,0), test, font=f_big)
+                if tb[2]-tb[0] > W-80:
+                    lines.append(cur); cur = w
+                else:
+                    cur = test
+            if cur: lines.append(cur)
+            y = H//2 - len(lines)*35
+            for ln in lines:
+                tb = dr.textbbox((0,0), ln, font=f_big)
+                dr.text(((W-(tb[2]-tb[0]))/2, y), ln, font=f_big, fill=(255,255,255))
+                y += 70
+            sec = ev.get("section", "")
+            if sec:
+                dr.text((30, 100), sec.upper(), font=f_small, fill=(0,229,160))
+        else:
+            tb = dr.textbbox((0,0), title, font=f_big)
+            dr.text(((W-(tb[2]-tb[0]))/2, H//2-30), title, font=f_big, fill=(100,100,120))
+
+        dr.text(((W-200)/2, H-80), "PRHYME™", font=f_small, fill=(0,229,160))
+        # Save twice (duplicate frame)
+        img.save(os.path.join(tmpdir, f"f{fi:04d}.png"))
+        img.save(os.path.join(tmpdir, f"f{fi+1:04d}.png"))
+        if progress_cb and fi % 48 == 0:
+            progress_cb(fi / n_frames)
+
+    cmd = ["ffmpeg", "-y", "-framerate", str(FPS), "-i", os.path.join(tmpdir, "f%04d.png"),
+           "-i", audio_path, "-c:v", "libx264", "-preset", "ultrafast",
+           "-crf", "28", "-c:a", "aac", "-shortest", "-pix_fmt", "yuv420p", out_path]
+    subprocess.run(cmd, capture_output=True, check=True)
+    import shutil
+    shutil.rmtree(tmpdir, ignore_errors=True)
+    if progress_cb:
+        progress_cb(1.0)
+    return out_path

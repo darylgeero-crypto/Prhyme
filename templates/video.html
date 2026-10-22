@@ -146,6 +146,111 @@
   <div class="jobpct" id="jobPct">0%</div>
   <div id="jobResult" class="result"></div>
 </div>
+
+<p class="note" style="margin-top:18px"><a href="/production">🎥 <b>Video Production</b> — full-length videos from your library tracks →</a></p>
+
+<details class="fxbox" id="editorBox">
+  <summary>✂️ Video Editor — trim, colour, speed, text &amp; more</summary>
+  <p class="dj-note">Edit a video you already have — yours stays the source, nothing synthetic. Upload a clip or name a file from your library/outputs.</p>
+  <form id="editForm" class="form" enctype="multipart/form-data">
+    <label class="field"><span>Video file (or leave empty and name a library file below)</span>
+      <input type="file" name="video" id="editVideoFile" accept="video/*" class="fileinput"></label>
+    <label class="field"><span>Library file name (e.g. myvideo.mp4 from Files)</span>
+      <input type="text" name="source" id="editSource" class="txt" placeholder="filename.mp4"></label>
+    <div class="row2">
+      <label class="field"><span>Trim start (sec)</span><input type="number" name="start" step="0.1" min="0" value="0" class="txt"></label>
+      <label class="field"><span>Trim end (sec, 0 = to the end)</span><input type="number" name="end" step="0.1" min="0" value="0" class="txt"></label>
+    </div>
+    <div class="row2">
+      <label class="field"><span>Speed</span>
+        <select name="speed" class="txt">
+          <option value="0.5">0.5× slow</option><option value="0.75">0.75×</option>
+          <option value="1" selected>1× normal</option><option value="1.25">1.25×</option>
+          <option value="1.5">1.5×</option><option value="2">2× fast</option>
+        </select></label>
+      <label class="field"><span>Colour grade</span>
+        <select name="grade" class="txt">
+          <option value="none">None</option><option value="warm">Warm</option>
+          <option value="cold">Cold</option><option value="bw">Black &amp; white</option>
+          <option value="vintage">Vintage</option><option value="neon">Neon</option>
+        </select></label>
+    </div>
+    <div class="row2">
+      <label class="field"><span>Brightness <span id="bVal">0</span></span><input type="range" name="brightness" min="-0.3" max="0.3" step="0.05" value="0" class="txt" oninput="document.getElementById('bVal').textContent=this.value"></label>
+      <label class="field"><span>Contrast <span id="cVal">1</span></span><input type="range" name="contrast" min="0.5" max="1.5" step="0.05" value="1" class="txt" oninput="document.getElementById('cVal').textContent=this.value"></label>
+    </div>
+    <div class="row2">
+      <label class="field"><span>Saturation <span id="sVal">1</span></span><input type="range" name="saturation" min="0" max="2" step="0.1" value="1" class="txt" oninput="document.getElementById('sVal').textContent=this.value"></label>
+      <label class="field"><span>Volume (dB) <span id="vVal">0</span></span><input type="range" name="volume_db" min="-20" max="20" step="1" value="0" class="txt" oninput="document.getElementById('vVal').textContent=this.value"></label>
+    </div>
+    <div class="row2">
+      <label class="field"><span>Rotate</span>
+        <select name="rotate" class="txt"><option value="0">None</option><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select></label>
+      <label class="field"><span>Flip</span>
+        <select name="flip" class="txt"><option value="">None</option><option value="h">Horizontal</option><option value="v">Vertical</option></select></label>
+    </div>
+    <div class="row2">
+      <label class="field"><span>Resolution</span>
+        <select name="height" class="txt"><option value="0">Keep original</option><option value="1080">1080p</option><option value="720">720p</option><option value="480">480p</option></select></label>
+      <label class="field"><span>Aspect (pad)</span>
+        <select name="aspect" class="txt"><option value="">Keep</option><option value="16:9">16:9</option><option value="9:16">9:16 vertical</option><option value="1:1">1:1 square</option></select></label>
+    </div>
+    <div class="row2">
+      <label class="field"><span>Fade in (sec, picture + sound)</span><input type="number" id="fadeInBoth" step="0.5" min="0" value="0" class="txt"></label>
+      <label class="field"><span>Fade out (sec, picture + sound)</span><input type="number" id="fadeOutBoth" step="0.5" min="0" value="0" class="txt"></label>
+    </div>
+    <div class="row2">
+      <label class="field"><span>Text overlay</span><input type="text" id="ovText" class="txt" maxlength="120" placeholder="Your text on the video"></label>
+      <label class="field"><span>Text position</span>
+        <select id="ovPos" class="txt"><option value="bottom">Bottom</option><option value="top">Top</option><option value="center">Center</option></select></label>
+    </div>
+    <div class="row2">
+      <label class="field"><span>Text shows from (sec)</span><input type="number" id="ovStart" step="0.5" min="0" value="0" class="txt"></label>
+      <label class="field"><span>Text shows until (sec, 0 = end)</span><input type="number" id="ovEnd" step="0.5" min="0" value="0" class="txt"></label>
+    </div>
+    <div class="fxgrid">
+      <label class="check"><input type="checkbox" name="mute"> Mute audio</label>
+      <label class="check"><input type="checkbox" name="extract" value="mp3"> Extract audio only (MP3)</label>
+    </div>
+    <button type="submit" class="btn big">✂️ Apply edit</button>
+    <button type="button" class="btn alt" id="snapBtn">🖼 Grab a poster frame</button>
+    <span class="dj-note">Poster uses the same video + a time in the Trim start box.</span>
+  </form>
+  <div id="eJobBox" class="jobbox hidden">
+    <div class="jobmsg" id="eJobMsg">Starting…</div>
+    <div class="pbar"><div class="pfill" id="eJobFill"></div></div>
+    <div class="jobpct" id="eJobPct">0%</div>
+    <button type="button" class="btn mini" id="eCancelBtn">✖ Cancel</button>
+    <div id="eJobResult" class="result"></div>
+  </div>
+</details>
+
+<details class="fxbox" id="joinBox">
+  <summary>🎞 Join Clips — timeline with cuts or dissolves</summary>
+  <p class="dj-note">Pick 2–6 clips in order. Set in/out points per clip (seconds, comma-separated, blank = whole clip). Everything is normalized to one canvas — mixed sizes and frame rates are fine, and a silent clip won't break the join.</p>
+  <form id="joinForm" class="form" enctype="multipart/form-data">
+    <label class="field"><span>Clips (in order)</span>
+      <input type="file" name="clips" id="joinFiles" accept="video/*" multiple class="fileinput"></label>
+    <div class="row2">
+      <label class="field"><span>In points (e.g. 0, 2.5, 0)</span><input type="text" id="joinIns" class="txt" placeholder="0, 0, 0"></label>
+      <label class="field"><span>Out points (0 = clip end)</span><input type="text" id="joinOuts" class="txt" placeholder="0, 0, 0"></label>
+    </div>
+    <div class="row2">
+      <label class="field"><span>Transition</span>
+        <select name="transition" class="txt"><option value="cut">Hard cut</option><option value="fade">Dissolve</option></select></label>
+      <label class="field"><span>Canvas</span>
+        <select name="aspect" class="txt"><option value="16:9">16:9</option><option value="9:16">9:16 vertical</option><option value="1:1">1:1 square</option></select></label>
+    </div>
+    <button type="submit" class="btn big">🎞 Join clips</button>
+  </form>
+  <div id="jJobBox" class="jobbox hidden">
+    <div class="jobmsg" id="jJobMsg">Starting…</div>
+    <div class="pbar"><div class="pfill" id="jJobFill"></div></div>
+    <div class="jobpct" id="jJobPct">0%</div>
+    <button type="button" class="btn mini" id="jCancelBtn">✖ Cancel</button>
+    <div id="jJobResult" class="result"></div>
+  </div>
+</details>
 {% endblock %}
 {% block scripts %}
 <script>
@@ -302,6 +407,112 @@
       }
       el.innerHTML = html || '<div class="err">No result</div>';
     }
+  });
+})();
+</script>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+      ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+  }
+  function makePoller(prefix) {
+    let job = null;
+    const box = $(prefix + "JobBox"), msg = $(prefix + "JobMsg"),
+          fill = $(prefix + "JobFill"), pct = $(prefix + "JobPct"),
+          res = $(prefix + "JobResult");
+    $(prefix + "CancelBtn").addEventListener("click", async () => {
+      if (job) try { await fetch("/api/job/" + job + "/cancel", {method: "POST"}); } catch (e) {}
+    });
+    function show(r) {
+      let html = "";
+      if (r.mp4) {
+        html += '<div class="stats">🎬 ' + (r.duration || "?") + "s" +
+          (r.width ? " · " + r.width + "×" + r.height : "") + "</div>";
+        html += '<a class="dl" href="/download/' + encodeURIComponent(r.mp4) + '">⬇ Download MP4</a>';
+        if (r.thumbnail) html += '<a class="dl alt" href="/download/' + encodeURIComponent(r.thumbnail) + '">🖼 Thumbnail</a>';
+        html += '<video controls playsinline preload="metadata" style="width:100%;margin-top:10px;border-radius:12px" src="/download/' + encodeURIComponent(r.mp4) + '"></video>';
+      } else if (r.mp3) {
+        html += '<div class="stats">🎵 ' + (r.duration || "?") + "s audio</div>";
+        html += '<a class="dl" href="/download/' + encodeURIComponent(r.mp3) + '">⬇ Download MP3</a>';
+        html += '<audio controls preload="metadata" style="width:100%;margin-top:10px" src="/download/' + encodeURIComponent(r.mp3) + '"></audio>';
+      }
+      res.innerHTML = html || '<div class="err">No result</div>';
+    }
+    async function poll() {
+      try {
+        const r = await fetch("/api/job/" + job);
+        const s = await r.json();
+        if (!s.ok) { res.innerHTML = '<div class="err">Job lost</div>'; return; }
+        const p = Math.max(0, Math.min(100, s.progress || 0));
+        fill.style.width = p + "%"; pct.textContent = p + "%";
+        msg.textContent = s.message || "Working…";
+        if (s.status === "done") { fill.style.width = "100%"; pct.textContent = "100%"; show(s.result || {}); }
+        else if (s.status === "cancelled") res.innerHTML = '<div class="err">Cancelled</div>';
+        else if (s.status === "error") res.innerHTML = '<div class="err">' + escapeHtml(s.message || "Job failed") + "</div>";
+        else setTimeout(poll, 1200);
+      } catch (e) { setTimeout(poll, 3000); }
+    }
+    return { start(id) { job = id; box.classList.remove("hidden"); res.innerHTML = ""; poll(); },
+             fail(t) { box.classList.remove("hidden"); res.innerHTML = '<div class="err">' + escapeHtml(t) + "</div>"; } };
+  }
+  const ePoll = makePoller("e"), jPoll = makePoller("j");
+
+  document.getElementById("editForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const fd = new FormData(form);
+    const fi = parseFloat($("fadeInBoth").value || 0), fo = parseFloat($("fadeOutBoth").value || 0);
+    fd.append("fade_in", fi); fd.append("fade_out", fo);
+    fd.append("afade_in", fi); fd.append("afade_out", fo);
+    const ov = $("ovText").value.trim();
+    fd.append("texts", JSON.stringify(ov ? [{text: ov,
+      start: parseFloat($("ovStart").value || 0), end: parseFloat($("ovEnd").value || 0),
+      pos: $("ovPos").value, size: 44}] : []));
+    fd.append("title", "edited");
+    if (!$("editVideoFile").files.length && !$("editSource").value.trim())
+      return ePoll.fail("Upload a video or name a library file.");
+    try {
+      const r = await fetch("/api/video/edit", {method: "POST", body: fd});
+      const j = await r.json();
+      if (!j.ok) return ePoll.fail(j.error || "Request failed");
+      ePoll.start(j.job_id);
+    } catch (err) { ePoll.fail("Network error: " + err); }
+  });
+
+  $("snapBtn").addEventListener("click", async () => {
+    const form = document.getElementById("editForm");
+    const fd = new FormData(form);
+    fd.append("at", form.querySelector('input[name="start"]').value || 0);
+    try {
+      const r = await fetch("/api/video/snapshot", {method: "POST", body: fd});
+      const j = await r.json();
+      if (!j.ok) return ePoll.fail(j.error || "Snapshot failed");
+      ePoll.fail(""); // clear
+      $("eJobBox").classList.remove("hidden");
+      $("eJobResult").innerHTML = '<a class="dl" href="/download/' + encodeURIComponent(j.jpg) + '">⬇ Download poster JPG</a>' +
+        '<img style="width:100%;margin-top:10px;border-radius:12px" src="/download/' + encodeURIComponent(j.jpg) + '">';
+    } catch (err) { ePoll.fail("Network error: " + err); }
+  });
+
+  document.getElementById("joinForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const files = $("joinFiles").files;
+    if (files.length < 2 || files.length > 6) return jPoll.fail("Pick 2–6 clips.");
+    const ins = $("joinIns").value.split(",").map(s => parseFloat(s) || 0);
+    const outs = $("joinOuts").value.split(",").map(s => parseFloat(s) || 0);
+    const meta = [];
+    for (let i = 0; i < files.length; i++) meta.push({in: ins[i] || 0, out: outs[i] || 0});
+    const fd = new FormData(e.target);
+    fd.append("meta", JSON.stringify(meta));
+    fd.append("title", "joined");
+    try {
+      const r = await fetch("/api/video/concat", {method: "POST", body: fd});
+      const j = await r.json();
+      if (!j.ok) return jPoll.fail(j.error || "Request failed");
+      jPoll.start(j.job_id);
+    } catch (err) { jPoll.fail("Network error: " + err); }
   });
 })();
 </script>

@@ -4195,6 +4195,22 @@ def video_page():
                            ffmpeg=C.FFMPEG_OK)
 
 
+@app.get("/production")
+def production_page():
+    """Full-length video production from library tracks (2026-10-21)."""
+    audio_exts = (".mp3", ".wav", ".m4a", ".ogg", ".flac")
+    tracks = []
+    try:
+        for fn in sorted(os.listdir(OUTPUT_DIR)):
+            if fn.lower().endswith(audio_exts) and "temp" not in fn:
+                tracks.append(fn)
+    except OSError:
+        pass
+    return render_template("production.html", active="video",
+                           genres=GENRES, ffmpeg=C.FFMPEG_OK,
+                           tracks=tracks)
+
+
 @app.get("/dj")
 def dj_page():
     return render_template("dj.html", active="dj",
@@ -5688,7 +5704,7 @@ def api_video_render():
                         "error": "FFmpeg not available on this device"}), 500
     mode = request.form.get("mode", "lyric")
     if mode not in ("lyric", "selfie", "performance",
-                    "waveform", "collage", "minimal"):
+                    "waveform", "collage", "minimal", "canvas", "tiktok"):
         return jsonify({"ok": False, "error": "Bad mode"}), 400
     f = request.files.get("audio")
     if not f:
@@ -5767,6 +5783,269 @@ def api_video_fx():
                     "aspects": sorted(videofx.ASPECTS.keys()),
                     "grades": sorted(videofx.GRADES.keys()),
                     "backgrounds": ["rings", "bars", "wave"]})
+
+
+# ------------------------------------------------ video editor (2026-10-21)
+# Real editing of existing videos (videoedit.py): trim/speed/colour/
+# rotate/resize/aspect/volume/fades/text/mute/extract + multi-clip join.
+import videoedit as _vedit
+
+
+def _edit_source_path():
+    """Resolve an edit source: an uploaded file, or a library file by
+    plain basename in OUTPUT_DIR (no path traversal)."""
+    f = request.files.get("video")
+    if f and f.filename:
+        return save_media_upload(f, VIDEO_EXTS, "video")
+    src = (request.form.get("source") or "").strip()
+    if src:
+        p = os.path.join(OUTPUT_DIR, os.path.basename(src))
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def _fnum(name, default=0.0):
+    try:
+        return float(request.form.get(name) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def run_video_edit_job(job_id, in_path, opts):
+    def prog(p, msg):
+        set_job(job_id, progress=p, message=msg)
+    try:
+        prog(5, "Editing video…")
+        title = opts.pop("_title", "edited")
+        extract = (opts.get("extract") or "") == "mp3"
+        safe = safe_name(title, "edited")
+        out_name = f"{safe}_edit_{job_id[:8]}." + ("mp3" if extract else "mp4")
+        out_path = os.path.join(OUTPUT_DIR, out_name)
+
+        def cb(frac):
+            prog(5 + int(85 * max(0.0, min(1.0, frac))), "Editing video…")
+        info = _vedit.edit_video(in_path, out_path, opts, progress_cb=cb)
+        res = {"duration": round(info.get("duration", 0), 1)}
+        if extract:
+            res["mp3"] = out_name
+        else:
+            res["mp4"] = out_name
+            res["width"] = info.get("width")
+            res["height"] = info.get("height")
+            try:
+                thumb = f"{safe}_edit_{job_id[:8]}_thumb.jpg"
+                videofx.make_thumbnail(out_path,
+                                       os.path.join(OUTPUT_DIR, thumb))
+                res["thumbnail"] = thumb
+            except Exception:
+                pass
+        set_job(job_id, status="done", progress=100, message="Edit ready",
+                result=res)
+    except JobCancelled:
+        set_job(job_id, status="cancelled", progress=0, message="Cancelled.")
+    except Exception as e:
+        set_job(job_id, status="error", progress=0, message=f"Error: {e}")
+
+
+@app.post("/api/video/edit")
+def api_video_edit():
+    ok, resp = _check_and_log_usage("video")
+    if not ok:
+        return jsonify(resp), 402
+    if not C.FFMPEG_OK:
+        return jsonify({"ok": False,
+                        "error": "FFmpeg not available on this device"}), 500
+    try:
+        in_path = _edit_source_path()
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    if not in_path:
+        return jsonify({"ok": False,
+                        "error": "Upload a video or pick a library file"}), 400
+    import json as _json
+    texts = []
+    try:
+        for t in _json.loads(request.form.get("texts") or "[]")[:4]:
+            if isinstance(t, dict) and t.get("text"):
+                texts.append({"text": str(t["text"])[:120],
+                              "start": float(t.get("start") or 0),
+                              "end": float(t.get("end") or 0),
+                              "pos": t.get("pos") if t.get("pos") in
+                              ("bottom", "top", "center") else "bottom",
+                              "size": int(t.get("size") or 44)})
+    except (ValueError, TypeError):
+        return jsonify({"ok": False, "error": "Bad text overlay data"}), 400
+    opts = {
+        "_title": (request.form.get("title") or "edited")[:60],
+        "start": _fnum("start"), "end": _fnum("end"),
+        "speed": _fnum("speed", 1.0) or 1.0,
+        "brightness": max(-1.0, min(1.0, _fnum("brightness"))),
+        "contrast": max(0.5, min(2.0, _fnum("contrast", 1.0) or 1.0)),
+        "saturation": max(0.0, min(3.0, _fnum("saturation", 1.0)
+                                     if request.form.get("saturation")
+                                     else 1.0)),
+        "grade": request.form.get("grade", "none")
+        if request.form.get("grade") in videofx.GRADES else "none",
+        "rotate": int(_fnum("rotate")) if int(_fnum("rotate")) in
+        (0, 90, 180, 270) else 0,
+        "flip": request.form.get("flip") if request.form.get("flip") in
+        ("h", "v") else "",
+        "height": int(_fnum("height")) if int(_fnum("height")) in
+        (0, 480, 720, 1080) else 0,
+        "aspect": request.form.get("aspect") if request.form.get("aspect")
+        in videofx.ASPECTS else "",
+        "volume_db": max(-30.0, min(30.0, _fnum("volume_db"))),
+        "afade_in": _fnum("afade_in"), "afade_out": _fnum("afade_out"),
+        "fade_in": _fnum("fade_in"), "fade_out": _fnum("fade_out"),
+        "texts": texts,
+        "mute": request.form.get("mute") == "on",
+        "extract": "mp3" if request.form.get("extract") == "mp3" else "",
+    }
+    job_id = new_job("video-edit", opts["_title"])
+    threading.Thread(target=run_video_edit_job,
+                     args=(job_id, in_path, opts), daemon=True).start()
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+def run_video_concat_job(job_id, clips, opts):
+    def prog(p, msg):
+        set_job(job_id, progress=p, message=msg)
+    try:
+        prog(5, "Joining clips…")
+        safe = safe_name(opts.pop("_title", "joined"), "joined")
+        out_name = f"{safe}_join_{job_id[:8]}.mp4"
+        out_path = os.path.join(OUTPUT_DIR, out_name)
+
+        def cb(frac):
+            prog(5 + int(85 * max(0.0, min(1.0, frac))), "Joining clips…")
+        info = _vedit.concat_videos(clips, out_path, opts, progress_cb=cb)
+        res = {"mp4": out_name, "duration": round(info.get("duration", 0), 1),
+               "width": info.get("width"), "height": info.get("height")}
+        try:
+            thumb = f"{safe}_join_{job_id[:8]}_thumb.jpg"
+            videofx.make_thumbnail(out_path, os.path.join(OUTPUT_DIR, thumb))
+            res["thumbnail"] = thumb
+        except Exception:
+            pass
+        set_job(job_id, status="done", progress=100, message="Join ready",
+                result=res)
+    except JobCancelled:
+        set_job(job_id, status="cancelled", progress=0, message="Cancelled.")
+    except Exception as e:
+        set_job(job_id, status="error", progress=0, message=f"Error: {e}")
+
+
+@app.post("/api/video/concat")
+def api_video_concat():
+    ok, resp = _check_and_log_usage("video")
+    if not ok:
+        return jsonify(resp), 402
+    if not C.FFMPEG_OK:
+        return jsonify({"ok": False,
+                        "error": "FFmpeg not available on this device"}), 500
+    files = request.files.getlist("clips")
+    if not (2 <= len(files) <= 6):
+        return jsonify({"ok": False, "error": "Upload 2–6 clips"}), 400
+    import json as _json
+    try:
+        meta = _json.loads(request.form.get("meta") or "[]")
+    except ValueError:
+        return jsonify({"ok": False, "error": "Bad clip data"}), 400
+    clips = []
+    try:
+        for i, f in enumerate(files):
+            p = save_media_upload(f, VIDEO_EXTS, "video")
+            m = meta[i] if i < len(meta) and isinstance(meta[i], dict) else {}
+            clips.append({"path": p, "in": float(m.get("in") or 0),
+                          "out": float(m.get("out") or 0)})
+    except (ValueError, TypeError) as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    opts = {
+        "_title": (request.form.get("title") or "joined")[:60],
+        "transition": "fade" if request.form.get("transition") == "fade"
+        else "cut",
+        "fade_s": _fnum("fade_s", 0.5) or 0.5,
+        "aspect": request.form.get("aspect") if request.form.get("aspect")
+        in videofx.ASPECTS else "16:9",
+    }
+    job_id = new_job("video-join", opts["_title"])
+    threading.Thread(target=run_video_concat_job,
+                     args=(job_id, clips, opts), daemon=True).start()
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.post("/api/video/snapshot")
+def api_video_snapshot():
+    if not C.FFMPEG_OK:
+        return jsonify({"ok": False,
+                        "error": "FFmpeg not available on this device"}), 500
+    try:
+        in_path = _edit_source_path()
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    if not in_path:
+        return jsonify({"ok": False, "error": "No video given"}), 400
+    try:
+        name = f"snapshot_{uuid.uuid4().hex[:8]}.jpg"
+        at = request.form.get("at")
+        _vedit.snapshot(in_path, os.path.join(OUTPUT_DIR, name),
+                        float(at) if at else None)
+        return jsonify({"ok": True, "jpg": name})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.post("/api/video/produce")
+def api_video_produce():
+    """Full-length production from a LIBRARY audio track (no re-upload)."""
+    ok, resp = _check_and_log_usage("video")
+    if not ok:
+        return jsonify(resp), 402
+    if not C.FFMPEG_OK:
+        return jsonify({"ok": False,
+                        "error": "FFmpeg not available on this device"}), 500
+    data = request.get_json(force=True, silent=True) or {}
+    src = os.path.basename(str(data.get("source") or ""))
+    audio_path = os.path.join(OUTPUT_DIR, src)
+    if not src or not os.path.isfile(audio_path):
+        return jsonify({"ok": False,
+                        "error": "Pick a track from your library"}), 400
+    mode = data.get("mode", "waveform")
+    if mode not in ("lyric", "waveform", "minimal", "canvas", "tiktok"):
+        return jsonify({"ok": False, "error": "Bad mode"}), 400
+    clean = []
+    for e in (data.get("events") or [])[:400]:
+        if isinstance(e, dict) and e.get("line"):
+            try:
+                clean.append({"start": float(e.get("start", 0)),
+                              "end": float(e.get("end", 0)),
+                              "section": str(e.get("section", ""))[:40],
+                              "line": str(e["line"])[:140]})
+            except (TypeError, ValueError):
+                continue
+    title = str(data.get("title") or "Prhyme™")[:60]
+    o = data.get("options") or {}
+    vopts = {
+        "aspect": o.get("aspect") if o.get("aspect") in videofx.ASPECTS
+        else "16:9",
+        "bg": o.get("bg") if o.get("bg") in ("rings", "bars", "wave")
+        else "rings",
+        "grade": o.get("grade") if o.get("grade") in videofx.GRADES
+        else "none",
+        "watermark": str(o.get("watermark") or "")[:24],
+        "subtitles": bool(o.get("subtitles")),
+        "title_card": bool(o.get("title_card")),
+        "outro_card": bool(o.get("outro_card")),
+        "out_aspect": o.get("out_aspect") if o.get("out_aspect")
+        in videofx.ASPECTS else "",
+        "fast_preview": bool(o.get("fast_preview")),
+    }
+    job_id = new_job("video", title)
+    threading.Thread(target=run_video_job,
+                     args=(job_id, mode, audio_path, [], clean, title,
+                           vopts), daemon=True).start()
+    return jsonify({"ok": True, "job_id": job_id})
 
 
 @app.get("/api/job/<job_id>")

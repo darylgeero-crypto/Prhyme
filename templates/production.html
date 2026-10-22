@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="phead">
+  <span class="pico bounce">🎥</span>
+  <div>
+    <div class="ptitle-row"><h2 class="ptitle">Video Production</h2><a class="help-link" href="{{ url_for('help_page') }}#video" aria-label="Help">?</a></div>
+    <p class="plead">Full-length, professional videos from your own library tracks — no re-uploading. Renders the whole song.</p>
+  </div>
+</div>
+
+{% if not ffmpeg %}
+<div class="err">FFmpeg isn't installed — video rendering needs it. In Termux: <b>pkg install ffmpeg</b></div>
+{% endif %}
+
+<p class="note"><a href="/video">← Back to Make a Video</a> · Want to cut or join existing videos? The ✂️ Editor is on that page too.</p>
+
+<form id="prodForm" class="form">
+  <label class="field">
+    <span>Library track (full length)</span>
+    <select id="trackSel" class="txt" required>
+      <option value="">— pick a track —</option>
+      {% for t in tracks %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+    </select>
+  </label>
+  <audio id="trackAudio" preload="metadata" class="hidden"></audio>
+
+  <label class="field">
+    <span>Production style</span>
+    <select id="modeSel" class="txt">
+      <option value="waveform">Waveform visualizer (reactive background)</option>
+      <option value="lyric">Lyric video (timed lyrics over visuals)</option>
+      <option value="minimal">Minimal type video</option>
+      <option value="tiktok">TikTok vertical (9:16)</option>
+      <option value="canvas">Spotify Canvas loop (8s)</option>
+    </select>
+  </label>
+
+  <label class="field">
+    <span>Title</span>
+    <input type="text" id="titleInput" class="txt" value="Prhyme™" maxlength="60">
+  </label>
+
+  <label class="field">
+    <span>Lyrics — one line per line (timed across the full track)</span>
+    <textarea id="lyricsText" rows="6" placeholder="Paste your lyrics, one line per line…"></textarea>
+  </label>
+
+  <div class="row2">
+    <label class="field">
+      <span>Theme (for draft)</span>
+      <input type="text" id="genTheme" class="txt" placeholder="e.g. coming up" maxlength="40">
+    </label>
+    <label class="field">
+      <span>Genre</span>
+      <select id="genGenre" class="txt">
+        {% for g in genres %}<option value="{{ g }}">{{ g }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+  <button type="button" class="btn" id="genBtn">✎ Generate draft lyrics</button>
+  <div class="draft-banner hidden" id="draftNote">AI-GENERATED DRAFT LYRICS — not written by the artist.</div>
+
+  <details class="fxbox">
+    <summary>⚙️ Production options — aspect, grade, cards &amp; more</summary>
+    <div class="row2">
+      <label class="field">
+        <span>Aspect ratio</span>
+        <select id="aspectSel" class="txt">
+          <option value="16:9">16:9 landscape</option>
+          <option value="9:16">9:16 vertical</option>
+          <option value="1:1">1:1 square</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Color grade</span>
+        <select id="gradeSel" class="txt">
+          <option value="none">None</option>
+          <option value="warm">Warm</option>
+          <option value="cold">Cold</option>
+          <option value="bw">Black &amp; white</option>
+          <option value="vintage">Vintage</option>
+          <option value="neon">Neon</option>
+        </select>
+      </label>
+    </div>
+    <div class="row2">
+      <label class="field">
+        <span>Reactive background (waveform style)</span>
+        <select id="bgSel" class="txt">
+          <option value="rings">Pulsing rings</option>
+          <option value="bars">Spectrum bars</option>
+          <option value="wave">Scrolling wave</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Watermark text</span>
+        <input type="text" id="wmInput" class="txt" placeholder="Prhyme™" maxlength="24">
+      </label>
+    </div>
+    <div class="fxgrid">
+      <label class="check"><input type="checkbox" id="subsChk"> Burn subtitles</label>
+      <label class="check"><input type="checkbox" id="titleCardChk"> Title card</label>
+      <label class="check"><input type="checkbox" id="outroCardChk"> Outro card</label>
+      <label class="check"><input type="checkbox" id="fastChk"> Fast preview (lower quality, quicker)</label>
+    </div>
+  </details>
+
+  <button type="submit" class="btn big" {% if not ffmpeg %}disabled{% endif %}>🎥 Produce full-length video</button>
+  <p class="note">Full-length renders take a while on a phone — keep this page open. Progress shows below and you can cancel anytime.</p>
+</form>
+
+<div id="jobBox" class="jobbox hidden">
+  <div class="jobmsg" id="jobMsg">Starting…</div>
+  <div class="pbar"><div class="pfill" id="jobFill"></div></div>
+  <div class="jobpct" id="jobPct">0%</div>
+  <button type="button" class="btn mini" id="cancelBtn">✖ Cancel</button>
+  <div id="jobResult" class="result"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const box = $("jobBox"), msg = $("jobMsg"), fill = $("jobFill"),
+        pct = $("jobPct"), res = $("jobResult");
+  let curJob = null;
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+      ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+  }
+
+  function trackDuration() {
+    return new Promise((resolve) => {
+      const sel = $("trackSel").value;
+      if (!sel) return resolve(0);
+      const a = $("trackAudio");
+      a.onloadedmetadata = () => resolve(a.duration || 0);
+      a.onerror = () => resolve(0);
+      a.src = "/download/" + encodeURIComponent(sel);
+      setTimeout(() => resolve(a.duration || 0), 8000);
+    });
+  }
+
+  $("genBtn").addEventListener("click", async () => {
+    const dur = await trackDuration();
+    if (!dur) { alert("Pick a track first — lyrics are timed to its full length."); return; }
+    const txt = $("lyricsText");
+    txt.value = "Writing…";
+    try {
+      const r = await fetch("/api/video/lyrics", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({source: "generate", theme: $("genTheme").value,
+          genre: $("genGenre").value, duration: dur})
+      });
+      const j = await r.json();
+      if (!j.ok) { txt.value = ""; alert(j.error || "Failed"); return; }
+      txt.value = j.events.map(e => e.line).join("\n");
+      $("draftNote").classList.remove("hidden");
+    } catch (e) { txt.value = ""; alert("Network error"); }
+  });
+
+  $("cancelBtn").addEventListener("click", async () => {
+    if (!curJob) return;
+    try { await fetch("/api/job/" + curJob + "/cancel", {method: "POST"}); } catch (e) {}
+  });
+
+  document.getElementById("prodForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    box.classList.remove("hidden");
+    res.innerHTML = "";
+    const fail = (t) => { res.innerHTML = '<div class="err">' + escapeHtml(t) + "</div>"; };
+    const source = $("trackSel").value;
+    if (!source) return fail("Pick a track.");
+    const mode = $("modeSel").value;
+    const lines = $("lyricsText").value.trim();
+    let events = [];
+    if (lines) {
+      msg.textContent = "Timing lyrics across the full track…";
+      const dur = await trackDuration();
+      if (!dur) return fail("Couldn't read the track length.");
+      try {
+        const r = await fetch("/api/video/lyrics", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({source: "paste", text: lines, duration: dur})
+        });
+        const j = await r.json();
+        if (!j.ok) return fail(j.error || "Lyric timing failed");
+        events = j.events;
+      } catch (err) { return fail("Network error: " + err); }
+    }
+    msg.textContent = "Starting production…";
+    let j;
+    try {
+      const r = await fetch("/api/video/produce", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({source: source, mode: mode,
+          title: $("titleInput").value || "Prhyme™", events: events,
+          options: {aspect: $("aspectSel").value, grade: $("gradeSel").value,
+            bg: $("bgSel").value, watermark: $("wmInput").value,
+            subtitles: $("subsChk").checked, title_card: $("titleCardChk").checked,
+            outro_card: $("outroCardChk").checked, fast_preview: $("fastChk").checked}})
+      });
+      j = await r.json();
+    } catch (err) { return fail("Network error: " + err); }
+    if (!j.ok) return fail(j.error || "Request failed");
+    curJob = j.job_id;
+    poll(j.job_id);
+  });
+
+  async function poll(jobId) {
+    try {
+      const r = await fetch("/api/job/" + jobId);
+      const s = await r.json();
+      if (!s.ok) { res.innerHTML = '<div class="err">Job lost</div>'; return; }
+      const p = Math.max(0, Math.min(100, s.progress || 0));
+      fill.style.width = p + "%"; pct.textContent = p + "%";
+      msg.textContent = s.message || "Working…";
+      if (s.status === "done") {
+        fill.style.width = "100%"; pct.textContent = "100%";
+        const r2 = s.result || {};
+        let html = "";
+        if (r2.mp4) {
+          html += '<div class="stats">🎥 ' + (r2.duration || "?") + "s video</div>";
+          html += '<a class="dl" href="/download/' + encodeURIComponent(r2.mp4) + '">⬇ Download MP4</a>';
+          if (r2.thumbnail) html += '<a class="dl alt" href="/download/' + encodeURIComponent(r2.thumbnail) + '">🖼 Thumbnail</a>';
+          html += '<video controls playsinline preload="metadata" style="width:100%;margin-top:10px;border-radius:12px" src="/download/' + encodeURIComponent(r2.mp4) + '"></video>';
+        }
+        res.innerHTML = html || '<div class="err">No result</div>';
+        curJob = null;
+      } else if (s.status === "cancelled") {
+        res.innerHTML = '<div class="err">Cancelled</div>'; curJob = null;
+      } else if (s.status === "error") {
+        res.innerHTML = '<div class="err">' + escapeHtml(s.message || "Job failed") + "</div>"; curJob = null;
+      } else {
+        setTimeout(() => poll(jobId), 1500);
+      }
+    } catch (err) { setTimeout(() => poll(jobId), 3000); }
+  }
+})();
+</script>
+{% endblock %}
