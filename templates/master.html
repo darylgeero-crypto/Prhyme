@@ -136,30 +136,7 @@ async function uploadStems() {
   <p id="msg"></p>
 </div>
 <script>
-document.getElementById('f').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const out = document.getElementById('out');
-  const prog = document.getElementById('progress');
-  const bar = document.getElementById('bar');
-  const msg = document.getElementById('msg');
-  out.textContent = 'Uploading...';
-  prog.style.display = 'none';
-  const fd = new FormData(e.target);
-  try {
-    const r = await fetch('/api/master', {method:'POST', body:fd});
-    const j = await r.json();
-    if (!j.ok) {
-      if (j.active_job_id) {
-        out.innerHTML = '⏳ ' + (j.error || 'A job is already running.') +
-          ' <a href="/master" onclick="event.preventDefault(); pollMaster(\'' + j.active_job_id + '\')">Check active job</a>';
-      } else {
-        out.textContent = 'Error: ' + (j.error || 'Unknown');
-      }
-      return;
-    }
-    const jobId = j.job_id;
-    out.textContent = 'Job started: ' + jobId;
-    prog.style.display = 'block';
+function startMasterPoll(jobId, out, prog, bar, msg) {
     // Poll for progress (with still-working heartbeat)
     var _lastProg = -1, _lastProgTime = Date.now(), _startTime = Date.now();
     const poll = setInterval(async () => {
@@ -208,12 +185,13 @@ document.getElementById('f').addEventListener('submit', async (e) => {
               html += '<label style="color:#fff;">🎤 Vocal Gain: <input type="range" id="postVocalGain" min="-12" max="12" step="0.5" value="1.5" style="width:150px;vertical-align:middle;" oninput="document.getElementById(\'postVocalVal\').textContent=this.value+\' dB\'"> <span id="postVocalVal">1.5 dB</span></label> ';
               html += '<button onclick="remasterWithGain(\'' + jobId + '\')" style="background:#9d4edd;color:#fff;padding:6px 12px;border:none;border-radius:4px;cursor:pointer;margin-left:8px;">🔄 Re-render</button>';
               html += '<div style="font-size:0.8em;color:#888;margin-top:4px;">Adjust vocal level and re-render before downloading.</div></div>';
-              html += '<button onclick="keepMaster(\'' + jobId + '\',this)" style="position:relative;z-index:300;background:#00e5a0;color:#000;padding:16px 22px;min-height:56px;font-size:17px;font-weight:700;border:none;border-radius:8px;cursor:pointer;margin:0 10px 110px 0;">⬇ Download</button>';
+              html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">';
               html += '<button onclick="discardMaster(\'' + jobId + '\')" style="background:#ff4444;color:#fff;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;">🗑 Discard</button>';
-              html += '</div>';
+              html += '<a href="' + mUrl + '" download onclick="keepMasterBg(\'' + jobId + '\',this)" style="position:relative;z-index:300;background:#00e5a0;color:#000;padding:16px 22px;min-height:56px;font-size:17px;font-weight:700;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-block;">⬇ Download</a>';
+              html += '</div></div>';
               html += '<div style="font-size:0.8em;color:#888;">Temp master — Download saves it to your library, Discard deletes it right away.</div>';
             } else {
-              html += '<a href="' + mUrl + '" download style="background:#00e5a0;color:#000;padding:8px 16px;border-radius:4px;text-decoration:none;margin-right:10px;">⬇ Download Master</a>';
+              html += '<div style="text-align:right;"><a href="' + mUrl + '" download style="background:#00e5a0;color:#000;padding:16px 22px;min-height:56px;font-size:17px;font-weight:700;border-radius:8px;text-decoration:none;display:inline-block;">⬇ Download Master</a></div>';
               html += '</div>';
             }
           } else {
@@ -228,6 +206,41 @@ document.getElementById('f').addEventListener('submit', async (e) => {
         // Continue polling
       }
     }, 2000);
+}
+function pollMaster(jobId) {
+  var out = document.getElementById('out');
+  var prog = document.getElementById('progress');
+  var bar = document.getElementById('bar');
+  var msg = document.getElementById('msg');
+  if (prog) prog.style.display = 'block';
+  if (out) out.textContent = 'Checking job\u2026';
+  startMasterPoll(jobId, out, prog, bar, msg);
+}
+document.getElementById('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const out = document.getElementById('out');
+  const prog = document.getElementById('progress');
+  const bar = document.getElementById('bar');
+  const msg = document.getElementById('msg');
+  out.textContent = 'Uploading...';
+  prog.style.display = 'none';
+  const fd = new FormData(e.target);
+  try {
+    const r = await fetch('/api/master', {method:'POST', body:fd});
+    const j = await r.json();
+    if (!j.ok) {
+      if (j.active_job_id) {
+        out.innerHTML = '⏳ ' + (j.error || 'A job is already running.') +
+          ' <a href="/master" onclick="event.preventDefault(); pollMaster(\'' + j.active_job_id + '\')">Check active job</a>';
+      } else {
+        out.textContent = 'Error: ' + (j.error || 'Unknown');
+      }
+      return;
+    }
+    const jobId = j.job_id;
+    out.textContent = 'Job started: ' + jobId;
+    prog.style.display = 'block';
+    startMasterPoll(jobId, out, prog, bar, msg);
 
     function remasterWithGain(jobId) {
       var gainEl = document.getElementById('postVocalGain');
@@ -262,6 +275,18 @@ document.getElementById('f').addEventListener('submit', async (e) => {
         alert('Save failed');
         if (btn) { btn.disabled = false; btn.textContent = '⬇ Download'; }
       }
+    }
+    async function keepMasterBg(jobId, el) {
+      // The anchor's own download already saved the file to the device.
+      // This files the library copy in the background (delayed so the
+      // download stream opens first) and never blocks or alerts over it.
+      setTimeout(async function(){
+        try {
+          const r = await fetch('/api/master/keep', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({job_id: jobId})});
+          const d = await r.json();
+          if (d.ok && el) { el.textContent = '\u2705 Downloaded'; }
+        } catch(e) {}
+      }, 4000);
     }
     async function discardMaster(jobId) {
       if (!confirm('Discard this temp master? It will be deleted immediately.')) return;
@@ -301,7 +326,7 @@ document.getElementById('f').addEventListener('submit', async (e) => {
         html += '<div style="color:#00e5a0;margin-bottom:8px;">✅ Finished masters ready to download:</div>';
         pd.pending.forEach(function(p) {
           html += '<div style="margin:6px 0;">' + (p.title || p.file) + ' ';
-          html += '<button onclick="keepMaster(\'' + p.job_id + '\',this)" style="position:relative;z-index:300;background:#00e5a0;color:#000;padding:16px 22px;min-height:56px;font-size:17px;font-weight:700;border:none;border-radius:8px;cursor:pointer;margin:0 10px 110px 0;">⬇ Download</button></div>';
+          html += '<div style="text-align:right;"><a href="/temp_master/' + p.job_id.substring(0,8) + '/' + encodeURIComponent(p.file) + '" download onclick="keepMasterBg(\'' + p.job_id + '\',this)" style="position:relative;z-index:300;background:#00e5a0;color:#000;padding:16px 22px;min-height:56px;font-size:17px;font-weight:700;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-block;">⬇ Download</a></div></div>';
         });
         html += '</div>';
         if (out) out.innerHTML = html + out.innerHTML;
@@ -335,7 +360,15 @@ document.getElementById('f').addEventListener('submit', async (e) => {
               }
               if (pj.status === 'done' || pj.status === 'error') {
                 clearInterval(poll);
-                msg.textContent = pj.status === 'done' ? 'Done!' : ('Error: ' + (pj.message || 'unknown'));
+                if (pj.status === 'done') {
+                  // Reload so the finished master renders through the
+                  // pending list WITH its download button (this fallback
+                  // poller previously just said Done! and showed nothing).
+                  msg.textContent = 'Done! Loading your master\u2026';
+                  setTimeout(function(){ location.reload(); }, 900);
+                } else {
+                  msg.textContent = 'Error: ' + (pj.message || 'unknown');
+                }
               }
             } catch(e) {}
           }, 2000);

@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="rb-wrap">
+  <div class="rb-head">
+    <img class="rb-avatar" src="{{ url_for('static', filename='img/rockdabus.webp') }}" alt="Rockdabus Prhyme">
+    <div class="rb-head-t">
+      <div class="rb-name">Rockdabus Prhyme</div>
+      <div class="rb-status" id="rbStatus">online — your pocket producer 🎧</div>
+    </div>
+    <button type="button" id="rbVoiceBtn" class="btn small rb-voice-btn" title="Toggle spoken replies">🔇</button>
+  </div>
+
+  <div class="rb-msgs" id="rbMsgs" aria-live="polite"></div>
+  <div class="rb-chips" id="rbChips"></div>
+
+  <form class="rb-input" id="rbForm" autocomplete="off">
+    <button type="button" id="rbMic" class="rb-mic" title="Talk to Rockdabus">🎤</button>
+    <input id="rbText" type="text" placeholder="Ask Rockdabus… (e.g. make me a drill beat at 140)" maxlength="500">
+    <button type="submit" class="rb-send" title="Send">➤</button>
+  </form>
+  <div class="rb-note hidden" id="rbNote"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  "use strict";
+  var msgs = document.getElementById("rbMsgs");
+  var chipsBox = document.getElementById("rbChips");
+  var form = document.getElementById("rbForm");
+  var input = document.getElementById("rbText");
+  var micBtn = document.getElementById("rbMic");
+  var voiceBtn = document.getElementById("rbVoiceBtn");
+  var note = document.getElementById("rbNote");
+  var statusEl = document.getElementById("rbStatus");
+  var AVATAR = "{{ url_for('static', filename='img/rockdabus.webp') }}";
+
+  var sid = null;
+  try { sid = sessionStorage.getItem("rb_sid") || null; } catch (e) {}
+  var voiceOn = false;
+  try { voiceOn = localStorage.getItem("rb_voice") === "on"; } catch (e) {}
+  var busy = false;
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c];
+    });
+  }
+
+  function paintVoiceBtn() {
+    voiceBtn.textContent = voiceOn ? "🔊" : "🔇";
+    voiceBtn.title = voiceOn ? "Spoken replies ON — tap to mute" : "Spoken replies OFF — tap for voice";
+    voiceBtn.classList.toggle("on", voiceOn);
+  }
+  paintVoiceBtn();
+  voiceBtn.addEventListener("click", function () {
+    voiceOn = !voiceOn;
+    try { localStorage.setItem("rb_voice", voiceOn ? "on" : "off"); } catch (e) {}
+    paintVoiceBtn();
+    if (!voiceOn && "speechSynthesis" in window) { try { speechSynthesis.cancel(); } catch (e) {} }
+  });
+
+  function speak(text) {
+    if (!voiceOn || !("speechSynthesis" in window)) return;
+    try {
+      speechSynthesis.cancel();
+      var clean = String(text).replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}]/gu, "").trim();
+      if (!clean) return;
+      var u = new SpeechSynthesisUtterance(clean);
+      u.rate = 1.05; u.pitch = 0.9;
+      var vs = speechSynthesis.getVoices().filter(function (v) { return v.lang && v.lang.indexOf("en") === 0; });
+      if (vs.length) u.voice = vs[0];
+      speechSynthesis.speak(u);
+    } catch (e) { /* voice is best-effort */ }
+  }
+  if ("speechSynthesis" in window) {
+    try { speechSynthesis.getVoices(); } catch (e) {}
+  }
+
+  function bubble(who, html) {
+    var d = document.createElement("div");
+    d.className = "rb-msg " + who;
+    if (who === "rb") {
+      d.innerHTML = '<img class="rb-bavatar" src="' + AVATAR + '" alt="">' +
+        '<div class="rb-bubble">' + html + "</div>";
+    } else {
+      d.innerHTML = '<div class="rb-bubble">' + html + "</div>";
+    }
+    msgs.appendChild(d);
+    msgs.scrollTop = msgs.scrollHeight;
+    return d;
+  }
+
+  function renderChips(chips) {
+    chipsBox.innerHTML = "";
+    (chips || []).forEach(function (c) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "rb-chip";
+      b.textContent = c;
+      b.addEventListener("click", function () { send(c); });
+      chipsBox.appendChild(b);
+    });
+  }
+
+  function showNote(t) {
+    note.textContent = t;
+    note.classList.remove("hidden");
+    clearTimeout(showNote._t);
+    showNote._t = setTimeout(function () { note.classList.add("hidden"); }, 4000);
+  }
+
+  function jobCard(kind) {
+    var d = document.createElement("div");
+    d.className = "rb-msg rb";
+    d.innerHTML = '<img class="rb-bavatar" src="' + AVATAR + '" alt="">' +
+      '<div class="rb-bubble rb-job"><div class="rb-job-t">' +
+      (kind === "mix" ? "🎧 Mix in progress…" : "🎛 Beat in progress…") +
+      '</div><div class="rb-bar"><span></span></div>' +
+      '<div class="rb-job-m">Starting…</div></div>';
+    msgs.appendChild(d);
+    msgs.scrollTop = msgs.scrollHeight;
+    return {
+      el: d,
+      set: function (p, m) {
+        d.querySelector(".rb-bar span").style.width = Math.max(2, Math.min(100, p)) + "%";
+        d.querySelector(".rb-job-m").textContent = m;
+        msgs.scrollTop = msgs.scrollHeight;
+      },
+      done: function (html) {
+        d.querySelector(".rb-bubble").innerHTML = html;
+        msgs.scrollTop = msgs.scrollHeight;
+      }
+    };
+  }
+
+  async function pollJob(jobId, kind, card) {
+    var _t0 = Date.now();
+    var _fmtT = function (ms) {
+      var s = Math.floor(ms / 1000);
+      return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+    };
+    for (var i = 0; i < 120; i++) {
+      await new Promise(function (r) { setTimeout(r, 1500); });
+      var r;
+      try {
+        r = await fetch("/api/job/" + encodeURIComponent(jobId));
+        if (!r.ok) throw new Error("bad status");
+        r = await r.json();
+      } catch (e) { continue; }
+      card.set(r.progress || 0,
+        (r.message || "Working…") + " ⏱ " + _fmtT(Date.now() - _t0));
+      if (r.status === "done") {
+        var res = r.result || {};
+        var mp3 = res.mp3 || res.wav;
+        var dl = mp3 ? '<a class="btn small" href="/download/' + encodeURIComponent(mp3) + '">⬇ Download</a> ' : "";
+        var pg = kind === "mix" ? "/dj" : "/beats";
+        card.done('<div class="rb-job-t">✅ Done!</div><div>' + esc(r.message || "") + "</div>" +
+          '<div class="rb-job-btns">' + dl +
+          '<a class="btn small" href="' + pg + '">Open ' + (kind === "mix" ? "DJ Booth" : "Beats") + "</a></div>");
+        speak("Done! Your " + (kind === "mix" ? "mix" : "beat") + " is ready.");
+        return;
+      }
+      if (r.status === "error") {
+        card.done('<div class="rb-job-t">⚠️ Hmm, that one flopped</div><div>' +
+          esc(r.message || "Something went wrong.") + "</div>");
+        return;
+      }
+    }
+    card.done('<div class="rb-job-t">Still cookin…</div><div>Check the ' +
+      '<a href="/beats">Beats</a> page for it.</div>');
+  }
+
+  function handleAction(a) {
+    if (!a) return;
+    if (a.type === "job") {
+      pollJob(a.job_id, a.kind, jobCard(a.kind));
+    } else if (a.type === "lyrics_result") {
+      var d = document.createElement("div");
+      d.className = "rb-msg rb";
+      d.innerHTML = '<img class="rb-bavatar" src="' + AVATAR + '" alt="">' +
+        '<div class="rb-bubble"><div class="rb-job-t">✎ ' + esc(a.title || "Fresh verse") + "</div>" +
+        '<div class="rb-draft-tag">AI-GENERATED DRAFT LYRICS — not written by the artist.</div>' +
+        "<details class='rb-lyr'><summary>Read it</summary><pre>" + esc(a.text || "") + "</pre></details>" +
+        '<div class="rb-job-btns"><a class="btn small" href="/lyrics">Open Lyrics</a></div></div>';
+      msgs.appendChild(d);
+      msgs.scrollTop = msgs.scrollHeight;
+    } else if (a.type === "freestyle_result") {
+      var h = '<div class="rb-job-t">🎤 Freestyle prompts (' + esc(a.theme || "") + ")</div>";
+      (a.phrases || []).slice(0, 4).forEach(function (p) { h += '<div class="rb-ph">💡 ' + esc(p) + "</div>"; });
+      var rw = (a.rhyme_sets || []).slice(0, 4).map(function (r) { return esc(r.word || r); }).join(" · ");
+      if (rw) h += '<div class="rb-rw">🔗 Rhyme with: ' + rw + "</div>";
+      h += '<div class="rb-job-btns"><a class="btn small" href="/freestyle">Open Freestyle</a></div>';
+      bubble("rb", h);
+    } else if (a.type === "link") {
+      bubble("rb", '<a class="btn small" href="' + esc(a.url) + '">' + esc(a.label || "Open") + " →</a>");
+    }
+  }
+
+  async function send(text) {
+    text = (text || "").trim();
+    if (!text || busy) return;
+    busy = true;
+    bubble("me", esc(text));
+    renderChips([]);
+    input.value = "";
+    var typing = bubble("rb", '<span class="rb-typing"><span></span><span></span><span></span></span>');
+    try {
+      var r = await fetch("/api/rockdabus", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({message: text, session_id: sid})
+      });
+      var d = await r.json();
+      typing.remove();
+      if (!d.ok) { bubble("rb", "⚠️ " + esc(d.error || "Something went wrong.")); busy = false; return; }
+      sid = d.session_id || sid;
+      try { sessionStorage.setItem("rb_sid", sid); } catch (e) {}
+      bubble("rb", esc(d.reply || ""));
+      renderChips(d.quick_replies || []);
+      speak(d.reply || "");
+      handleAction(d.action);
+    } catch (e) {
+      typing.remove();
+      bubble("rb", "⚠️ Lost connection — check the app is running and try again.");
+    }
+    busy = false;
+  }
+
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    send(input.value);
+  });
+
+  // ---- voice input (Web Speech API, graceful fallback) ----
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    micBtn.disabled = true;
+    micBtn.classList.add("off");
+    micBtn.title = "Voice input isn't supported in this browser — type instead";
+  } else {
+    var rec = null, listening = false;
+    micBtn.addEventListener("click", function () {
+      if (listening) { try { rec.stop(); } catch (e) {} return; }
+      try {
+        rec = new SR();
+        rec.lang = "en-US";
+        rec.interimResults = false;
+        rec.maxAlternatives = 1;
+        rec.onstart = function () {
+          listening = true;
+          micBtn.classList.add("live");
+          statusEl.textContent = "listening… 🎤";
+        };
+        rec.onresult = function (ev) {
+          var t = ev.results[0][0].transcript;
+          send(t);
+        };
+        rec.onerror = function (ev) {
+          if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
+            showNote("Mic blocked — allow microphone access or type instead.");
+          } else if (ev.error !== "aborted" && ev.error !== "no-speech") {
+            showNote("Didn't catch that — try again or type it.");
+          }
+        };
+        rec.onend = function () {
+          listening = false;
+          micBtn.classList.remove("live");
+          statusEl.textContent = "online — your pocket producer 🎧";
+        };
+        rec.start();
+      } catch (e) {
+        showNote("Voice input failed here — typing works great too.");
+      }
+    });
+  }
+
+  // greet on first open (proactive Rockdabus)
+  setTimeout(function () { send("yo"); }, 400);
+})();
+</script>
+{% endblock %}

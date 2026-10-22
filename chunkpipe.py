@@ -152,3 +152,47 @@ def ram_chunk_s(base_s, low_s, high_s):
     if avail >= 550:
         return base_s
     return low_s
+
+
+def stitch_files(parts, out_path, xfade_n, sr, prog=None):
+    """Stream-stitch section WAV files into one WAV with crossfades.
+
+    The ONE stitcher (2026-10-21, Daryl's order): every mastering path
+    joins its sections through here. Disk-to-disk — only one section
+    plus a crossfade tail is ever in RAM, so long tracks cannot run
+    out of memory while stitching. Parts after the first must start
+    xfade_n samples early (the overlap built in by cut_sections and
+    by the adaptive extractor). Returns out_path.
+    """
+    import gc
+
+    import soundfile as sf
+
+    fade_out, fade_in = fade_ramps(xfade_n)
+    n = len(parts)
+    with sf.SoundFile(out_path, mode="w", samplerate=sr, channels=2,
+                      subtype="PCM_16") as out:
+        prev_tail = None
+        for idx, spath in enumerate(parts):
+            if prog:
+                prog(idx / max(1, n), "Stitching %d/%d…" % (idx + 1, n))
+            cur, _ = sf.read(spath, dtype="float32", always_2d=True)
+            if cur.shape[1] == 1:
+                cur = np.repeat(cur, 2, axis=1)
+            if prev_tail is not None and len(cur) >= xfade_n:
+                out.write(prev_tail * fade_out + cur[:xfade_n] * fade_in)
+                body = cur[xfade_n:]
+            else:
+                body = cur
+            if idx == n - 1:
+                out.write(body)
+                prev_tail = None
+            elif len(body) > xfade_n:
+                out.write(body[:-xfade_n])
+                prev_tail = body[-xfade_n:].copy()
+            else:
+                out.write(body)
+                prev_tail = None
+            del cur, body
+            gc.collect()
+    return out_path

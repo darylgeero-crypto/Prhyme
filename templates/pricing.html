@@ -10,14 +10,14 @@
 </div>
 
 {% if request.args.get('canceled') == '1' %}
-<div class="bill-note warn">Checkout was canceled — no charge made. Your trial (if any) is untouched.</div>
+<div class="bill-note warn">Checkout was canceled — no charge made.</div>
 {% endif %}
 
 <div class="bill-grid">
   <div class="bill-card platinum">
     <div class="bill-badge">👑 PRHYME PLATINUM</div>
     <div class="bill-price">${{ "%.2f"|format(platinum) }} <span>/ year</span></div>
-    <p class="bill-desc"><strong>All-access annual.</strong> Everything Prhyme™ offers for a full year — full songs, full lyrics, all 1683+ sounds, all 17 genres, priority generation queue, every new feature the moment it ships, and direct support. For serious producers.</p>
+    <p class="bill-desc"><strong>All-access annual.</strong> Everything Prhyme™ offers for a full year — full songs, full lyrics, all 1683+ sounds, all 33 genres, priority generation queue, every new feature the moment it ships, and direct support. For serious producers.</p>
     {% if billing.logged_in %}
     <button class="btn" onclick="billCheckout('platinum')">Go Platinum →</button>
     {% else %}
@@ -39,12 +39,21 @@
     {% endif %}
   </div>
 
+  {% if trial_days > 0 %}
   <div class="bill-card">
     <div class="bill-badge">✨ FREE TRIAL</div>
-    <div class="bill-price">$0 <span>/ 3 days</span></div>
-    <p class="bill-desc">Full access to everything — beats, mastering, DJ mode, lyrics, Studio — for 3 days. No card required.</p>
+    <div class="bill-price">$0 <span>/ {{ trial_days }} days</span></div>
+    <p class="bill-desc">Full access to everything — beats, mastering, DJ mode, lyrics, Studio — for {{ trial_days }} days. No card required.</p>
     <a class="btn" href="{{ url_for('billing.signup') }}">Start free trial →</a>
   </div>
+  {% else %}
+  <div class="bill-card">
+    <div class="bill-badge">🎧 FREE PLAN</div>
+    <div class="bill-price">$0 <span>forever</span></div>
+    <p class="bill-desc">Start free: 3 beats, 1 master, 1 video, 1 distribution and 1 stem pack. Upgrade for full songs and full lyrics.</p>
+    <a class="btn" href="{{ url_for('billing.signup') }}">Start free →</a>
+  </div>
+  {% endif %}
 
   <div class="bill-card">
     <div class="bill-badge">♫ MONTHLY</div>

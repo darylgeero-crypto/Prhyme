@@ -48,3 +48,56 @@ No Stripe Price objects needed — the code builds prices inline ($9/mo, $49/$99
 ## Kill switch
 
 Set `BILLING_ENFORCE = False` in `billing_core.py` to disable all gating (open access, e.g. for local dev).
+
+## Pay-per-use + beat-store purchases (added 2026-10-14, TEST MODE)
+
+New module: `billing_payments.py` (mirrored in `deploy/`).
+
+**Prices (Daryl-confirmed):** beat $2 · master $3 · video $2 · distribute $5 · stems $1.
+
+**New API routes** (all under `/api/billing/`, exempt from the subscription gate):
+- `POST /api/billing/payg` `{"item": "master"}` → `{"ok": true, "url": "<stripe checkout>"}`
+- `GET /api/billing/payg/balance` → balances + prices for the logged-in user
+- `POST /api/billing/buy-beat` `{"beat_id": "..."}` → checkout at the listing's server-side price
+
+**How it works:** user checks out → Stripe webhook `checkout.session.completed` →
+`billing_payments.try_webhook` grants 1 credit (pay-per-use) or records ownership
+(beat). Credits are spent by generation endpoints via
+`billing_payments.consume_generation(uid, item)` which tries the free allowance
+first (if `billing_core` tracks it) then a paid credit. Returns
+`(True, "allowance"|"pay_per_use")` or `(False, "payment_required")`.
+
+**Phone integration steps (do on deploy):**
+1. Copy `billing_payments.py` next to `billing.py`; run `deploy_stripe_payments.py`
+   (idempotent patch: webhook dispatch + new routes), restart the server.
+2. In `app.py`, register the beat lookup so buy-beat uses server-side prices:
+   `import billing_payments as bp_pay` then
+   `bp_pay.register_beat_lookup(store.get_listing)` where `get_listing(beat_id)`
+   returns `{"id","title","price","license","seller_uid"}`. Until registered,
+   buy-beat returns 501-style "Beat not found".
+3. In each generation endpoint (beats/master/video/distribute/stems), before
+   expensive work: `ok, via = bp_pay.consume_generation(uid, item)`; if not ok,
+   return HTTP 402 with `{"error": "payment_required", "prices": bp_pay.PAY_PER_USE}`.
+4. Stripe dashboard → Developers → Webhooks → add endpoint
+   `https://<your-host>/api/billing/webhook`, event `checkout.session.completed`,
+   paste the signing secret into `STRIPE_WEBHOOK_SECRET` in `billing_core.py`.
+
+**Frontend wiring (JS snippet for store/pricing pages):**
+```js
+async function buyPayg(item){
+  const r = await fetch("/api/billing/payg",{method:"POST",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify({item})});
+  const d = await r.json();
+  if(d.ok) location.href = d.url; else alert(d.error);
+}
+async function buyBeat(beatId){
+  const r = await fetch("/api/billing/buy-beat",{method:"POST",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify({beat_id:beatId})});
+  const d = await r.json();
+  if(d.ok) location.href = d.url; else alert(d.error);
+}
+```
+
+**Going live (blocked until banking restored):** test keys → verify identity in the
+Stripe dashboard (sole proprietor) → swap to LIVE keys in Render env vars →
+register the webhook on the live URL → one $1 test charge on Daryl's explicit word.

@@ -13,14 +13,14 @@ import time
 
 # ------------------------------------------------------------------ config
 # Daryl: flip to False to disable all billing enforcement (local dev).
-BILLING_ENFORCE = True
+BILLING_ENFORCE = True  # Render cloud deploy: enforcement ON
 
 # Pricing (USD) — from DJRILL_Ad_Campaigns.md. Adjust freely.
-TRIAL_DAYS = 3
-MONTHLY_PRICE = 25.00           # $25/mo subscription
-PLATINUM_PRICE = 100.00        # $100/yr — annual, all-access
-LIFETIME_PRICE = 499.00         # $499 one-time, forever
-PRELAUNCH_LIFETIME_PRICE = 249.00  # $249 for users 101-500 (50% off launch deal)
+TRIAL_DAYS = 0  # 2026-10-21 (Daryl): no free trials anymore
+MONTHLY_PRICE = 9.00            # $9/mo subscription
+PLATINUM_PRICE = 499.00          # $499/yr — Prhyme Platinum, all-access annual
+LIFETIME_PRICE = 4999.00          # $4999 one-time, all access forever
+PRELAUNCH_LIFETIME_PRICE = 49.00  # $49 for users 101-500 (50% off launch deal)
 FOUNDING_SPOTS = 100            # first 100 signups: free lifetime
 PRELAUNCH_SPOTS = 500           # users 101-500: $49 lifetime price
 
@@ -31,9 +31,9 @@ PRELAUNCH_SPOTS = 500           # users 101-500: $49 lifetime price
 # 3. Developers -> Webhooks -> add endpoint https://YOUR-DOMAIN/api/billing/webhook
 #    -> copy the Signing secret below.
 # 4. When ready for real money, toggle test mode OFF and swap in live keys.
-STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "pk_test_REPLACE_WITH_YOUR_STRIPE_PUBLISHABLE_KEY")
-STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "sk_test_REPLACE_WITH_YOUR_STRIPE_SECRET_KEY")
-STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "whsec_REPLACE_WITH_YOUR_STRIPE_WEBHOOK_SECRET")
+STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 
 
 def stripe_configured():
@@ -97,6 +97,18 @@ def _init_db():
         )
         con.execute(
             "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+        # Usage tracking for free allowances + pay-per-use
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS usage_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                operation TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                period TEXT NOT NULL
+            )"""
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_usage_user ON usage_log(user_id, period)")
         # Purchases ledger (receipts/invoices).
         con.execute(
             """CREATE TABLE IF NOT EXISTS purchases (
@@ -123,6 +135,46 @@ def _init_db():
         con.execute("CREATE INDEX IF NOT EXISTS idx_sess_uid "
                     "ON sessions(uid)")
         # Privacy-respecting analytics (aggregated counts only, no PII).
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS referrals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                referrer_id INTEGER NOT NULL,
+                referred_id INTEGER NOT NULL,
+                referral_code TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                reward_given INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(referred_id)
+            )"""
+        )
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS referral_rewards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                reward_type TEXT NOT NULL,
+                reward_detail TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS share_rewards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                platform TEXT NOT NULL,
+                post_url TEXT,
+                tokens_awarded INTEGER NOT NULL DEFAULT 50,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS feedback_rewards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                feedback_text TEXT NOT NULL,
+                soundkit_awarded TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
         con.execute(
             """CREATE TABLE IF NOT EXISTS analytics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -247,7 +299,7 @@ def create_user(email, password):
     is_owner = 1 if total == 0 else 0
     is_founding = 0
     founding_number = None
-    plan, sub_status = "trial", "trial"
+    plan, sub_status = "free", "free"  # no trial (2026-10-21, Daryl)
     if is_owner or n_founding < FOUNDING_SPOTS:
         is_founding = 1
         founding_number = n_founding + 1
@@ -261,13 +313,13 @@ def create_user(email, password):
                 is_founding, founding_number, is_owner, plan, sub_status)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (email, hash_password(password), now,
-             now + TRIAL_DAYS * 86400,
+             now,  # trial_ends_at = now: no trial period granted
              is_founding, founding_number, is_owner, plan, sub_status))
         con.commit()
         uid = cur.lastrowid
     finally:
         con.close()
-    track_event("signup", "founding" if is_founding else "trial")
+    track_event("signup", "founding" if is_founding else "free")
     return get_user(uid), None
 
 
@@ -325,14 +377,17 @@ def subscription_state(user):
         return True, "open", "Billing enforcement is off (dev mode)."
     if not user:
         return False, "logged_out", "Log in to use Prhyme."
+    # Owner (first-ever user, Daryl) can NEVER be locked out — checked first,
+    # independent of founding flag or subscription status. Irrevocable.
+    if user["is_owner"]:
+        return True, "owner", "Owner — lifetime access, irrevocable."
     if user["is_founding"] or user["sub_status"] == "lifetime":
         return True, "lifetime", "Lifetime access."
     now = time.time()
     if user["sub_status"] == "trial":
-        if now < (user["trial_ends_at"] or 0):
-            days = max(1, int((user["trial_ends_at"] - now) / 86400) + 1)
-            return True, "trial", f"{days} day(s) left in your free trial."
-        return False, "trial_expired", "Your 3-day free trial has ended."
+        # Trials discontinued 2026-10-21 (Daryl) — legacy trial accounts
+        # are on the free plan now.
+        return False, "free", "Free plan — upgrade anytime for full access."
     if user["plan"] == "monthly" and user["sub_status"] == "active":
         end = user["current_period_end"] or 0
         if now < end:
@@ -363,6 +418,94 @@ def lifetime_price_now():
     if user_count() < PRELAUNCH_SPOTS:
         return PRELAUNCH_LIFETIME_PRICE
     return LIFETIME_PRICE
+
+
+
+# ===== Free Allowances Per Tier (incentivize signups) =====
+# Format: {tier: {operation: free_count_per_period}}
+TIER_ALLOWANCES = {
+    "free":    {"beat": 3, "master": 1, "video": 1, "distribute": 1, "stems": 1},
+    "monthly": {"beat": 20, "master": 10, "video": 5, "distribute": 2, "stems": 10},
+    "yearly":  {"beat": 300, "master": 120, "video": 60, "distribute": 24, "stems": 120},
+    "lifetime": {"beat": -1, "master": -1, "video": -1, "distribute": -1, "stems": -1},  # -1 = unlimited
+}
+
+# Pay-per-use prices (after free allowance exhausted)
+PAY_PER_USE = {
+    "beat": 2.00,
+    "master": 3.00,
+    "video": 2.00,
+    "distribute": 5.00,
+    "stems": 1.00,
+}
+
+def get_user_tier(user):
+    """Map user's plan to allowance tier."""
+    plan = (user.get("plan") or "trial").lower()
+    if plan in ("lifetime", "owner", "founding"):
+        return "lifetime"
+    if plan in ("yearly", "platinum"):
+        return "yearly"
+    if plan in ("monthly", "paid"):
+        return "monthly"
+    return "free"
+
+def get_period():
+    """Current billing period as YYYY-MM."""
+    import datetime
+    return datetime.datetime.now().strftime("%Y-%m")
+
+def check_allowance(user_id, operation):
+    """Check if user has free allowance left. Returns (allowed, remaining, price_if_over)."""
+    user = get_user(user_id)
+    if not user:
+        return False, 0, PAY_PER_USE.get(operation, 0)
+    tier = get_user_tier(user)
+    allowance = TIER_ALLOWANCES.get(tier, {}).get(operation, 0)
+    if allowance == -1:  # unlimited
+        return True, -1, 0
+    period = get_period()
+    con = _connect()
+    cur = con.execute(
+        "SELECT COUNT(*) FROM usage_log WHERE user_id=? AND operation=? AND period=?",
+        (user_id, operation, period))
+    used = cur.fetchone()[0]
+    remaining = max(0, allowance - used)
+    if remaining > 0:
+        return True, remaining, 0
+    return False, 0, PAY_PER_USE.get(operation, 0)
+
+def log_usage(user_id, operation):
+    """Record a usage event."""
+    import time
+    con = _connect()
+    con.execute(
+        "INSERT INTO usage_log (user_id, operation, created_at, period) VALUES (?,?,?,?)",
+        (user_id, operation, time.time(), get_period()))
+    con.commit()
+
+def get_usage_summary(user_id):
+    """Get current period usage vs allowances."""
+    user = get_user(user_id)
+    if not user:
+        return {}
+    tier = get_user_tier(user)
+    allowances = TIER_ALLOWANCES.get(tier, {})
+    period = get_period()
+    con = _connect()
+    summary = {}
+    for op, allowed in allowances.items():
+        cur = con.execute(
+            "SELECT COUNT(*) FROM usage_log WHERE user_id=? AND operation=? AND period=?",
+            (user_id, op, period))
+        used = cur.fetchone()[0]
+        summary[op] = {
+            "used": used,
+            "allowed": allowed,
+            "remaining": -1 if allowed == -1 else max(0, allowed - used),
+            "price": PAY_PER_USE.get(op, 0),
+        }
+    return summary
 
 
 def public_status(user):
@@ -987,3 +1130,77 @@ def analytics_summary(days=30):
         return []
     finally:
         con.close()
+
+
+def generate_referral_code(user_id):
+    """Generate a unique referral code for a user."""
+    import hashlib, time
+    raw = f"{user_id}-{time.time()}".encode()
+    code = hashlib.sha256(raw).hexdigest()[:8].upper()
+    con = _connect()
+    try:
+        con.execute("UPDATE users SET referral_code = ? WHERE id = ?", (code, user_id))
+        con.commit()
+    finally:
+        con.close()
+    return code
+
+
+def get_referral_code(user_id):
+    """Get or create a user's referral code."""
+    con = _connect()
+    try:
+        row = con.execute("SELECT referral_code FROM users WHERE id = ?", (user_id,)).fetchone()
+        if row and row[0]:
+            return row[0]
+    finally:
+        con.close()
+    return generate_referral_code(user_id)
+
+
+def apply_referral(referred_id, code):
+    """Link a new user to their referrer via code."""
+    con = _connect()
+    try:
+        ref = con.execute("SELECT id FROM users WHERE referral_code = ?", (code,)).fetchone()
+        if not ref:
+            return False, "Invalid referral code"
+        referrer_id = ref[0]
+        if referrer_id == referred_id:
+            return False, "Cannot refer yourself"
+        try:
+            con.execute(
+                "INSERT INTO referrals (referrer_id, referred_id, referral_code) VALUES (?, ?, ?)",
+                (referrer_id, referred_id, code))
+            con.commit()
+            return True, "Referral applied"
+        except Exception:
+            return False, "Already referred"
+    finally:
+        con.close()
+
+
+def award_referral_bonus(user_id):
+    """Give 1 free month when a referred friend becomes paid."""
+    con = _connect()
+    try:
+        # Check if this user was referred and hasn't gotten reward yet
+        ref = con.execute(
+            "SELECT referrer_id FROM referrals WHERE referred_id = ? AND reward_given = 0",
+            (user_id,)).fetchone()
+        if ref:
+            referrer_id = ref[0]
+            # Give both users 1 free month (extend subscription)
+            for uid in (user_id, referrer_id):
+                con.execute(
+                    "INSERT INTO referral_rewards (user_id, reward_type, reward_detail) VALUES (?, ?, ?)",
+                    (uid, "free_month", "Referral bonus: 1 free month"))
+            con.execute(
+                "UPDATE referrals SET reward_given = 1, status = 'rewarded' WHERE referred_id = ?",
+                (user_id,))
+            con.commit()
+            return True
+    finally:
+        con.close()
+    return False
+

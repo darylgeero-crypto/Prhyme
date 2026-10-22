@@ -18,6 +18,8 @@ from flask import (Blueprint, jsonify, redirect, render_template, request,
                    session, url_for)
 
 import billing_core as bc
+import billing_payments as bp_pay
+import billing_paypal as bp_pp
 
 bp = Blueprint("billing", __name__)
 
@@ -133,7 +135,7 @@ def terms():
     """Serve the Terms of Service (rendered from legal/TERMS_OF_SERVICE.md)."""
     import os as _os
     p = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)),
-                      "..", "legal", "TERMS_OF_SERVICE.md")
+                      "legal", "TERMS_OF_SERVICE.md")
     p = _os.path.normpath(p)
     try:
         with open(p) as f:
@@ -149,7 +151,7 @@ def privacy():
     """Serve the Privacy Policy."""
     import os as _os
     p = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)),
-                      "..", "legal", "PRIVACY_POLICY.md")
+                      "legal", "PRIVACY_POLICY.md")
     p = _os.path.normpath(p)
     try:
         with open(p) as f:
@@ -456,7 +458,11 @@ def api_checkout():
                         "error": "You already have active access."}), 400
     data = request.get_json(force=True, silent=True) or {}
     plan = data.get("plan")
-    url, err = bc.create_checkout_session(user, plan, _base_url())
+    # PayPal is the active provider (Daryl 2026-10-16).
+    if plan == "lifetime":
+        url, err = bp_pp.create_lifetime_order(user, _base_url())
+    else:
+        url, err = bp_pp.create_subscription(user, plan, _base_url())
     if err:
         return jsonify({"ok": False, "error": err}), 400
     return jsonify({"ok": True, "url": url})
@@ -465,9 +471,77 @@ def api_checkout():
 @bp.post("/api/billing/webhook")
 def api_webhook():
     payload = request.get_data()
+    # PayPal webhook dispatch (verified via PayPal's API).
+    if request.headers.get("Paypal-Transmission-Id"):
+        handled, ok, msg = bp_pp.try_webhook(request.headers, payload)
+        if handled:
+            return jsonify({"ok": ok, "message": msg}), 200 if ok else 400
     sig = request.headers.get("Stripe-Signature", "")
+    # Pay-per-use / beat-store events are handled by billing_payments first;
+    # subscription + lifetime events fall through to billing_core.
+    handled, ok, msg = bp_pay.try_webhook(payload, sig)
+    if handled:
+        return jsonify({"ok": ok, "message": msg}), 200 if ok else 400
     ok, msg = bc.handle_webhook(payload, sig)
     return jsonify({"ok": ok, "message": msg}), 200 if ok else 400
+
+
+@bp.get("/api/billing/paypal/return")
+def api_paypal_return():
+    """PayPal redirects here after approval (?token=ORDER_ID or ?kind=sub).
+
+    Captures one-time orders server-side (webhooks can't reach localhost).
+    Subscriptions are activated by the webhook on the public host.
+    """
+    order_id = request.args.get("token", "")
+    if order_id:
+        ok, msg = bp_pp.capture_order(order_id)
+        if not ok:
+            return jsonify({"ok": False, "error": msg}), 400
+    return redirect("/account?paid=1")
+
+
+@bp.get("/api/billing/paypal/cancel")
+def api_paypal_cancel():
+    return redirect("/pricing?canceled=1")
+
+
+@bp.post("/api/billing/payg")
+def api_payg():
+    """Buy one pay-per-use credit (beat/master/video/distribute/stems)."""
+    user, redir = _login_required()
+    if redir:
+        return jsonify({"ok": False, "error": "Login required."}), 401
+    data = request.get_json(force=True, silent=True) or {}
+    url, err = bp_pp.create_payg_order(user, data.get("item"), _base_url())
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    return jsonify({"ok": True, "url": url,
+                    "prices": bp_pp.PAY_PER_USE})
+
+
+@bp.post("/api/billing/buy-beat")
+def api_buy_beat():
+    """Buy a beat listing at its server-side price."""
+    user, redir = _login_required()
+    if redir:
+        return jsonify({"ok": False, "error": "Login required."}), 401
+    data = request.get_json(force=True, silent=True) or {}
+    url, err = bp_pp.create_beat_order(user, data.get("beat_id"), _base_url())
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    return jsonify({"ok": True, "url": url})
+
+
+@bp.get("/api/billing/payg/balance")
+def api_payg_balance():
+    """Pay-per-use credit balances + prices for the logged-in user."""
+    user, redir = _login_required()
+    if redir:
+        return jsonify({"ok": False, "error": "Login required."}), 401
+    return jsonify({"ok": True,
+                    "balance": bp_pp.payg_balance(user["id"]),
+                    "prices": bp_pp.PAY_PER_USE})
 
 
 @bp.post("/api/billing/cancel")
@@ -475,7 +549,7 @@ def api_cancel():
     user, redir = _login_required()
     if redir:
         return jsonify({"ok": False, "error": "Login required."}), 401
-    bc.cancel_subscription(user)
+    bp_pp.cancel_subscription(user)
     return jsonify({"ok": True})
 
 

@@ -37,6 +37,32 @@ def _istft(z, n_out):
     return x[:n_out]
 
 
+# --- memory-bounded spectral helpers (2026-10-21 crash fix) ---------------
+# The full-track float64 STFT chain peaked ~1.3 GB on a 3.5-min track and
+# Android's low-memory killer took the whole server down (twice). All
+# spectral work below runs in float32 on <=30 s windows, so peak memory is
+# bounded no matter how long the track is. Short inputs keep the original
+# whole-track float64 path bit-for-bit.
+_CHUNK_S = 30.0
+_CTX_S = 1.5
+
+
+def _stft32(x):
+    _, _, z = signal.stft(np.asarray(x, dtype=np.float32), fs=SR,
+                          window="hann", nperseg=_NFFT,
+                          noverlap=_NFFT - _HOP, boundary="zeros")
+    return z
+
+
+def _istft32(z, n_out):
+    _, x = signal.istft(z, fs=SR, window="hann", nperseg=_NFFT,
+                        noverlap=_NFFT - _HOP)
+    x = np.asarray(x, dtype=np.float32)
+    if len(x) < n_out:
+        x = np.pad(x, (0, n_out - len(x)))
+    return x[:n_out]
+
+
 def _as_stereo(x):
     x = np.asarray(x, dtype=np.float64)
     if x.ndim == 1:
@@ -50,36 +76,87 @@ def _mono(x):
 
 # ---------------------------------------------------------------- 1. clarity
 
-def reduce_noise(x, max_cut_db=7.0):
-    """Gentle spectral gating. Soft mask only — floor keeps every word audible.
+def _gate_segment(seg, floor):
+    """The original spectral gate, applied to ONE segment in float32.
 
-    Noise profile per bin = median magnitude of the quietest 15% of frames.
-    Gain never drops below max_cut_db, so nothing is ever fully gated out.
+    Noise profile comes from the segment's own quietest 15% of frames —
+    for a gentle (<=7 dB, floor-limited) gate on vocal material this is
+    locally valid and keeps every word audible, exactly like the original.
     """
-    x = _as_stereo(x)
-    out = np.empty_like(x)
-    floor = 10.0 ** (-max_cut_db / 20.0)
-    for c in range(x.shape[1]):
-        z = _stft(x[:, c])
+    seg = np.asarray(seg, dtype=np.float32)
+    out = np.empty_like(seg)
+    for c in range(seg.shape[1]):
+        z = _stft32(seg[:, c])
         mag = np.abs(z)
         frame_e = mag.mean(axis=0)
         q = np.quantile(frame_e, 0.15)
         quiet = frame_e <= max(q, 1e-9)
         if not np.any(quiet):
-            out[:, c] = x[:, c]
+            out[:, c] = seg[:, c]
             continue
         noise = np.median(mag[:, quiet], axis=1, keepdims=True) + 1e-12
-        # soft mask: full pass well above noise, gentle cut near/below it
         over = mag / (1.6 * noise)
         gain = np.clip((over - 0.4) / 0.6, floor, 1.0)
-        # smooth gain over time to avoid musical-noise pumping
         gain = signal.lfilter([0.25, 0.25, 0.25, 0.25], [1.0], gain, axis=1)
         gain = np.clip(gain, floor, 1.0)
-        out[:, c] = _istft(z * gain, x.shape[0])
+        out[:, c] = _istft32(z * gain, seg.shape[0])
+        del z, mag, gain
+    return out
+
+
+def reduce_noise(x, max_cut_db=7.0, _return32=False):
+    """Gentle spectral gating. Soft mask only — floor keeps every word audible.
+
+    Noise profile per bin = median magnitude of the quietest 15% of frames.
+    Gain never drops below max_cut_db, so nothing is ever fully gated out.
+    Long inputs are processed in 30 s windows (1.5 s context, discarded) so
+    peak memory stays bounded; short inputs use the original whole-track
+    float64 path unchanged.
+    """
+    x = _as_stereo(x) if not (getattr(x, "dtype", None) == np.float32
+                              and getattr(x, "ndim", 0) == 2
+                              and x.shape[1] == 2) else x
+    floor = 10.0 ** (-max_cut_db / 20.0)
+    n = x.shape[0]
+    chunk = int(_CHUNK_S * SR)
+    if n <= chunk * 2:
+        out = np.empty_like(x)
+        for c in range(x.shape[1]):
+            z = _stft(x[:, c])
+            mag = np.abs(z)
+            frame_e = mag.mean(axis=0)
+            q = np.quantile(frame_e, 0.15)
+            quiet = frame_e <= max(q, 1e-9)
+            if not np.any(quiet):
+                out[:, c] = x[:, c]
+                continue
+            noise = np.median(mag[:, quiet], axis=1, keepdims=True) + 1e-12
+            over = mag / (1.6 * noise)
+            gain = np.clip((over - 0.4) / 0.6, floor, 1.0)
+            gain = signal.lfilter([0.25, 0.25, 0.25, 0.25], [1.0], gain, axis=1)
+            gain = np.clip(gain, floor, 1.0)
+            out[:, c] = _istft(z * gain, x.shape[0])
+    else:
+        ctx = int(_CTX_S * SR)
+        out32 = np.empty((n, x.shape[1]), dtype=np.float32)
+        pos = 0
+        while pos < n:
+            a = max(0, pos - ctx)
+            b = min(n, pos + chunk + ctx)
+            seg_out = _gate_segment(x[a:b], floor)
+            out32[pos:min(n, pos + chunk)] = seg_out[pos - a:pos - a + min(chunk, n - pos)]
+            pos += chunk
+            del seg_out
+        if _return32:
+            out = out32
+        else:
+            out = out32.astype(np.float64)
+            del out32
     # keep original peak level so the chain doesn't change loudness staging
     p_in = np.max(np.abs(x)) + 1e-12
     p_out = np.max(np.abs(out)) + 1e-12
-    return out * (p_in / p_out)
+    out *= (p_in / p_out)
+    return out
 
 
 def presence_boost(x, db=3.0, fc=4000.0, q=0.9):
@@ -99,31 +176,45 @@ def presence_boost(x, db=3.0, fc=4000.0, q=0.9):
     a2 = 1.0 - alpha / A
     b = np.array([b0, b1, b2]) / a0
     a = np.array([1.0, a1 / a0, a2 / a0])
+    if x.dtype == np.float32:
+        # keep the filter in float32 so a long track doesn't double in size
+        b = b.astype(np.float32)
+        a = a.astype(np.float32)
     return signal.lfilter(b, a, x, axis=0)
 
 
-def deess(x, amount=0.5, band=(5200.0, 9200.0)):
-    """Tame harsh sibilance only when it spikes — never a static EQ cut."""
+def deess(x, amount=0.5, band=(5200.0, 9200.0), _return32=False):
+    """Tame harsh sibilance only when it spikes — never a static EQ cut.
+
+    Internals run in float32 (2026-10-21 crash fix): the envelope math
+    needs no more, and it halves this stage's full-track footprint.
+    """
     x = _as_stereo(x)
-    sos_lo = signal.butter(4, band[0], btype="lowpass", fs=SR, output="sos")
-    sos_hi = signal.butter(4, band[1], btype="highpass", fs=SR, output="sos")
-    sib = signal.sosfilt(sos_hi, signal.sosfilt(sos_lo, x, axis=0), axis=0)
+    xf = x.astype(np.float32)
+    sos_lo = signal.butter(4, band[0], btype="lowpass", fs=SR, output="sos").astype(np.float32)
+    sos_hi = signal.butter(4, band[1], btype="highpass", fs=SR, output="sos").astype(np.float32)
+    sib = signal.sosfilt(sos_hi, signal.sosfilt(sos_lo, xf, axis=0), axis=0)
     # envelopes: sibilance band vs broadband
     def _env(v):
         e = np.abs(v)
         b2, a2 = signal.butter(2, 25.0, fs=SR)
-        return signal.lfilter(b2, a2, e, axis=0) + 1e-9
+        return signal.lfilter(b2.astype(np.float32), a2.astype(np.float32), e, axis=0) + 1e-9
     e_sib = _env(sib).mean(axis=1, keepdims=True)
-    e_all = _env(x).mean(axis=1, keepdims=True)
+    e_all = _env(xf).mean(axis=1, keepdims=True)
     ratio = (e_sib / e_all).ravel()
     # sibilant when the band dominates the spectrum
     over = np.clip((ratio - 0.32) / 0.25, 0.0, 1.0)
     # smooth to avoid pumping
     b3, a3 = signal.butter(2, 12.0, fs=SR)
-    over = signal.lfilter(b3, a3, over)
+    over = signal.lfilter(b3.astype(np.float32), a3.astype(np.float32), over)
     cut = 1.0 - amount * 0.55 * over  # max ~ -4.5 dB at amount=1
     cut = cut[:, None]
-    return x - sib * (1.0 - cut)
+    sib *= (1.0 - cut)
+    xf -= sib
+    del sib
+    if _return32:
+        return xf
+    return xf.astype(np.float64)
 
 
 def polish_vocal_clarity(x, sr=SR):
@@ -136,16 +227,68 @@ def polish_vocal_clarity(x, sr=SR):
     peak_in = np.max(np.abs(x))
     if peak_in < 1e-9:
         return x.copy()
+    if x.shape[0] > 60 * SR:
+        # Long track: run the whole chain in float32 (2026-10-21 crash fix
+        # #2). The float64 chain's copies, stacked on the buffers the
+        # master job already holds, were what the low-memory killer ate.
+        # DSP is identical; only the working precision halves.
+        xf = x.astype(np.float32)
+        y = reduce_noise(xf, _return32=True)
+        del xf
+        y = presence_boost(y, db=3.0)
+        y = deess(y, amount=0.5, _return32=True)
+        peak_out = np.max(np.abs(y)) + 1e-12
+        y *= (peak_in / peak_out)
+        np.clip(y, -1.0, 1.0, out=y)
+        return y
     y = reduce_noise(x)
     y = presence_boost(y, db=3.0)
     y = deess(y, amount=0.5)
     # restore input peak so downstream staging is unchanged
     peak_out = np.max(np.abs(y)) + 1e-12
-    y = y * (peak_in / peak_out)
-    return np.clip(y, -1.0, 1.0)
+    y *= (peak_in / peak_out)
+    np.clip(y, -1.0, 1.0, out=y)
+    return y
 
 
 # ---------------------------------------------------------------- 2. timing
+
+def _flux_series(mono):
+    """Spectral flux of the whole track, computed in 30 s windows.
+
+    Frame g covers the window starting at sample g*_HOP, exactly as the
+    original whole-track STFT indexed it; flux[g] is the positive spectral
+    rise into frame g (flux[0] = 0). Segments carry 8192 samples of
+    context (>= 16 frames > the 4-frame window reach), so every kept
+    frame is computed from real samples, never from a segment's
+    zero-boundary. Only one window's spectrogram is ever in memory.
+    """
+    x = np.asarray(mono, dtype=np.float32).ravel()
+    n = len(x)
+    core = (int(_CHUNK_S * SR) // _HOP) * _HOP  # HOP-aligned core, samples
+    ext = 8192                                  # HOP-aligned context
+    total_frames = 1 + int(np.ceil(n / _HOP))
+    flux = np.zeros(total_frames, dtype=np.float64)
+    pos = 0
+    while pos < n:
+        a = max(0, pos - ext)
+        b = min(n, pos + core + ext)
+        z = _stft32(x[a:b])
+        mag = np.abs(z)
+        d = np.sum(np.maximum(0.0, np.diff(mag, axis=1)), axis=0)
+        del z, mag
+        base = a // _HOP               # global frame of local frame 0
+        lo = pos // _HOP               # first core frame (global)
+        hi = total_frames if pos + core >= n else (pos + core) // _HOP
+        # d[j] is the rise into local frame j+1 == global frame base+j+1
+        j0 = max(0, lo - base - 1)
+        j1 = min(len(d), hi - base - 1)
+        if j1 > j0:
+            flux[base + j0 + 1: base + j0 + 1 + (j1 - j0)] = d[j0:j1]
+        del d
+        pos += core
+    return flux
+
 
 def detect_onsets(mono, sr=SR, min_gap_s=0.09):
     """Spectral-flux onset detection.
@@ -153,10 +296,7 @@ def detect_onsets(mono, sr=SR, min_gap_s=0.09):
     Returns (times, strengths): onset times in seconds and their
     normalized flux strengths (0..1). Strong onsets = real attacks.
     """
-    z = _stft(mono)
-    mag = np.abs(z)
-    flux = np.sum(np.maximum(0.0, np.diff(mag, axis=1)), axis=0)
-    flux = np.concatenate([[0.0], flux])
+    flux = _flux_series(mono)
     # adaptive threshold: local median + scaled MAD
     k = 43  # ~0.5 s window at 86 fps
     med = signal.medfilt(flux, kernel_size=k * 2 + 1)
@@ -223,7 +363,7 @@ def _estimate_grid_offset(onsets, bpm, dur):
     return best_off
 
 
-def fix_vocal_timing(x, sr=SR, bpm=90.0, max_shift_s=0.050):
+def fix_vocal_timing(x, sr=SR, bpm=90.0, max_shift_s=0.030):
     """Nudge vocal phrases toward the beat grid.
 
     Piecewise-linear time warp anchored at phrase boundaries (fixed) and
@@ -233,10 +373,14 @@ def fix_vocal_timing(x, sr=SR, bpm=90.0, max_shift_s=0.050):
     Returns (warped, info_dict). If already on beat, returns input unchanged.
     """
     assert sr == SR, "vocalfix expects 44.1 kHz"
-    xs = _as_stereo(x)
+    if getattr(x, "dtype", None) == np.float32 and getattr(x, "ndim", 0) == 2 \
+            and x.shape[1] == 2:
+        xs = x  # already float32 stereo: don't double it via _as_stereo
+    else:
+        xs = _as_stereo(x)
     n = xs.shape[0]
     dur = n / sr
-    mono = _mono(xs)
+    mono = xs.mean(axis=1)
     if np.max(np.abs(mono)) < 1e-9 or dur < 1.0:
         return xs.copy(), {"corrected": False, "reason": "too_short_or_silent"}
 
@@ -288,10 +432,10 @@ def fix_vocal_timing(x, sr=SR, bpm=90.0, max_shift_s=0.050):
             else:
                 corr = -float(err)
             d = t + corr
-            # monotonicity + local stretch ratio within [0.92, 1.08]
+            # monotonicity + local stretch ratio within [0.97, 1.03]
             min_d = prev_d + 0.030
-            lo = prev_d + (t - prev_s) * 0.92
-            hi = prev_d + (t - prev_s) * 1.08
+            lo = prev_d + (t - prev_s) * 0.97
+            hi = prev_d + (t - prev_s) * 1.03
             d = min(max(d, min_d, lo), hi)
             # global cap: never move any point more than max_shift_s
             d = min(max(d, t - max_shift_s), t + max_shift_s)
@@ -326,19 +470,36 @@ def fix_vocal_timing(x, sr=SR, bpm=90.0, max_shift_s=0.050):
 
 
 def _piecewise_warp(xs, src_pts, dst_pts):
-    """Resample xs so src_pts map to dst_pts. Compress/extend only."""
+    """Resample xs so src_pts map to dst_pts. Compress/extend only.
+
+    Chunked float32 version (2026-10-21 crash fix #2): the original built
+    ~7 full-track float64 temporaries (time maps, index arrays, two fancy-
+    indexed copies of the whole track) — over 1 GB on a 3.5-minute song.
+    Same piecewise-linear map and same linear interpolation, computed in
+    10-second blocks into a preallocated float32 output.
+    """
     n = xs.shape[0]
     n_out = int(round(dst_pts[-1] * SR))
     n_out = max(n_out, 16)
-    t_out = np.arange(n_out) / SR
-    # output time -> input time via inverse piecewise-linear map
-    t_in = np.interp(t_out, dst_pts, src_pts)
-    t_in = np.clip(t_in, 0, (n - 1) / SR)
-    idx = t_in * SR
-    i0 = np.floor(idx).astype(np.int64)
-    i1 = np.minimum(i0 + 1, n - 1)
-    frac = (idx - i0)[:, None]
-    return xs[i0] * (1.0 - frac) + xs[i1] * frac
+    xs32 = xs if xs.dtype == np.float32 else xs.astype(np.float32)
+    out = np.empty((n_out, xs32.shape[1]), dtype=np.float32)
+    block = 10 * SR
+    pos = 0
+    while pos < n_out:
+        end = min(n_out, pos + block)
+        t_out = (np.arange(pos, end, dtype=np.float64) / SR)
+        t_in = np.interp(t_out, dst_pts, src_pts)
+        np.clip(t_in, 0, (n - 1) / SR, out=t_in)
+        idx = t_in * SR
+        del t_out, t_in
+        i0 = np.floor(idx).astype(np.int32)
+        i1 = np.minimum(i0 + 1, n - 1)
+        frac = (idx - i0)[:, None]
+        del idx
+        out[pos:end] = xs32[i0] * (1.0 - frac) + xs32[i1] * frac
+        del i0, i1, frac
+        pos = end
+    return out
 
 
 # ---------------------------------------------------------------- QA
