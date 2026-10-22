@@ -2934,7 +2934,7 @@ def api_daryl_beat():
     if d.get("ok") and d.get("path"):
         import os as _os
         d["file"] = _os.path.basename(d["path"])
-        d["url"] = "http://127.0.0.1:5001/media/" + d["file"]
+        d["url"] = "/download/" + d["file"]
     return jsonify(d), (200 if d.get("ok") else 500)
 
 @app.post("/api/dj/mixplay")
