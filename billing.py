@@ -69,6 +69,7 @@ def _login_required():
 # Free users get short previews; paid users get full output.
 _OPEN_API_PREFIXES = (
     "/api/billing/",
+    "/api/job/",   # cancelling a running job must never be paywalled
     "/api/lite-mode",
     "/api/daw/projects",   # project save/list is cheap local storage
     "/api/beats/preview",   # freemium: 8-bar beat snippet, no login

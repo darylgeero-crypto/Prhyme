@@ -135,9 +135,35 @@ async function uploadStems() {
     <div id="bar" style="background:#4CAF50; height:100%; width:0%; transition:width 0.3s;"></div>
   </div>
   <p id="msg"></p>
+  <button id="cancelJobBtn" type="button" style="display:none;margin:6px 0;background:#3a0d0d;color:#ff6b6b;border:1px solid #ff6b6b;padding:10px 16px;border-radius:8px;cursor:pointer;font-weight:600;" onclick="cancelCurrentJob()">⛔ Cancel job</button>
 </div>
 <script>
+var currentJobId = null;
+function cancelCurrentJob() {
+  if (!currentJobId) return;
+  var btn = document.getElementById('cancelJobBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Cancelling…'; }
+  fetch('/api/job/' + currentJobId + '/cancel', {method: 'POST'})
+    .then(function(r) { return r.json(); })
+    .then(function(j) {
+      if (!j.ok) {
+        if (btn) { btn.disabled = false; btn.textContent = '⛔ Cancel job'; }
+        if (typeof toast === 'function') toast('Cancel failed: ' + (j.error || 'unknown'));
+      }
+    })
+    .catch(function() {});
+}
+function showCancelBtn(jobId) {
+  currentJobId = jobId;
+  var btn = document.getElementById('cancelJobBtn');
+  if (btn) { btn.style.display = 'inline-block'; btn.disabled = false; btn.textContent = '⛔ Cancel job'; }
+}
+function hideCancelBtn() {
+  var btn = document.getElementById('cancelJobBtn');
+  if (btn) btn.style.display = 'none';
+}
 function startMasterPoll(jobId, out, prog, bar, msg) {
+    showCancelBtn(jobId);
     // Poll for progress (with still-working heartbeat)
     var _lastProg = -1, _lastProgTime = Date.now(), _startTime = Date.now();
     const poll = setInterval(async () => {
@@ -156,6 +182,7 @@ function startMasterPoll(jobId, out, prog, bar, msg) {
         }
         if (pj.status === 'done') {
           clearInterval(poll);
+          hideCancelBtn();
           bar.style.width = '100%';
           msg.innerHTML = '<span class="prhymed-done">Prhymed!</span>';
           var html = '';
@@ -199,8 +226,14 @@ function startMasterPoll(jobId, out, prog, bar, msg) {
             html += 'Done! Job: ' + jobId;
           }
           out.innerHTML = html;
+        } else if (pj.status === 'cancelled') {
+          clearInterval(poll);
+          hideCancelBtn();
+          msg.innerHTML = '⛔ Cancelled';
+          out.textContent = 'Job cancelled.';
         } else if (pj.status === 'error') {
           clearInterval(poll);
+          hideCancelBtn();
           out.textContent = 'Error: ' + (pj.error || 'Failed');
         }
       } catch(err) {

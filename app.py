@@ -636,6 +636,10 @@ _engine = None
 _engine_lock = threading.Lock()
 
 
+class JobCancelled(Exception):
+    """Raised inside a job's progress update when the user cancelled it."""
+
+
 def set_job(job_id, **kw):
     with jobs_lock:
         _is_new = job_id not in jobs
@@ -643,6 +647,9 @@ def set_job(job_id, **kw):
                                      "message": "Starting…",
                                      "_ts": time.time()})
         j.update(kw)
+        if (j.get("cancel_requested")
+                and kw.get("status") not in ("done", "error", "cancelled")):
+            raise JobCancelled()
         j["_ts"] = time.time()  # refresh for TTL
         if _is_new:
             _dbg.log("JOB %s START kind=%s title=%s msg=%s" % (
@@ -1914,6 +1921,13 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                         # 25. A/B compare: optional 30s excerpts (stored in temp)
                         "ab_source": ab_src,
                         "ab_master": ab_mst})
+    except JobCancelled:
+        set_job(job_id, status="cancelled", progress=0,
+                message="Cancelled.")
+        try:
+            temp_master_cleanup(job_id)
+        except Exception:
+            pass
     except Exception as e:
         set_job(job_id, status="error", progress=0, message=f"Error: {e}")
         try:
@@ -2008,6 +2022,9 @@ def run_beats_job(job_id, genre, bpm, n_bars, seed, fx=None, fast=False,
             _run_beats_render(job_id, genre, bpm, n_bars, seed, fx, prog,
                               ckey, fast, artist, kit, melody, custom_kit,
                               healing, era, duration, fib_bursts)
+    except JobCancelled:
+        set_job(job_id, status="cancelled", progress=0,
+                message="Cancelled.")
     except Exception as e:
         set_job(job_id, status="error", progress=0, message=f"Error: {e}")
 
@@ -3323,6 +3340,9 @@ def run_stem_master_job(job_id, stem_paths, mopts):
                         "wav": os.path.basename(wav_path),
                         "flac": None,
                         "report": report})
+    except JobCancelled:
+        set_job(job_id, status="cancelled", progress=0,
+                message="Cancelled.")
     except Exception as e:
         set_job(job_id, status="error", progress=0, message=f"Error: {e}")
 
@@ -5661,6 +5681,21 @@ def api_job(job_id):
     if not j:
         return jsonify({"ok": False, "error": "Unknown job"}), 404
     return jsonify({"ok": True, **j})
+
+
+@app.post("/api/job/<job_id>/cancel")
+def api_job_cancel(job_id):
+    """Cancel a job in progress (Daryl's ask, 2026-10-21). Sets a flag;
+    the job's next progress update raises JobCancelled in set_job and the
+    runner lands in status 'cancelled', freeing the one-job guard."""
+    with jobs_lock:
+        j = jobs.get(job_id)
+        if j is None:
+            return jsonify({"ok": False, "error": "Unknown job"}), 404
+        if j.get("status") != "running":
+            return jsonify({"ok": False, "error": "Job is not running"}), 409
+        j["cancel_requested"] = True
+    return jsonify({"ok": True, "cancelling": True})
 
 
 @app.get("/api/jobs/active")
