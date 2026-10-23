@@ -2551,6 +2551,56 @@ def run_beats_job(job_id, genre, bpm, n_bars, seed, fx=None, fast=False,
         set_job(job_id, status="error", progress=0, message=f"Error: {e}")
 
 
+def _apply_beat_fx(beat, bpm, seed, fx, prog, p0=78, p1=87):
+    """Apply the user's Beat FX options to a rendered beat.
+
+    One shared chain for both renderers (fast + V68) so a ticked option
+    means the same thing everywhere. Plain rule: if the user picked it,
+    it gets applied — nothing here second-guesses the form. Progress
+    reports are mapped onto the p0..p1 window the caller is using.
+    """
+    def P(canon, msg):
+        prog(p0 + int((canon - 78) * (p1 - p0) / 9.0), msg)
+    fx = fx or {}
+    if fx.get("fills"):
+        P(78, "Adding drum fills…")
+        beat = beatfx.drum_fills(beat, float(bpm), seed=seed)
+    if fx.get("humanize"):
+        beat = beatfx.humanize(beat, float(bpm), seed=seed)
+    if fx.get("swing"):
+        P(80, "Applying swing…")
+        beat = beatfx.apply_swing(beat, float(bpm), float(fx["swing"]))
+    if fx.get("risers"):
+        P(81, "Adding risers…")
+        beat = beatfx.risers(beat, float(bpm), seed=seed)
+    if fx.get("builds"):
+        beat = beatfx.drop_builds(beat, float(bpm), seed=seed)
+    if fx.get("feel") in ("half", "double"):
+        P(82, f"Applying {fx['feel']}-time feel…")
+        beat = beatfx.time_feel(beat, float(bpm), fx["feel"])
+    if fx.get("transpose"):
+        beat = beatfx.transpose(beat, int(fx["transpose"]))
+    if fx.get("arrange"):
+        beat = beatfx.arrangement_variants(beat, float(bpm),
+                                           int(fx["arrange"]))
+    if fx.get("glide808"):
+        beat = beatfx.glide_808(beat, float(bpm), seed=seed)
+    if fx.get("hatrolls"):
+        P(84, "Adding hat rolls…")
+        beat = beatfx.hat_rolls(beat, float(bpm), seed=seed)
+    if fx.get("percs"):
+        beat = beatfx.perc_layer(beat, float(bpm), seed=seed)
+    if fx.get("intro_outro"):
+        P(86, "Building intro/outro…")
+        beat = beatfx.build_intro_outro(beat, float(bpm))
+    if fx.get("crash"):
+        beat = beatfx.crash_accents(beat, float(bpm), seed=seed)
+    if fx.get("quality"):
+        P(87, "Applying quality chain…")
+        beat = audiofx.quality_chain(beat, bpm=float(bpm))
+    return beat
+
+
 def _run_beats_render(job_id, genre, bpm, n_bars, seed, fx, prog, ckey,
                       fast=False, artist=None, kit="classic", melody=None,
                       custom_kit=None, healing=None, era=None, duration=None,
@@ -2578,6 +2628,10 @@ def _run_beats_render(job_id, genre, bpm, n_bars, seed, fx, prog, ckey,
             duration=duration, fib_bursts=fib_bursts,
             progress_cb=lambda f, m: prog(5 + int(78 * f), m))
         print(f"[FAST] beat done: {beat.shape}", flush=True)
+        # The fast renderer used to skip the user's Beat FX entirely —
+        # every option on the form was silently ignored (2026-10-22,
+        # Daryl's report). Apply the same shared FX chain as V68.
+        beat = _apply_beat_fx(beat, bpm, seed, fx, prog, p0=84, p1=87)
     else:
         prog(2, "Loading beat engine…")
         eng = get_engine()
@@ -2585,42 +2639,7 @@ def _run_beats_render(job_id, genre, bpm, n_bars, seed, fx, prog, ckey,
         beat = render_beat_progress(
             eng, genre, float(bpm), n_bars, seed,
             lambda b, n: prog(5 + int(70 * b / n), f"Beat… {int(100 * b / n)}%"))
-        fx = fx or {}
-        if fx.get("fills"):
-            prog(78, "Adding drum fills…")
-            beat = beatfx.drum_fills(beat, float(bpm), seed=seed)
-        if fx.get("humanize"):
-            beat = beatfx.humanize(beat, float(bpm), seed=seed)
-        if fx.get("swing"):
-            prog(80, "Applying swing…")
-            beat = beatfx.apply_swing(beat, float(bpm), float(fx["swing"]))
-        if fx.get("risers"):
-            beat = beatfx.risers(beat, float(bpm), seed=seed)
-        if fx.get("builds"):
-            beat = beatfx.drop_builds(beat, float(bpm), seed=seed)
-        if fx.get("feel") in ("half", "double"):
-            prog(82, f"Applying {fx['feel']}-time feel…")
-            beat = beatfx.time_feel(beat, float(bpm), fx["feel"])
-        if fx.get("transpose"):
-            beat = beatfx.transpose(beat, int(fx["transpose"]))
-        if fx.get("arrange"):
-            beat = beatfx.arrangement_variants(beat, float(bpm),
-                                               int(fx["arrange"]))
-        if fx.get("glide808"):
-            beat = beatfx.glide_808(beat, float(bpm), seed=seed)
-        if fx.get("hatrolls"):
-            prog(84, "Adding hat rolls…")
-            beat = beatfx.hat_rolls(beat, float(bpm), seed=seed)
-        if fx.get("percs"):
-            beat = beatfx.perc_layer(beat, float(bpm), seed=seed)
-        if fx.get("intro_outro"):
-            prog(86, "Building intro/outro…")
-            beat = beatfx.build_intro_outro(beat, float(bpm))
-        if fx.get("crash"):
-            beat = beatfx.crash_accents(beat, float(bpm), seed=seed)
-        if fx.get("quality"):
-            prog(87, "Applying quality chain…")
-            beat = audiofx.quality_chain(beat, bpm=float(bpm))
+        beat = _apply_beat_fx(beat, bpm, seed, fx, prog)
     prog(88, "Mastering beat…")
     print(f"[FAST] mastering...", flush=True)
     if fast:
@@ -4075,8 +4094,9 @@ def _start_beat_job(data):
     except (TypeError, ValueError):
         return {"ok": False, "error": "Bad BPM"}, 400
     bpm = min(200, max(50, bpm))
-    # LITE MODE: cap bars, force the phone-safe fast renderer, drop the
-    # expensive post-FX. Prevents OOM on low-memory devices.
+    # LITE MODE: cap bars and force the phone-safe fast renderer.
+    # Prevents OOM on low-memory devices. (The user's FX picks are
+    # never stripped — lite chooses the engine, not the options.)
     # Full songs cap at 2:30 in lite mode (server enforces too).
     _lite = lite_mode()
     # Length picker: "loop16"/"loop32" (classic bar loops) or a full-song
@@ -4128,12 +4148,11 @@ def _start_beat_job(data):
     fm = data.get("fastmode")
     fast = str(fm).lower() not in ("0", "false", "off", "no") if fm is not None else True
     if _lite:
+        # Lite mode forces the phone-safe fast renderer — but it must NOT
+        # touch the user's FX picks (2026-10-22, Daryl: the options were
+        # being silently overridden). Lite chooses the engine, never the
+        # options; the renderer applies whatever the user selected.
         fast = True
-        # strip the expensive post-FX in lite mode (keep fills/humanize/swing)
-        for _heavy in ("risers", "builds", "glide808", "hatrolls", "percs",
-                       "intro_outro", "crash", "quality", "arrange"):
-            fx[_heavy] = False if _heavy != "arrange" else 0
-        fx["transpose"] = 0
     # artist style emulation (lightbeat only; style, not copying)
     artist = (data.get("artist") or "").strip() or None
     if artist and not lightbeat.get_artist_style(artist):

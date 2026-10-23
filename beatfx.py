@@ -76,16 +76,20 @@ def humanize(beat, bpm, amount=0.5, seed=1):
         shift = int(r.normal(0, 0.006 * amount) * SR)
         gain = 10 ** (r.normal(0, 1.5 * amount) / 20.0)
         seg = out[s0:s1] * gain
-        if shift > 0 and s0 + shift < len(out):
-            out[s0:s1] = 0
-            e = min(len(out), s0 + shift + (s1 - s0))
-            out[s0 + shift:e] = seg[:e - s0 - shift]
-        elif shift < 0:
-            e = min(len(out), s1 + shift)
-            out[s0:s1] = 0
-            out[s0:max(s0, e - (s1 - s0) + (s1 - s0)):e] = seg[:max(0, e - s0)]
-        else:
+        if shift == 0:
             out[s0:s1] = seg
+            continue
+        # Nudge the whole bar earlier (shift < 0) or later (shift > 0),
+        # clipping at the array edges. The old negative-shift line had
+        # a mangled slice (stop/step swapped) and crashed on broadcast
+        # whenever a bar rolled a negative nudge (fixed 2026-10-22).
+        out[s0:s1] = 0
+        d0 = s0 + shift
+        d1 = s1 + shift
+        lo = max(0, d0)
+        hi = min(len(out), d1)
+        if hi > lo:
+            out[lo:hi] = seg[lo - d0: lo - d0 + (hi - lo)]
     return np.clip(out, -1.0, 1.0)
 
 
@@ -127,12 +131,24 @@ def risers(beat, bpm, sections=(8, 16, 24), seed=1, level=0.35):
         r = _rng(seed + b)
         noise = r.standard_normal(n)
         env = np.linspace(0.02, 1.0, n) ** 2
-        # upward sweep: simple one-pole highpass with rising cutoff
-        t = np.arange(n) / SR
-        sweep = signal.sosfilt(
-            signal.butter(2, 400 + 7600 * (t / max(t[-1], 1e-6)),
-                          btype="highpass", fs=SR, output="sos"),
-            noise)
+        # upward sweep: highpass the noise in short blocks, the cutoff
+        # rising 400 -> 8000 Hz across the riser. butter() takes ONE
+        # cutoff for a highpass — the old code passed the whole ramp
+        # array as Wn and scipy raised, so risers never worked at all
+        # (fixed 2026-10-22). Filter state carries across blocks so
+        # the block edges don't click.
+        sweep = np.zeros(n)
+        block = 2048
+        zi = None
+        for bs in range(0, n, block):
+            be = min(n, bs + block)
+            cutoff = 400 + 7600 * (bs / max(n - 1, 1))
+            sos = signal.butter(2, cutoff, btype="highpass", fs=SR,
+                                output="sos")
+            if zi is None:
+                zi = signal.sosfilt_zi(sos) * noise[bs]
+            seg, zi = signal.sosfilt(sos, noise[bs:be], zi=zi)
+            sweep[bs:be] = seg
         rise = (sweep * env * level)
         out[start:end] += np.column_stack([rise, rise])
     return np.clip(out, -1.0, 1.0)
