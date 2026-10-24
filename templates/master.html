@@ -205,6 +205,9 @@ function startMasterPoll(jobId, out, prog, bar, msg) {
             }
             html += '</div>';
           }
+          if (res.stems && res.stems.length) {
+            html += '<div class="ab-in" style="background:#1a1a2e;border:1px solid #333;border-radius:8px;padding:12px;margin:10px 0;"><div style="font-weight:bold;margin-bottom:8px;color:#00e5a0;">\ud83c\udf9a Stems exported:</div>' + res.stems.map(function(f){ return '<div style="margin:4px 0;"><a href="/download/' + encodeURIComponent(f) + '?dl=1" style="color:#00e5a0;">\u2b07 ' + f + '</a></div>'; }).join('') + '</div>';
+          }
           if (res.file) {
             var isTemp = !!res.temp;
             var mUrl = isTemp
@@ -280,6 +283,16 @@ document.getElementById('f').addEventListener('submit', async (e) => {
     if (p) set('vocal_polish', p.checked ? 'on' : 'off');
     var a = form.querySelector('[name=ab_compare]');
     if (a) set('ab_compare', a.checked ? '1' : '0');
+    // Every remaining toggle gets the same explicit treatment (fix
+    // 2026-10-23: Dither could never be turned off — an unchecked box
+    // sends nothing and the server default is ON; Auto mode and Export
+    // Stems were never read by the server at all).
+    var onOff = ['auto_mode','dither','multiband','fx_radio','fx_tv','fx_vinyl','fx_hp_on','fx_lp_on','fx_echo_on','fx_echo_sync','stems'];
+    onOff.forEach(function(n){ var el = form.querySelector('[name=' + n + ']'); if (el) set(n, el.checked ? 'on' : 'off'); });
+    var d = form.querySelector('[name=deess]');
+    if (d) set('deess', d.checked ? '1' : '0');
+    var b = form.querySelector('[name=beat_source]');
+    if (b) set('beat_source', b.checked ? 'keep' : 'generate');
   }
   const fd = new FormData(e.target);
   syncMasterToggles(fd, e.target);

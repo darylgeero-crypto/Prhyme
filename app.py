@@ -1737,6 +1737,41 @@ def _prominence_prep(src_path, tdir, prog, SR=44100, mopts=None, bpm=90.0):
         return None, 0
 
 
+def _export_master_stems(master_path, base):
+    """Export Stems toggle (master page): split the finished master into
+    vocal + instrumental WAVs in the library. Returns [filenames] or [].
+    Uses the same separator the vocal chain uses; callers gate it to
+    phone-safe durations."""
+    try:
+        # separate_track reads WAV only (scipy) — decode the finished
+        # master (usually MP3) to a temp WAV first or it throws and the
+        # toggle silently produced nothing (rig catch, 2026-10-23).
+        _sr, _audio = M.load_audio(master_path)
+        if _audio is None or _audio.size == 0:
+            return []
+        _tmp = os.path.join(OUTPUT_DIR, f"{base}_stemsrc.wav")
+        _pcm = np.clip(_audio, -1.0, 1.0)
+        wav_write(_tmp, SR, (_pcm * 32767).astype(np.int16))
+        del _pcm, _audio
+        try:
+            _voc, _inst = vocalfx.separate_track(_tmp)
+        finally:
+            try:
+                os.remove(_tmp)
+            except OSError:
+                pass
+        out = []
+        for _arr, _suffix in ((_voc, "_vocal-stem"), (_inst, "_inst-stem")):
+            _fn = f"{base}{_suffix}.wav"
+            _p = os.path.join(OUTPUT_DIR, _fn)
+            _pcm = np.clip(_arr, -1.0, 1.0)
+            wav_write(_p, SR, (_pcm * 32767).astype(np.int16))
+            out.append(_fn)
+        return out
+    except Exception:
+        return []
+
+
 def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
     def prog(p, msg):
         set_job(job_id, progress=p, message=msg)
@@ -1893,6 +1928,12 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                     os.makedirs(tmpdir_ab, exist_ok=True)
                     ab_src, ab_pos = _ab_excerpt(src_path, tmpdir_ab, f"{job_id[:8]}_ab-source.mp3")
                     ab_mst, _ = _ab_excerpt(final_path, tmpdir_ab, f"{job_id[:8]}_ab-master.mp3", start_sample=ab_pos)
+                stems_list = []
+                if mopts.get("stems") and _dur <= 360:
+                    # Export Stems on the sectioned path: capped at 6 min
+                    # so separation never blows the phone RAM budget.
+                    prog(97, "Exporting stems…")
+                    stems_list = _export_master_stems(final_path, base)
                 set_job(job_id, status="done", progress=100,
                         message=f"Track Prhymed! — {report['lufs']} LUFS, "
                                 f"{report['true_peak_dbtp']} dBTP",
@@ -1906,6 +1947,7 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                                 "duration": report["duration_s"],
                                 "fx_applied": [],
                                 "report": report,
+                                "stems": stems_list,
                                 "ab_source": ab_src,
                                 "ab_master": ab_mst})
                 return
@@ -2427,6 +2469,10 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
             ab_src, ab_pos = _ab_excerpt(src_path, tmpdir, f"{job_id[:8]}_ab-source.mp3")
             ab_mst, _ = _ab_excerpt(final_path, tmpdir, f"{job_id[:8]}_ab-master.mp3", start_sample=ab_pos)
 
+        stems_list = []
+        if mopts.get("stems"):
+            prog(97, "Exporting stems…")
+            stems_list = _export_master_stems(final_path, base)
         set_job(job_id, status="done", progress=100,
                 message=f"Track Prhymed! — {report['lufs']} LUFS, "
                         f"{report['true_peak_dbtp']} dBTP",
@@ -2441,6 +2487,7 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                         "fx_applied": fx_applied,
                         "report": report,
                         # 25. A/B compare: optional 30s excerpts (stored in temp)
+                        "stems": stems_list,
                         "ab_source": ab_src,
                         "ab_master": ab_mst})
     except JobCancelled:
@@ -3923,10 +3970,22 @@ def api_master():
         "fx_target": request.form.get("fx_target", "vocal")
         if request.form.get("fx_target") in ("vocal", "mix") else "vocal",
         "seed": seed,
+        "auto_mode": _on("auto_mode"),
+        "stems": _on("stems"),
         "beat_source": request.form.get("beat_source", "generate"),
         "ab_compare": request.form.get("ab_compare", "1"),
         "output_format": request.form.get("output_format", "mp3"),
     }
+    if mopts["auto_mode"]:
+        # Fully Automated (Daryl 2026-10-23: the toggle was UI-only — it
+        # hid the manual panel but the server never read it, so hidden
+        # manual picks still shaped the master). Auto means the engine
+        # decides: creative FX and multiband picks are ignored and the
+        # adaptive chain runs.
+        for _k in ("fx_radio", "fx_tv", "fx_vinyl", "fx_hp_on", "fx_lp_on",
+                   "fx_echo_on", "fx_echo_sync", "multiband"):
+            mopts[_k] = False
+        mopts["adaptive_mastering"] = True
     # optional reference track for spectral matching
     ref = request.files.get("reference")
     if ref and ref.filename:
