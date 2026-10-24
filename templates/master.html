@@ -226,9 +226,9 @@ function startMasterPoll(jobId, out, prog, bar, msg) {
               html += '<button onclick="discardMaster(\'' + jobId + '\')" style="background:#ff4444;color:#fff;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;">🗑 Discard</button>';
               html += '<button onclick="keepMaster(\'' + jobId + '\',this)" style="position:relative;z-index:300;background:#00e5a0;color:#000;padding:16px 22px;min-height:56px;font-size:17px;font-weight:700;border:none;border-radius:8px;cursor:pointer;">⬇ Download</button>';
               html += '</div></div>';
-              html += '<div style="font-size:0.8em;color:#888;">Temp master — Download saves it to your library, Discard deletes it right away.</div>';
+              html += '<div style="font-size:0.8em;color:#888;">Temp master — Download saves it to your library and downloads the file, Discard deletes it right away.</div>';
             } else {
-              html += '<div style="text-align:right;"><button onclick="keepMaster(\'' + jobId + '\',this)" style="position:relative;z-index:300;background:#00e5a0;color:#000;padding:16px 22px;min-height:56px;font-size:17px;font-weight:700;border:none;border-radius:8px;cursor:pointer;">⬇ Download Master</button></div>';
+              html += '<div style="text-align:right;"><button onclick="keepMaster(\'' + jobId + '\',this,\'' + String(res.file).replace(/'/g,'') + '\')" style="position:relative;z-index:300;background:#00e5a0;color:#000;padding:16px 22px;min-height:56px;font-size:17px;font-weight:700;border:none;border-radius:8px;cursor:pointer;">⬇ Download Master</button></div>';
               html += '</div>';
             }
           } else {
@@ -380,7 +380,16 @@ document.getElementById('f').addEventListener('submit', async (e) => {
         if (btn) { btn.disabled = false; btn.textContent = '🔄 Re-render full master at this level'; }
       }
     }
-    async function keepMaster(jobId, btn) {
+    function dlFile(f) {
+      var a = document.createElement('a');
+      a.href = '/download/' + encodeURIComponent(f) + '?dl=1';
+      a.download = f;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+    async function keepMaster(jobId, btn, keptFile) {
+      if (keptFile) { dlFile(keptFile); if (btn) { btn.textContent = '\u2b07 Downloading\u2026'; } return; }
       if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
       try {
         const r = await fetch('/api/master/keep', {
@@ -391,8 +400,9 @@ document.getElementById('f').addEventListener('submit', async (e) => {
         const d = await r.json();
         if (d.ok && d.file) {
           var o = document.getElementById('out');
-          if (o) o.innerHTML = '<span style="color:#00e5a0;">\u2705 Saved to your Downloads folder: ' + d.file + '</span>';
-          if (btn) { btn.textContent = '\u2705 In Downloads'; btn.insertAdjacentHTML('afterend', '<p style="color:#00e5a0">\u2705 Saved to your Downloads folder</p>'); }
+          dlFile(d.file);
+          if (o) o.innerHTML = '<span style="color:#00e5a0;">\u2705 Saved to your library \u2014 downloading now: ' + d.file + '</span>';
+          if (btn) { btn.textContent = '\u2705 Saved \u2014 downloading'; btn.insertAdjacentHTML('afterend', '<p style="color:#00e5a0">\u2705 Saved to your library \u2014 your download should start now</p>'); }
         } else {
           alert('Save failed: ' + (d.error || 'unknown'));
           if (btn) { btn.disabled = false; btn.textContent = '⬇ Download'; }
