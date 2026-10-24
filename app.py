@@ -3328,7 +3328,7 @@ def social_alias():
 
 @app.get("/community")
 def community_page():
-    return render_template("social.html")
+    return render_template("social.html", active="community")
 
 
 @app.get("/analytics")

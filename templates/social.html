@@ -1,8 +1,133 @@
 {% extends "base.html" %}
 {% block content %}
-<div style="max-width:800px;margin:40px auto;padding:20px;text-align:center">
-  <h1>Community</h1>
-  <p style="color:#b3b3b3">The Prhyme™ community feed is coming soon.</p>
-  <p style="color:#b3b3b3">Share beats, collab with artists, and grow your audience.</p>
+<div style="max-width:800px;margin:20px auto;padding:20px">
+  <h1 style="text-align:center">Community</h1>
+  <p style="color:#b3b3b3;text-align:center">Share beats, collab with artists, and grow your audience.</p>
+
+  <div style="background:#1c1c1e;border:1px solid #333;border-radius:12px;padding:16px;margin:20px 0">
+    <textarea id="postText" rows="3" maxlength="1000" placeholder="Share something with the community..."
+      style="width:100%;background:#2c2c2e;color:#fff;border:1px solid #444;border-radius:8px;padding:10px;box-sizing:border-box"></textarea>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
+      <span id="postMsg" style="color:#b3b3b3;font-size:13px"></span>
+      <button id="postBtn" style="background:#e1306c;color:#fff;border:0;border-radius:8px;padding:10px 22px;font-size:15px">Post</button>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:8px;margin-bottom:16px">
+    <button class="feedFilter" data-filter="all" style="flex:1;background:#e1306c;color:#fff;border:0;border-radius:8px;padding:8px">All</button>
+    <button class="feedFilter" data-filter="beat" style="flex:1;background:#2c2c2e;color:#fff;border:0;border-radius:8px;padding:8px">Beats</button>
+    <button class="feedFilter" data-filter="post" style="flex:1;background:#2c2c2e;color:#fff;border:0;border-radius:8px;padding:8px">Posts</button>
+  </div>
+
+  <div id="feed"></div>
+  <p id="feedEmpty" style="color:#b3b3b3;text-align:center;display:none">No posts yet — be the first.</p>
 </div>
+<script>
+(function () {
+  var feedEl = document.getElementById('feed');
+  var emptyEl = document.getElementById('feedEmpty');
+  var currentFilter = 'all';
+
+  function timeAgo(ts) {
+    var s = Math.floor(Date.now() / 1000 - ts);
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+
+  function loadFeed() {
+    fetch('/api/social/feed?filter=' + encodeURIComponent(currentFilter))
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        feedEl.innerHTML = '';
+        var posts = (data && data.posts) || [];
+        emptyEl.style.display = posts.length ? 'none' : '';
+        posts.forEach(function (p) {
+          var card = document.createElement('div');
+          card.style.cssText = 'background:#1c1c1e;border:1px solid #333;border-radius:12px;padding:16px;margin-bottom:14px';
+          var head = document.createElement('div');
+          head.style.cssText = 'display:flex;justify-content:space-between;color:#b3b3b3;font-size:13px;margin-bottom:8px';
+          var who = document.createElement('b');
+          who.style.color = '#fff';
+          who.textContent = p.user || 'Producer';
+          head.appendChild(who);
+          var when = document.createElement('span');
+          when.textContent = p.created ? timeAgo(p.created) : '';
+          head.appendChild(when);
+          card.appendChild(head);
+          var body = document.createElement('p');
+          body.style.cssText = 'margin:0 0 10px;white-space:pre-wrap';
+          body.textContent = p.text || '';
+          card.appendChild(body);
+          if (p.audio) {
+            var au = document.createElement('audio');
+            au.controls = true;
+            au.src = p.audio;
+            au.style.width = '100%';
+            card.appendChild(au);
+          }
+          var foot = document.createElement('div');
+          foot.style.cssText = 'display:flex;gap:12px;align-items:center;margin-top:10px';
+          var likeBtn = document.createElement('button');
+          likeBtn.textContent = '♥ ' + (p.likes || 0);
+          likeBtn.style.cssText = 'background:#2c2c2e;color:#fff;border:0;border-radius:8px;padding:6px 14px';
+          likeBtn.onclick = function () {
+            fetch('/api/social/like/' + encodeURIComponent(p.id), { method: 'POST' })
+              .then(function (r) { return r.json(); })
+              .then(function (d) { if (d.ok) likeBtn.textContent = '♥ ' + d.likes; });
+          };
+          foot.appendChild(likeBtn);
+          var views = document.createElement('span');
+          views.style.color = '#b3b3b3';
+          views.style.fontSize = '13px';
+          views.textContent = (p.views || 0) + ' views';
+          foot.appendChild(views);
+          card.appendChild(foot);
+          feedEl.appendChild(card);
+          fetch('/api/social/view/' + encodeURIComponent(p.id), { method: 'POST' }).catch(function () {});
+        });
+      })
+      .catch(function () {
+        emptyEl.textContent = 'Could not load the feed. Pull to refresh and try again.';
+        emptyEl.style.display = '';
+      });
+  }
+
+  document.querySelectorAll('.feedFilter').forEach(function (btn) {
+    btn.onclick = function () {
+      currentFilter = btn.getAttribute('data-filter');
+      document.querySelectorAll('.feedFilter').forEach(function (b) {
+        b.style.background = b === btn ? '#e1306c' : '#2c2c2e';
+      });
+      loadFeed();
+    };
+  });
+
+  document.getElementById('postBtn').onclick = function () {
+    var text = document.getElementById('postText').value.trim();
+    var msg = document.getElementById('postMsg');
+    if (!text) { msg.textContent = 'Write something first.'; return; }
+    msg.textContent = 'Posting...';
+    fetch('/api/social/post', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text, type: 'post' })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.ok) {
+          document.getElementById('postText').value = '';
+          msg.textContent = 'Posted.';
+          loadFeed();
+        } else {
+          msg.textContent = 'Post failed: ' + (d.error || 'unknown error');
+        }
+      })
+      .catch(function () { msg.textContent = 'Post failed — check your connection.'; });
+  };
+
+  loadFeed();
+})();
+</script>
 {% endblock %}
