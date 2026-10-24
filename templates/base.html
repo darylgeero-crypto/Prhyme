@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Prhyme™{% if title %} — {{ title }}{% endif %}</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/rokdabus-buddy.css') }}?v=20261022e">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/rokdabus-buddy.css') }}?v=20261024a">
 <style>
 /* Critical layout guards (2026-10-22): if the buddy stylesheet is ever
    stale or missing in a cached shell, the background mascot and the
@@ -76,6 +76,13 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 /* Prevent content from being hidden behind banner */
 body {
   padding-bottom: 60px;
+}
+@media (max-width:480px) {
+  /* Phone widths: last card must also clear the floating buddy button
+     (band ~80-136px above viewport bottom), not just the bottom nav. */
+  body {
+    padding-bottom: 160px;
+  }
 }
 body.no-banner {
   padding-bottom: 0;
