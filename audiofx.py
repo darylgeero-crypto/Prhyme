@@ -5,6 +5,7 @@ optional "quality chain" after beat rendering or before mastering.
 """
 import numpy as np
 from scipy import signal
+from scipy.ndimage import minimum_filter1d
 
 SR = 44100
 
@@ -206,7 +207,14 @@ def multiband_glue(beat, drive=1.05):
 
 
 def lookahead_limit(beat, ceiling_db=-1.0, lookahead_ms=1.5):
-    """135. Lookahead limiter: catch peaks before they clip."""
+    """135. Lookahead limiter: catch peaks before they clip.
+
+    Gain smoothing is a minimum filter (2026-11-06 fix): the old 1 ms
+    moving average let the gain rise back up AT a transient, leaking up to
+    ~0.9 dB over the ceiling. A min filter can only pull gain down, never
+    push it above what the peak demands, so sample peaks stay at/below
+    the ceiling.
+    """
     ceiling = 10 ** (ceiling_db / 20.0)
     look = int(lookahead_ms * SR / 1000)
     det = np.max(np.abs(beat), axis=1)
@@ -214,9 +222,9 @@ def lookahead_limit(beat, ceiling_db=-1.0, lookahead_ms=1.5):
     padded = np.concatenate([det, np.zeros(look)])
     peak_ahead = np.maximum.accumulate(padded[::-1])[::-1][:len(det)]
     gain = np.minimum(1.0, ceiling / np.maximum(peak_ahead, 1e-9))
-    # smooth gain changes
+    # smooth gain changes (min filter: never raises gain above raw)
     k = max(1, int(0.001 * SR))
-    gain = np.convolve(gain, np.ones(k) / k, mode="same")
+    gain = minimum_filter1d(gain, size=k, mode="nearest")
     return np.clip(beat * gain[:, None], -1.0, 1.0)
 
 

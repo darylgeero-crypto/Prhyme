@@ -9,6 +9,7 @@ import numpy as np
 from scipy import signal
 
 import djrill_master as M
+from audiofx import lookahead_limit
 
 SR = 44100
 
@@ -269,10 +270,33 @@ def master_with_options(mix, chain_name="Streaming", target_lufs=None,
     lufs = M.integrated_lufs(x, sr)
     if np.isfinite(lufs):
         x = x * 10 ** ((tl - lufs) / 20.0)
-    tp = M.true_peak(x, sr)
-    ceiling = 10 ** (ceiling_db / 20.0)
-    if tp > ceiling and tp > 0:
-        x = x * (ceiling / tp)
+    # Peak control (2026-11-06): limit transients at the ceiling instead of
+    # turning the whole track down. LUFS and true peak measure different
+    # things — a track can sit at -14 LUFS while single transients exceed
+    # -1 dBTP, and the old whole-track attenuation made every peaky track
+    # come out quieter than its source.
+    # True peak (oversampled) can sit above the sample peak, so loop: limit,
+    # measure TP, and lower the limiter ceiling by the overshoot until the
+    # true peak complies. lim_ceiling is kept separate so verify_no_clipping
+    # below still checks against the real ceiling_db.
+    lim_ceiling = ceiling_db
+    x = lookahead_limit(x, ceiling_db=lim_ceiling)
+    for _ in range(3):
+        tp_db = 20 * np.log10(max(M.true_peak(x, sr), 1e-9))
+        if tp_db <= ceiling_db:
+            break
+        lim_ceiling = lim_ceiling - (tp_db - ceiling_db) - 0.1
+        x = lookahead_limit(x, ceiling_db=lim_ceiling)
+    # Final loudness verification: limiting shaves a little energy, so
+    # re-measure and make up a small shortfall if headroom allows.
+    lufs2 = M.integrated_lufs(x, sr)
+    if np.isfinite(lufs2) and lufs2 < tl - 0.5:
+        tp2 = M.true_peak(x, sr)
+        headroom_db = ceiling_db - 20 * np.log10(max(tp2, 1e-9)) - 0.1
+        makeup_db = min(tl - lufs2, max(headroom_db, 0.0))
+        if makeup_db > 0.05:
+            x = x * 10 ** (makeup_db / 20.0)
+            x = lookahead_limit(x, ceiling_db=lim_ceiling)
     x = np.clip(x, -1.0, 1.0)
     if dither:
         x = np.clip(x + (np.random.rand(*x.shape) - np.random.rand(*x.shape))
