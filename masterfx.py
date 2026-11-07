@@ -50,6 +50,176 @@ def resolve_chain(name):
     return c
 
 
+def _peak_control(x, sr, ceiling_db, target_lufs=None):
+    """Peak control shared by master_with_options and stem_master.
+
+    Limit transients at the ceiling instead of turning the whole track
+    down (2026-11-06). True peak (oversampled) can sit above the sample
+    peak, so loop: limit, measure TP, lower the limiter ceiling by the
+    overshoot until TP complies — capped at 3 dB below the real ceiling,
+    because the overshoot is mostly inter-sample (~1 dB) and chasing it
+    further just eats loudness. If a loudness target is given and
+    limiting shaved energy, make the shortfall back up if headroom
+    allows — and re-limit at the REAL ceiling (2026-11-07 fix: the old
+    code re-limited at the lowered lim_ceiling, which shaved the makeup
+    gain straight back off — Club Punch landed ~3 LU under its target).
+    """
+    # App vs ffmpeg true-peak meters disagree by ~0.2 dB on inter-sample
+    # peaks (app reads lower); every compliance check in here carries
+    # this margin so the finished master is inside its ceiling by BOTH
+    # meters, not just the app's.
+    _TP_MARGIN = 0.3
+    lim_ceiling = ceiling_db
+    x = lookahead_limit(x, ceiling_db=lim_ceiling)
+    for _ in range(3):
+        tp_db = 20 * np.log10(max(M.true_peak(x, sr), 1e-9))
+        # Break 0.3 dB early, not at the ceiling: the app's true-peak
+        # meter reads ~0.2 dB lower than ffmpeg's on inter-sample peaks,
+        # and breaking at the ceiling left a master 0.08 dB over it by
+        # ffmpeg's measure (2026-11-07 auto bench). The makeup below
+        # cannot recover this — it only lifts level, never lowers peaks.
+        if tp_db <= ceiling_db - _TP_MARGIN:
+            break
+        # Lower by the amount TP exceeds the TARGET (ceiling minus the
+        # margin), not the ceiling itself: the old step lowered by
+        # (tp - ceiling), which is ~0 once TP is already under the
+        # ceiling, so the loop stalled with TP stuck between the target
+        # and the ceiling and the margin edit changed nothing (proven
+        # 2026-11-07: three identical bench runs). TP tracks the limiter
+        # ceiling plus a roughly constant inter-sample overshoot, so one
+        # jump to the target usually converges.
+        lim_ceiling = max(
+            lim_ceiling - (tp_db - (ceiling_db - _TP_MARGIN)) - 0.05,
+            ceiling_db - 3.0)
+        x = lookahead_limit(x, ceiling_db=lim_ceiling)
+    if target_lufs is not None:
+        lufs2 = M.integrated_lufs(x, sr)
+        if np.isfinite(lufs2) and lufs2 < target_lufs - 0.5:
+            tp2 = M.true_peak(x, sr)
+            # Same 0.3 dB margin as the loop above: the makeup gain lifts
+            # the inter-sample peaks with the samples, and the app's meter
+            # reads ~0.2 dB low — 0.1 left a master 0.08 dB over its
+            # ceiling by ffmpeg's measure (2026-11-07 auto bench).
+            headroom_db = ceiling_db - 20 * np.log10(max(tp2, 1e-9)) - _TP_MARGIN
+            makeup_db = min(target_lufs - lufs2, max(headroom_db, 0.0))
+            if makeup_db > 0.05:
+                x = x * 10 ** (makeup_db / 20.0)
+                x = lookahead_limit(x, ceiling_db=ceiling_db)
+    return x
+
+
+def analyze_mix(x, sr=SR):
+    """Measure what the auto master needs to decide: loudness, true peak,
+    crest factor, spectral tilt, sibilance, stereo width. Works on a
+    representative excerpt (the caller picks the loudest slice) — cheap
+    enough to run once per job."""
+    if x.ndim == 1:
+        x = x[:, None]
+    mono = x.mean(axis=1)
+    lufs = M.integrated_lufs(x, sr)
+    tp = M.true_peak(x, sr)
+    tp_db = 20 * np.log10(max(tp, 1e-9))
+    peak_db = 20 * np.log10(max(np.max(np.abs(x)), 1e-9))
+    crest = peak_db - lufs if np.isfinite(lufs) else 0.0
+    # Spectral tilt on a mono excerpt (<= 30 s, Hann-windowed).
+    n = min(len(mono), 30 * sr)
+    seg = mono[:n]
+    spec = np.abs(np.fft.rfft(seg * np.hanning(len(seg)))) ** 2
+    freqs = np.fft.rfftfreq(len(seg), 1.0 / sr)
+
+    def band(lo, hi):
+        m = (freqs >= lo) & (freqs < hi)
+        return float(np.sum(spec[m])) + 1e-12
+
+    low = band(20, 200)
+    mid = band(200, 2000)
+    high = band(2000, 8000)
+    air = band(8000, 16000)
+    total = low + mid + high + air
+    mid_sig = (x[:, 0] + x[:, 1]) / 2 if x.shape[1] > 1 else mono
+    side_sig = (x[:, 0] - x[:, 1]) / 2 if x.shape[1] > 1 else np.zeros_like(mono)
+    width = 20 * np.log10((np.sqrt(np.mean(side_sig ** 2)) + 1e-9)
+                          / (np.sqrt(np.mean(mid_sig ** 2)) + 1e-9))
+    mono_info = mono_check(x)
+    return {
+        "lufs": round(float(lufs), 1) if np.isfinite(lufs) else None,
+        "true_peak_dbtp": round(float(tp_db), 2),
+        "crest_db": round(float(crest), 1),
+        "low_pct": round(100 * low / total, 1),
+        "mid_pct": round(100 * mid / total, 1),
+        "high_pct": round(100 * high / total, 1),
+        "air_pct": round(100 * air / total, 1),
+        "sibilance_ratio": round(float(band(5000, 8000) / high), 2),
+        "stereo_width_db": round(float(width), 1) if np.isfinite(width) else None,
+        "mono_compatible": bool(mono_info["mono_compatible"]),
+    }
+
+
+# How much peak-to-loudness each chain tolerates before compression is
+# needed to reach its loudness target. Louder chains need a tighter crest.
+CHAIN_TARGET_CREST = {
+    "Streaming": 10.0, "Club": 8.0, "Radio": 9.0,
+    "V8 Reference": 12.0, "LoFi Tape": 12.0, "Dynamic": 14.0,
+}
+LOUD_GENRES = {"Trap", "Drill", "EDM", "House", "Techno", "Dubstep",
+               "Phonk", "Dancehall", "Reggaeton", "Afrobeats"}
+DYNAMIC_GENRES = {"Classical", "Jazz", "Ambient", "Blues", "Soul",
+                  "Gospel", "Country", "LoFi"}
+
+
+def auto_decide(analysis, genre=None):
+    """LANDR-style judgment: pick chain, loudness target, compression,
+    deess and multiband from the measured track. Returns (settings,
+    reasons). In auto mode the engine owns the target — the form's -14
+    default is not a real choice — and the chain it picks. Manual mode
+    never calls this."""
+    crest = float(analysis.get("crest_db") or 0.0)
+    lufs = analysis.get("lufs")
+    if genre in LOUD_GENRES and crest <= 16.0:
+        chain = "Club"
+    elif genre in DYNAMIC_GENRES or crest >= 14.0:
+        chain = "Dynamic"
+    else:
+        chain = "Streaming"
+    c = resolve_chain(chain)
+    target_crest = CHAIN_TARGET_CREST[chain]
+    excess = crest - target_crest
+    comp_ratio = comp_threshold_db = None
+    if excess > 1.0 and lufs is not None:
+        # Transient tamer (2026-11-07, proven on the rig): the threshold
+        # sits ~8 dB above the track's loudness, so it catches kick/snare
+        # transients and spares the body — a low threshold + slow release
+        # ducks the whole body after every hit and costs as much LUFS as
+        # peak (crest barely moves). Ratio grows with the excess, capped
+        # at 4:1. On material whose energy lives in its peaks (sustained
+        # bursts, no real transients) this shaves little — the limiter +
+        # makeup then do what they can, and the target stays a target,
+        # not a promise.
+        comp_ratio = round(min(4.0, 2.0 + excess / 4.0), 1)
+        comp_threshold_db = round(float(lufs) + 8.0, 1)
+    deess = 0.4 if float(analysis.get("sibilance_ratio") or 0.0) > 0.45 else 0.0
+    # Dull mix (little high-band energy) gets the polish lift; boomy mixes
+    # get none — the polish adds low end, which is the wrong direction.
+    multiband = bool(float(analysis.get("high_pct") or 0.0) < 12.0)
+    reasons = [
+        f"chain {chain} (crest {crest:.1f} dB, genre {genre or 'n/a'})",
+        (f"compress {comp_ratio}:1 @ {comp_threshold_db} dB"
+         if comp_ratio else "no compression needed"),
+        f"deess {deess}" if deess else "no deess",
+        "multiband polish" if multiband else "no polish",
+    ]
+    settings = {
+        "chain": chain,
+        "target_lufs": c["lufs"],
+        "ceiling_db": c["ceiling"],
+        "comp_ratio": comp_ratio,
+        "comp_threshold_db": comp_threshold_db,
+        "deess": deess,
+        "multiband": multiband,
+    }
+    return settings, reasons
+
+
 def apply_fades(x, fade_in_s=0.5, fade_out_s=3.0, sr=SR):
     """23. Configurable fades."""
     out = x.copy()
@@ -238,10 +408,11 @@ def stem_master(stems, sr=SR, target_lufs=-14.0, ceiling_db=-1.0,
     lufs = M.integrated_lufs(mix, sr)
     if np.isfinite(lufs):
         mix = mix * 10 ** ((target_lufs - lufs) / 20.0)
-    tp = M.true_peak(mix, sr)
-    ceiling = 10 ** (ceiling_db / 20.0)
-    if tp > ceiling and tp > 0:
-        mix = mix * (ceiling / tp)
+    # Peak control (2026-11-07): the old one-shot whole-track scale-down
+    # (mix * ceiling/tp) made every peaky stem master come out quieter
+    # than its source — same fix as the main chain (limit + TP loop +
+    # makeup at the real ceiling).
+    mix = _peak_control(mix, sr, ceiling_db, target_lufs=target_lufs)
     mix = np.clip(mix, -1.0, 1.0)
     if dither:
         dith = ((np.random.rand(*mix.shape) - np.random.rand(*mix.shape))
@@ -256,7 +427,8 @@ def stem_master(stems, sr=SR, target_lufs=-14.0, ceiling_db=-1.0,
 
 def master_with_options(mix, chain_name="Streaming", target_lufs=None,
                         ceiling_db=-1.0, glue_drive=None, dither=True,
-                        deess=0.0, multiband=False, sr=SR):
+                        deess=0.0, multiband=False, sr=SR,
+                        compress_ratio=None, compress_threshold_db=None):
     """Full option-aware master. V8 Reference chain keeps V8 defaults."""
     c = resolve_chain(chain_name)
     tl = target_lufs if target_lufs is not None else c["lufs"]
@@ -267,6 +439,18 @@ def master_with_options(mix, chain_name="Streaming", target_lufs=None,
     if multiband:
         x = multiband_polish(x, sr)
     x = np.tanh(x * gd) / np.tanh(gd)
+    if compress_ratio is not None and compress_threshold_db is not None:
+        # Auto-master compression (2026-11-07): the limiter alone cannot
+        # reach a loud target on peaky material — the peaks cap the RMS.
+        # Compression shaves the crest BEFORE the gain-to-target, so the
+        # limiter doesn't have to eat the gain. Fast attack (0.3 ms) and
+        # short release (40 ms) make it a transient tamer: it catches
+        # kick/snare peaks and recovers before the body, instead of
+        # ducking the whole track. Manual mode never sets this; the auto
+        # engine computes ratio/threshold from the measured crest.
+        x = M.gentle_compress(x, sr, thr_db=float(compress_threshold_db),
+                              ratio=float(compress_ratio),
+                              attack_ms=0.3, release_ms=40.0)
     lufs = M.integrated_lufs(x, sr)
     if np.isfinite(lufs):
         x = x * 10 ** ((tl - lufs) / 20.0)
@@ -275,28 +459,7 @@ def master_with_options(mix, chain_name="Streaming", target_lufs=None,
     # things — a track can sit at -14 LUFS while single transients exceed
     # -1 dBTP, and the old whole-track attenuation made every peaky track
     # come out quieter than its source.
-    # True peak (oversampled) can sit above the sample peak, so loop: limit,
-    # measure TP, and lower the limiter ceiling by the overshoot until the
-    # true peak complies. lim_ceiling is kept separate so verify_no_clipping
-    # below still checks against the real ceiling_db.
-    lim_ceiling = ceiling_db
-    x = lookahead_limit(x, ceiling_db=lim_ceiling)
-    for _ in range(3):
-        tp_db = 20 * np.log10(max(M.true_peak(x, sr), 1e-9))
-        if tp_db <= ceiling_db:
-            break
-        lim_ceiling = lim_ceiling - (tp_db - ceiling_db) - 0.1
-        x = lookahead_limit(x, ceiling_db=lim_ceiling)
-    # Final loudness verification: limiting shaves a little energy, so
-    # re-measure and make up a small shortfall if headroom allows.
-    lufs2 = M.integrated_lufs(x, sr)
-    if np.isfinite(lufs2) and lufs2 < tl - 0.5:
-        tp2 = M.true_peak(x, sr)
-        headroom_db = ceiling_db - 20 * np.log10(max(tp2, 1e-9)) - 0.1
-        makeup_db = min(tl - lufs2, max(headroom_db, 0.0))
-        if makeup_db > 0.05:
-            x = x * 10 ** (makeup_db / 20.0)
-            x = lookahead_limit(x, ceiling_db=lim_ceiling)
+    x = _peak_control(x, sr, ceiling_db, target_lufs=tl)
     x = np.clip(x, -1.0, 1.0)
     if dither:
         x = np.clip(x + (np.random.rand(*x.shape) - np.random.rand(*x.shape))

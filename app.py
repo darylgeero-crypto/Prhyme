@@ -327,9 +327,12 @@ def master_chunked(mix, masterfx, chain, mopts, prog, SR=44100):
             chunk, chain_name=chain,
             target_lufs=mopts.get("target_lufs"),
             ceiling_db=float(mopts.get("ceiling_db", -1.0)),
+            glue_drive=mopts.get("glue_drive"),
             dither=bool(mopts.get("dither", True)),
             deess=float(mopts.get("deess", 0.0)),
-            multiband=bool(mopts.get("multiband", False)))
+            multiband=bool(mopts.get("multiband", False)),
+            compress_ratio=mopts.get("comp_ratio"),
+            compress_threshold_db=mopts.get("comp_threshold_db"))
 
     if total <= chunk_n:
         chunk = _get_chunk(0, total)
@@ -1365,6 +1368,57 @@ def master_large_sections(src_path, masterfx, chain, mopts, prog, SR=44100, sect
 # ---------------------------------------------------------------- master job
 
 
+def _auto_master_settings(source, genre, mopts, prog):
+    """Auto-master judgment (LANDR-style, 2026-11-07): analyze the
+    loudest 30 s of the source and let the engine decide chain, target,
+    compression, deess and multiband. source is a float array or a file
+    path. Returns (chain, mopts) with the decisions applied; on any
+    analysis failure returns (None, mopts) and the caller keeps the
+    manual settings — auto never blocks a master."""
+    try:
+        import soundfile as _sf
+        win = 5 * SR
+        if isinstance(source, str):
+            info = _sf.info(source)
+            total = int(info.frames)
+            best_start, best_rms = 0, -1.0
+            for st in range(0, max(1, total - win), win):
+                d, _ = _sf.read(source, start=st, stop=min(total, st + win),
+                                always_2d=True)
+                r = float(np.sqrt(np.mean(d.astype(np.float64) ** 2))) if d.size else 0.0
+                if r > best_rms:
+                    best_start, best_rms = st, r
+            x, _ = _sf.read(source, start=best_start,
+                            stop=min(total, best_start + 30 * SR), always_2d=True)
+        else:
+            arr = source
+            total = int(arr.shape[0])
+            best_start, best_rms = 0, -1.0
+            for st in range(0, max(1, total - win), win):
+                d = arr[st:min(total, st + win)].astype(np.float64)
+                r = float(np.sqrt(np.mean(d ** 2))) if d.size else 0.0
+                if r > best_rms:
+                    best_start, best_rms = st, r
+            x = arr[best_start:min(total, best_start + 30 * SR)]
+        analysis = masterfx.analyze_mix(np.asarray(x, dtype=np.float64), SR)
+        settings, reasons = masterfx.auto_decide(analysis, genre)
+        out = dict(mopts)
+        out["target_lufs"] = settings["target_lufs"]
+        out["ceiling_db"] = settings["ceiling_db"]
+        out["deess"] = settings["deess"]
+        out["multiband"] = settings["multiband"]
+        if settings["comp_ratio"] is not None:
+            out["comp_ratio"] = settings["comp_ratio"]
+            out["comp_threshold_db"] = settings["comp_threshold_db"]
+        out["auto_decision"] = {"analysis": analysis, "settings": settings,
+                                "reasons": reasons}
+        prog(4, "Auto master: " + "; ".join(reasons))
+        return settings["chain"], out
+    except Exception as _e:
+        print(f"auto-master decide failed: {_e}, using manual settings")
+        return None, mopts
+
+
 def master_adaptive(src_path, masterfx, chain, mopts, prog, SR=44100, checkpoint_dir=None, job_id=None):
     """Adaptive mastering for tracks with tempo/volume changes.
     Analyzes the track to find natural section boundaries, then adapts
@@ -1868,6 +1922,13 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                         mopts=mopts, bpm=_bpm_f)
                     if _pp:
                         src_path = _pp
+                if mopts.get("auto_mode"):
+                    # Auto master (2026-11-07): analyze the (possibly
+                    # vocal-corrected) source and let the engine decide
+                    # chain/target/compression before mastering.
+                    _ac, mopts = _auto_master_settings(src_path, genre, mopts, prog)
+                    if _ac:
+                        chain = _ac
                 if _use_adaptive:
                     prog(3, f"Large file ({_dur/60:.1f} min) — adaptive sections…")
                     pcm16, report = master_adaptive(
@@ -1934,9 +1995,15 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                     # so separation never blows the phone RAM budget.
                     prog(97, "Exporting stems…")
                     stems_list = _export_master_stems(final_path, base)
+                _auto = mopts.get("auto_decision")
+                _msg = (f"Track Prhymed! — {report['lufs']} LUFS, "
+                        f"{report['true_peak_dbtp']} dBTP")
+                if _auto:
+                    _s = _auto["settings"]
+                    _msg += (f" · Auto: {_s['chain']}" +
+                             (f", comp {_s['comp_ratio']}:1" if _s.get("comp_ratio") else ""))
                 set_job(job_id, status="done", progress=100,
-                        message=f"Track Prhymed! — {report['lufs']} LUFS, "
-                                f"{report['true_peak_dbtp']} dBTP",
+                        message=_msg,
                         result={"file": os.path.basename(final_path),
                                 "format": _fmt,
                                 "temp": True,
@@ -1947,6 +2014,7 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                                 "duration": report["duration_s"],
                                 "fx_applied": [],
                                 "report": report,
+                                "auto": _auto,
                                 "stems": stems_list,
                                 "ab_source": ab_src,
                                 "ab_master": ab_mst})
@@ -2399,6 +2467,13 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                     _spill_wav = _aspill
             except Exception as _ae:
                 print(f"adaptive spill failed: {_ae}, using standard chain")
+        if mopts.get("auto_mode"):
+            # Auto master (2026-11-07): analyze the finished mix (post
+            # vocal chain) and let the engine decide chain/target/
+            # compression before mastering.
+            _ac, mopts = _auto_master_settings(_mix_arg, genre, mopts, prog)
+            if _ac:
+                chain = _ac
         _use_adaptive_normal = bool(_adaptive_flag_n) and _ADAPTIVE_AVAILABLE and isinstance(_mix_arg, str)
         if _use_adaptive_normal:
             pcm16, report = master_adaptive(
@@ -2473,9 +2548,15 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
         if mopts.get("stems"):
             prog(97, "Exporting stems…")
             stems_list = _export_master_stems(final_path, base)
+        _auto = mopts.get("auto_decision")
+        _msg = (f"Track Prhymed! — {report['lufs']} LUFS, "
+                f"{report['true_peak_dbtp']} dBTP")
+        if _auto:
+            _s = _auto["settings"]
+            _msg += (f" · Auto: {_s['chain']}" +
+                     (f", comp {_s['comp_ratio']}:1" if _s.get("comp_ratio") else ""))
         set_job(job_id, status="done", progress=100,
-                message=f"Track Prhymed! — {report['lufs']} LUFS, "
-                        f"{report['true_peak_dbtp']} dBTP",
+                message=_msg,
                 result={"file": os.path.basename(final_path),
                         "format": _fmt,
                         "temp": True,
@@ -2486,6 +2567,7 @@ def run_master_job(job_id, src_path, genre, bpm_opt, seed, title, mopts=None):
                         "duration": report["duration_s"],
                         "fx_applied": fx_applied,
                         "report": report,
+                        "auto": _auto,
                         # 25. A/B compare: optional 30s excerpts (stored in temp)
                         "stems": stems_list,
                         "ab_source": ab_src,
@@ -4003,7 +4085,11 @@ def api_master():
         # hid the manual panel but the server never read it, so hidden
         # manual picks still shaped the master). Auto means the engine
         # decides: creative FX and multiband picks are ignored and the
-        # adaptive chain runs.
+        # adaptive chain runs. The chain/target/compression judgment
+        # itself happens in the job (_auto_master_settings, 2026-11-07):
+        # it analyzes the mix and overrides chain/target/ceiling/deess/
+        # multiband there, so the form's chain and -14 default do not
+        # bind an auto master.
         for _k in ("fx_radio", "fx_tv", "fx_vinyl", "fx_hp_on", "fx_lp_on",
                    "fx_echo_on", "fx_echo_sync", "multiband"):
             mopts[_k] = False
