@@ -3,15 +3,15 @@
 <div class="phead">
   <span class="pico spin">⇄</span>
   <div>
-    <div class="ptitle-row"><h2 class="ptitle">Convert Audio</h2><a class="help-link" href="{{ url_for('help_page') }}#convert" aria-label="Help">?</a></div>
-    <p class="plead">Drop any audio file in — get WAV, MP3, OGG, FLAC or M4A out. Audio can also be pulled from video files.</p>
+    <div class="ptitle-row"><h2 class="ptitle">Convert Files</h2><a class="help-link" href="{{ url_for('help_page') }}#convert" aria-label="Help">?</a></div>
+    <p class="plead">Drop any audio, video, or image file in — get audio, video, or image out. Audio can also be pulled from video files, and stills or short GIFs from video.</p>
   </div>
 </div>
 
 <form id="convertForm" class="form" enctype="multipart/form-data">
   <label class="field">
-    <span>Audio file (WAV, MP3, M4A, OGG, FLAC…)</span>
-    <input type="file" name="file" accept="audio/*,video/*" required class="fileinput">
+    <span>Media file (audio, video, or image)</span>
+    <input type="file" name="file" accept="audio/*,video/*,image/*" required class="fileinput">
   </label>
   <label class="field">
     <span>Convert to</span>

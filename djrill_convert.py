@@ -1,9 +1,14 @@
-"""DJRILL universal audio conversion — accept any filetype, convert to any.
+"""DJRILL universal media conversion — audio, video, and images.
 
-Decodes MP3, WAV, OGG/Opus, M4A/AAC, FLAC, WMA, AIFF (and video files'
-audio tracks) via ffmpeg; encodes to WAV, MP3, OGG, FLAC, M4A.
+Decodes audio (MP3, WAV, OGG/Opus, M4A/AAC, FLAC, WMA, AIFF), video
+(MP4, MOV, MKV, WebM, AVI, M4V) and images (JPG, PNG, WebP, GIF, BMP, TIFF)
+via ffmpeg/Pillow; encodes to audio, video, or image outputs.
 Used by the sample loader (any filetype as a sample), the mastering
-pipeline (any filetype as a recording), and the chat console.
+pipeline (any filetype as a recording), the chat console, and the
+/convert page (any media file to any media file).
+Documents (PDF/Word) and archives are NOT covered: they need LibreOffice
+or office tooling that is not installed on the phone or the cloud host,
+so they are rejected with a plain message instead of a broken promise.
 """
 import subprocess
 import os
@@ -16,9 +21,28 @@ FFMPEG = which("ffmpeg")
 FFPROBE = which("ffprobe")
 FFMPEG_OK = FFMPEG is not None
 
-SUPPORTED_IN = {".wav", ".mp3", ".ogg", ".oga", ".opus", ".m4a", ".aac",
-                ".flac", ".wma", ".aiff", ".aif", ".mp4", ".mov", ".mkv"}
-SUPPORTED_OUT = {".wav", ".mp3", ".ogg", ".flac", ".m4a"}
+AUDIO_IN = {".wav", ".mp3", ".ogg", ".oga", ".opus", ".m4a", ".aac",
+            ".flac", ".wma", ".aiff", ".aif"}
+VIDEO_IN = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+IMAGE_IN = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp",
+            ".tiff", ".tif"}
+SUPPORTED_IN = AUDIO_IN | VIDEO_IN | IMAGE_IN
+
+AUDIO_OUT = {".wav", ".mp3", ".ogg", ".flac", ".m4a", ".opus"}
+VIDEO_OUT = {".mp4", ".webm", ".mov", ".mkv"}
+IMAGE_OUT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+SUPPORTED_OUT = AUDIO_OUT | VIDEO_OUT | IMAGE_OUT
+
+
+def _kind(ext):
+    ext = (ext or "").lower()
+    if ext in AUDIO_OUT:
+        return "audio"
+    if ext in VIDEO_OUT:
+        return "video"
+    if ext in IMAGE_OUT:
+        return "image"
+    return None
 
 
 def decode_any(path, sr=44100, channels=2):
@@ -60,33 +84,70 @@ def decode_any(path, sr=44100, channels=2):
     raise RuntimeError("ffmpeg not available for file conversion")
 
 
-def probe(path):
-    """Return {duration, codec, sample_rate, channels} via ffprobe."""
+def probe_streams(path):
+    """Return {has_audio, has_video} for a media file via ffprobe."""
     if not FFPROBE:
-        raise RuntimeError("ffprobe not available")
-    out = subprocess.run(
-        [FFPROBE, "-v", "error", "-select_streams", "a:0",
-         "-show_entries", "stream=codec_name,sample_rate,channels:format=duration",
-         "-of", "json", path],
-        capture_output=True, check=True, text=True).stdout
-    j = json.loads(out)
-    s = (j.get("streams") or [{}])[0]
-    return {
-        "codec": s.get("codec_name"),
-        "sample_rate": int(s.get("sample_rate", 0)),
-        "channels": int(s.get("channels", 0)),
-        "duration": float((j.get("format") or {}).get("duration", 0) or 0),
-    }
+        return {"has_audio": False, "has_video": False}
+    try:
+        out = subprocess.run(
+            [FFPROBE, "-v", "error", "-show_entries", "stream=codec_type",
+             "-of", "json", path],
+            capture_output=True, check=True, text=True).stdout
+        types = {s.get("codec_type") for s in json.loads(out).get("streams", [])}
+        return {"has_audio": "audio" in types, "has_video": "video" in types}
+    except Exception:
+        return {"has_audio": False, "has_video": False}
 
 
-def convert_file(src, dst, sr=None, bitrate="192k"):
-    """Convert any audio file to WAV/MP3/OGG/FLAC/M4A."""
-    if not FFMPEG_OK:
-        raise RuntimeError("ffmpeg not available for file conversion")
-    ext = os.path.splitext(dst)[1].lower()
-    if ext not in SUPPORTED_OUT:
-        raise ValueError(f"unsupported output type {ext} (want one of {sorted(SUPPORTED_OUT)})")
-    cmd = [FFMPEG, "-y", "-v", "error", "-i", src]
+def probe(path):
+    """Return {duration, codec, sample_rate, channels, width, height}.
+
+    Video stream first when one exists (a file with video IS a video file,
+    so its codec/dimensions describe it), then audio, then Pillow for
+    still images. Missing values stay 0/None instead of raising.
+    """
+    info = {"codec": None, "sample_rate": 0, "channels": 0,
+            "duration": 0.0, "width": 0, "height": 0}
+    if FFPROBE:
+        try:
+            out = subprocess.run(
+                [FFPROBE, "-v", "error",
+                 "-show_entries",
+                 "stream=codec_type,codec_name,sample_rate,channels,width,height:format=duration",
+                 "-of", "json", path],
+                capture_output=True, check=True, text=True).stdout
+            j = json.loads(out)
+            streams = j.get("streams") or []
+            audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
+            video = next((s for s in streams if s.get("codec_type") == "video"), None)
+            pick = video or audio
+            if pick:
+                info["codec"] = pick.get("codec_name")
+                info["sample_rate"] = int(pick.get("sample_rate", 0) or 0)
+                info["channels"] = int(pick.get("channels", 0) or 0)
+                info["width"] = int(pick.get("width", 0) or 0)
+                info["height"] = int(pick.get("height", 0) or 0)
+            info["duration"] = float((j.get("format") or {}).get("duration", 0) or 0)
+            if info["codec"]:
+                return info
+        except Exception:
+            pass
+    try:
+        from PIL import Image as _Image
+        with _Image.open(path) as im:
+            info["codec"] = (im.format or "image").lower()
+            info["width"], info["height"] = im.size
+    except Exception:
+        pass
+    return info
+
+
+def _is_image(path):
+    return os.path.splitext(path)[1].lower() in IMAGE_IN
+
+
+def _convert_audio(src, dst, ext, sr, bitrate):
+    cmd = [FFMPEG, "-y", "-v", "error", "-i", src, "-vn"]
     if sr:
         cmd += ["-ar", str(sr)]
     if ext == ".wav":
@@ -99,14 +160,87 @@ def convert_file(src, dst, sr=None, bitrate="192k"):
         cmd += ["-ac", "2", "-codec:a", "flac"]
     elif ext == ".m4a":
         cmd += ["-ac", "2", "-codec:a", "aac", "-b:a", bitrate]
+    elif ext == ".opus":
+        cmd += ["-ac", "2", "-codec:a", "libopus", "-b:a", bitrate]
     cmd.append(dst)
     subprocess.run(cmd, check=True)
     return dst
 
 
+def _convert_video(src, dst, ext, bitrate):
+    streams = probe_streams(src)
+    if _is_image(src):
+        # Still image -> 3-second clip.
+        cmd = [FFMPEG, "-y", "-v", "error", "-loop", "1", "-t", "3", "-i", src]
+    elif streams["has_video"]:
+        cmd = [FFMPEG, "-y", "-v", "error", "-i", src]
+    else:
+        raise ValueError("no video in this file — it has audio only, "
+                         "so it can convert to audio, not video")
+    if ext == ".mp4":
+        cmd += ["-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", bitrate, "-movflags", "+faststart"]
+    elif ext == ".webm":
+        cmd += ["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "30",
+                "-c:a", "libopus"]
+    elif ext == ".mov":
+        cmd += ["-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", bitrate]
+    elif ext == ".mkv":
+        cmd += ["-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", bitrate]
+    if _is_image(src):
+        cmd += ["-shortest"]
+    cmd.append(dst)
+    subprocess.run(cmd, check=True)
+    return dst
+
+
+def _convert_image(src, dst, ext):
+    if _is_image(src):
+        from PIL import Image as _Image
+        with _Image.open(src) as im:
+            if im.mode in ("RGBA", "LA", "P") and ext in (".jpg", ".jpeg"):
+                im = im.convert("RGB")
+            elif im.mode == "P":
+                im = im.convert("RGBA")
+            im.save(dst)
+        return dst
+    streams = probe_streams(src)
+    if not streams["has_video"]:
+        raise ValueError("no picture in this file — it has audio only, "
+                         "so it can convert to audio, not images")
+    if ext == ".gif":
+        # Animated GIF: first 5 seconds, 480px wide, 10 fps (bounded size).
+        filt = ("fps=10,scale=480:-1:flags=lanczos,"
+                "split[s0][s1];[s0]palettegen=max_colors=256[p];[s1][p]paletteuse")
+        cmd = [FFMPEG, "-y", "-v", "error", "-t", "5", "-i", src,
+               "-vf", filt, dst]
+    else:
+        cmd = [FFMPEG, "-y", "-v", "error", "-ss", "0", "-i", src,
+               "-frames:v", "1", dst]
+    subprocess.run(cmd, check=True)
+    return dst
+
+
+def convert_file(src, dst, sr=None, bitrate="192k"):
+    """Convert any media file to an audio, video, or image output."""
+    if not FFMPEG_OK and _kind(os.path.splitext(dst)[1]) != "image":
+        raise RuntimeError("ffmpeg not available for file conversion")
+    ext = os.path.splitext(dst)[1].lower()
+    kind = _kind(ext)
+    if kind is None:
+        raise ValueError(f"unsupported output type {ext} (want one of {sorted(SUPPORTED_OUT)})")
+    if kind == "audio":
+        return _convert_audio(src, dst, ext, sr, bitrate)
+    if kind == "video":
+        return _convert_video(src, dst, ext, bitrate)
+    return _convert_image(src, dst, ext)
+
+
 if __name__ == "__main__":
     import argparse
-    ap = argparse.ArgumentParser(description="DJRILL audio file converter")
+    ap = argparse.ArgumentParser(description="DJRILL media file converter")
     ap.add_argument("src")
     ap.add_argument("dst")
     ap.add_argument("--sr", type=int, default=None)

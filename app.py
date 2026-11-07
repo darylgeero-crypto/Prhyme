@@ -2782,13 +2782,20 @@ def run_convert_job(job_id, src_path, out_ext):
         set_job(job_id, status="error", progress=0, message=f"Error: {e}")
 
 
-def save_upload(file_storage):
-    """Securely store an uploaded file inside UPLOAD_DIR. Returns path."""
+def save_upload(file_storage, allowed_exts=None, require_audio=True):
+    """Securely store an uploaded file inside UPLOAD_DIR. Returns path.
+
+    Default callers (mastering, beats) stay audio-only. The /convert route
+    passes allowed_exts=C.SUPPORTED_IN with require_audio=False, so video
+    and image uploads pass a media check (an audio OR video stream, or a
+    Pillow-decodable image) instead of the audio-only check.
+    """
     fname = secure_filename(file_storage.filename or "upload")
     ext = os.path.splitext(fname)[1].lower()
-    if ext not in C.SUPPORTED_IN:
+    allowed = allowed_exts if allowed_exts is not None else C.SUPPORTED_IN
+    if ext not in allowed:
         raise ValueError(f"Unsupported file type {ext or '(none)'} — "
-                         f"use: {', '.join(sorted(C.SUPPORTED_IN))}")
+                         f"use: {', '.join(sorted(allowed))}")
     if not fname or fname in (".", ".."):
         raise ValueError("Bad filename")
     name = f"{uuid.uuid4().hex[:8]}_{fname}"
@@ -2800,9 +2807,16 @@ def save_upload(file_storage):
     # 136. deep type check: probe actual content, reject mismatches
     if C.FFMPEG_OK:
         try:
-            info = C.probe(path)
-            if not info.get("duration"):
-                raise ValueError("File has no decodable audio stream")
+            if require_audio:
+                info = C.probe(path)
+                if not info.get("duration"):
+                    raise ValueError("File has no decodable audio stream")
+            else:
+                streams = C.probe_streams(path)
+                if not (streams["has_audio"] or streams["has_video"]):
+                    info = C.probe(path)
+                    if not info.get("codec"):
+                        raise ValueError("File is not readable audio, video, or image")
         except ValueError:
             raise
         except Exception:
@@ -2810,7 +2824,7 @@ def save_upload(file_storage):
                 os.remove(path)
             except OSError:
                 pass
-            raise ValueError("File could not be read as audio")
+            raise ValueError("File could not be read as media")
     # 137. disk-space guard: refuse if <500MB free
     try:
         free = shutil.disk_usage(OUTPUT_DIR).free
@@ -3230,7 +3244,7 @@ import uuid as _uuid
 
 @app.get("/store")
 def store_page():
-    return render_template("store.html")
+    return render_template("store.html", active="store")
 
 @app.get("/api/store/beats")
 def api_store_beats():
@@ -4443,7 +4457,7 @@ def api_convert():
     if out_ext not in C.SUPPORTED_OUT:
         return jsonify({"ok": False, "error": "Unsupported output format"}), 400
     try:
-        src = save_upload(f)
+        src = save_upload(f, allowed_exts=C.SUPPORTED_IN, require_audio=False)
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     job_id = new_job("convert", os.path.basename(src))
