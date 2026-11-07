@@ -48,7 +48,7 @@
   </div>
   <div class="mix-gen-row">
     <label class="check" style="display:flex;align-items:center;gap:8px">
-      <input type="checkbox" id="djAutostart" checked>
+      <input type="checkbox" id="djAutostart">
       <span>▶ Auto-play Rokdabus Prhyme's mix when this page opens</span>
     </label>
   </div>
@@ -301,6 +301,15 @@ async function loadInto(deck, labelEl, btnEl, url, name, bpmGuess){
     const buf = await ctx.decodeAudioData(ab);
     stopSrc(deck); pauseReset(deck, btnEl);
     deck.buffer = buf; deck.url = url; deck.name = name; deck.cue = null; deck.offset = 0;
+    // Track metadata for smart auto-mix selection. This used to live only
+    // in loadTrackToDeck, so any track loaded straight through loadInto
+    // (library buttons, uploads, deep-links) left currentPath/Bpm/Key
+    // unset — auto-mix then could not exclude the just-played track and
+    // picked it again. Set it here, where every load passes through.
+    deck.currentPath = url;
+    deck.currentBpm = bpmGuess || 0;
+    deck.currentKey = "";
+    deck.currentEnergy = 5;
     deck.peaks = computePeaks(buf, 220);
     labelEl.textContent = name;
     if(bpmGuess){ const inp = deck===deckA?$("bpmA"):$("bpmB"); if(inp) inp.value = bpmGuess; }
@@ -443,12 +452,17 @@ function scoreTransition(current, candidate) {
   if (eDiff === 0) score += 15;
   else if (eDiff === 1) score += 20;
   else if (eDiff === -1) score += 10;
-  if (current.path === candidate.path) score -= 25;
+  // Same-track penalty, keyed on path-or-url: library tracks carry a url
+  // but no path, so comparing path alone never matched and the
+  // just-played track could be picked again straight away.
+  const curKey = current.path || current.url || "";
+  const candKey = candidate.path || candidate.url || "";
+  if (curKey && curKey === candKey) score -= 25;
   return Math.max(0, Math.min(100, score));
 }
 function selectNextTrack(current, library, excludePaths) {
   excludePaths = excludePaths || new Set();
-  const candidates = library.filter(t => !excludePaths.has(t.path));
+  const candidates = library.filter(t => !excludePaths.has(t.path || t.url));
   if (!candidates.length) return null;
   let best = null, bestScore = -1;
   for (const c of candidates) {
@@ -477,6 +491,11 @@ $("autoMixBtn").addEventListener("click", e=>{
   autoMix=!autoMix; autoMixing=false;
   e.target.textContent="🔀 Auto-mix: "+(autoMix?"ON":"OFF");
   e.target.setAttribute("aria-pressed", autoMix);
+  // Auto-mix picks its next track from libCache, which starts empty and
+  // was only filled by opening the library panel or by mixplay. Turning
+  // auto-mix on with an empty pool meant the first track just ended and
+  // nothing followed. Preload the library so there is a pool to pick from.
+  if (autoMix && !libCache.length) loadLibrary();
 });
 /* ---------- Rokdabus Infinite Mixplay ---------- */
 // Rokdabus generates a curated mix: smart ordering by energy arc + key compatibility
@@ -511,7 +530,10 @@ window.rokdabusMixplay = async function(opts) {
 // Mixplay on startup: check preference (default ON)
 (function(){
   try {
-    if (localStorage.getItem('rokdabus_mixplay_startup') !== '0') {
+    const on = localStorage.getItem('rokdabus_mixplay_startup') !== '0';
+    const btn = document.getElementById('mixplayStartupBtn');
+    if (btn) btn.textContent = '🚀 Mix on startup: ' + (on ? 'ON' : 'OFF');
+    if (on) {
       // Wait for library to load, then start
       setTimeout(function(){ window.rokdabusMixplay(); }, 3000);
     }
@@ -546,6 +568,7 @@ function onDeckEnded(d){
     loadTrackToDeck(next, other, oBtn);
     toast("Smart mix → "+next.title);
   }
+  if(!next && autoMix) toast("⚠ Auto-mix is on but there's nothing to pick from — open the 📀 Library or start a Rokdabus mix");
   // DJ transition length: long beatmatch blend when BPMs are close,
   // shorter EQ-sweep style fade when they are far apart.
   const _nb = next && (next.bpm || next.currentBpm);

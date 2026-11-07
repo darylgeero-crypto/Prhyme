@@ -377,10 +377,13 @@ bubble.addEventListener("click", function (e) {
 if (e.target.closest("button")) return;
 hideBubble();
 });
-})();
 
 // === Draggable buddy (touch and slide) ===
-(function() {
+// (2026-11-07 fix: this section used to be a separate IIFE opened here,
+// but it reads minimized/page/bubble/showBubble from the main IIFE above.
+// The split scope threw "minimized is not defined" at load and killed
+// everything after it in this file — tips timer, page guides, music
+// notes, homepage shrink. One IIFE for the whole file now.)
   var disc = document.querySelector(".rb-buddy-disc");
   var buddy = document.getElementById("rbBuddy");
   if (!disc || !buddy) return;
