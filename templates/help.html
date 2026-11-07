@@ -33,7 +33,7 @@
     <li><b>Pick a genre</b> — Drill, Trap, BoomBap, Jersey Club, Afrobeats and more.</li>
     <li><b>Or pick an artist</b> — the engine emulates their production style (drums, 808s, melodies). <em>Style only — never copies real beats.</em></li>
     <li><b>Set BPM &amp; bars</b> — tempo and length (8 / 16 / 32 bars).</li>
-    <li><b>Pick a drum kit &amp; lead</b> — 6 built-in kits (Classic, Punchy, Boomy…) plus any custom kits you built, and 10 lead instruments from pluck to choir.</li>
+    <li><b>Pick a drum kit &amp; lead</b> — 6 built-in kits (Classic, Punchy, Boomy…) plus any custom kits you built, and 24 lead instruments from pluck to choir.</li>
     <li><b>Generate</b> — renders in about a second. Hit play right on the page.</li>
     <li><b>🕉 Healing mode</b> (optional) — Fibonacci-ratio melodies, 432/440 Hz tuning, and a drone bed that cycles solfeggio tones, the seven chakras, or planetary frequencies. Binaural beat bands (delta → gamma) for headphone listening, plus presets: Deep Healing, Energy Cleanse, Meditation, Chakra Journey, Deep Sleep. Wellness-vibe tones for relaxation and focus — no health claims.</li>
   </ol>
@@ -48,7 +48,7 @@
     <li><b>Vocal polish</b> (on by default) — cleans noise, adds clarity, tames harshness. Never deletes or cuts words.</li>
     <li><b>Timing fix</b> (on by default) — nudges slightly off-beat words onto the grid. Max ~50ms, keeps your natural feel.</li>
     <li><b>Creative FX</b> (optional) — 📻 radio, 📺 TV, 💿 old vinyl, high/low-pass filters, 🔊 echo (can sync to your BPM). Tap a preset chip like Lo-Fi or Radio Hit, or dial it in yourself. Apply to the vocal or the full mix.</li>
-    <li><b>Get a beat + mix + master</b> — balanced mix, mastered to -14 LUFS / -1.0 dBTP.</li>
+    <li><b>Get a beat + mix + master</b> — balanced mix, mastered to the loudness the track can honestly reach (Streaming chain: -14 LUFS / -1.0 dBTP). Turn on <b>Fully Automated</b> and the engine listens to your track first and picks the chain, loudness target and compression itself.</li>
   </ol>
   <div class="help-tip">💡 If your take is already on beat, timing fix does nothing — it's a safety net, not an effect.</div>
   <p><a class="help-try" href="{{ url_for('master_page') }}">Try it →</a></p>
@@ -69,9 +69,10 @@
 <section class="help-sec" id="video">
   <h3><span class="pico bounce">🎬</span> Making Videos</h3>
   <ol>
-    <li><b>Lyric video</b> — your track + animated lyrics on screen.</li>
-    <li><b>Selfie video</b> — your footage synced to your audio.</li>
-    <li><b>Performance cut</b> — edit-style cut of your clips to the track.</li>
+    <li><b>Lyric video</b> — your track + animated lyrics on screen. <b>Waveform</b> is the same track as a pulsing visualizer; <b>Minimal</b> is big kinetic type on black.</li>
+    <li><b>Selfie video</b> — your photos, animated with slow Ken Burns motion, synced to your audio. <b>Collage</b> lays them out in a 2×2 grid. <b>Performance cut</b> — edit-style cut of your clips to the track.</li>
+    <li><b>Background themes</b> put a place behind lyric and waveform videos — Studio, City Nights and Sunset Beach are free; Desert Dunes, Mountain Peaks, Club Lights, Northern Lights and Rooftop Rain are ★ Premium (paid plan).</li>
+    <li><b>Video Editor</b> — trim, re-colour, speed up, rotate and add text to a video you already have. <b>Join Clips</b> stitches 2–6 clips together with cuts or dissolves.</li>
   </ol>
   <div class="help-tip">💡 Your photos and footage only — nothing synthetic, no fake performer.</div>
   <p><a class="help-try" href="{{ url_for('video_page') }}">Try it →</a></p>
@@ -113,10 +114,10 @@
 </section>
 
 <section class="help-sec" id="convert">
-  <h3><span class="pico spin">⇄</span> Converting Audio</h3>
+  <h3><span class="pico spin">⇄</span> Converting Files</h3>
   <ol>
-    <li><b>Drop a file in</b> — WAV, MP3, M4A, OGG, FLAC, even video files.</li>
-    <li><b>Pick your output format</b> and convert.</li>
+    <li><b>Drop a file in</b> — audio (WAV, MP3, OGG, FLAC, M4A, AAC, WMA, AIFF), video (MP4, MOV, MKV, WebM, AVI) or image (JPG, PNG, WebP, GIF, BMP, TIFF).</li>
+    <li><b>Pick your output format</b> and convert. Audio alone can't become a video, and documents (PDF, Word) and archives aren't supported.</li>
   </ol>
   <p><a class="help-try" href="{{ url_for('convert_page') }}">Try it →</a></p>
 </section>

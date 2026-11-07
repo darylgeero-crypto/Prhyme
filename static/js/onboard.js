@@ -12,13 +12,13 @@ link: null, linkLabel: null
 {
 ico: "♫",
 title: "Make a Beat",
-body: "Pick a genre or an artist style, hit generate — original beats in seconds. 6 drum kits, 10 lead instruments.",
+body: "Pick a genre or an artist style, hit generate — original beats in seconds. 6 drum kits, 24 lead instruments.",
 link: "/beats", linkLabel: "Try Beats →"
 },
 {
 ico: "◉",
 title: "Master a Track",
-body: "Upload your vocals. Auto-cleanup, on-beat timing fix, vocal/instrumental balance, creative FX, pro master.",
+body: "Upload your vocals. Auto-cleanup, on-beat timing fix, vocal/instrumental balance, creative FX, pro master. Turn on Fully Automated and the engine listens to your track and picks the chain and compression itself.",
 link: "/master", linkLabel: "Try Mastering →"
 },
 {
@@ -26,6 +26,12 @@ ico: "✎",
 title: "Draft Lyrics",
 body: "Seeded AI draft lyrics by theme, in the style of 90 artists. Always labeled as drafts — never real lyrics.",
 link: "/lyrics", linkLabel: "Try Lyrics →"
+},
+{
+ico: "🎬",
+title: "Make a Video",
+body: "Lyric videos, waveform visualizers, selfie and performance cuts — with background themes that put a place behind them: Studio, City Nights and Sunset Beach free, five more ★ Premium.",
+link: "/video", linkLabel: "Try Video →"
 },
 {
 ico: "🎧",

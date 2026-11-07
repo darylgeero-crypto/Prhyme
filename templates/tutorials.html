@@ -61,9 +61,9 @@
         <li><b>Soundkits</b> — 6 built-in drum kits (Classic, Punchy, Boomy, Street, Smooth, Hard). Preview every drum before you commit.</li>
         <li>Upload your own WAV drums to build a <b>custom kit</b>, then select it on the Beats page.</li>
         <li><b>Samples</b> — upload, tag and preview your own sounds and one-shots.</li>
-        <li><b>Presets</b> — one-tap starting points: curated beat and mastering chains when you don't want to start from zero.</li>
+        <li><b>Presets</b> — one-tap starting points: curated beat and mastering chains when you don't want to start from zero. Pick a master preset and it opens the Master page with the chain, loudness target and FX already set.</li>
       </ol>
-      <p><a class="help-try" href="{{ url_for('soundkits_page') }}">Try it →</a></p>
+      <p><a class="help-try" href="{{ url_for('presets_page') }}">Try it →</a></p>
     </div>
   </div>
 </div>
@@ -76,9 +76,9 @@
       <h3>Master a Track</h3>
       <ol>
         <li>Upload your vocal or full track (WAV, MP3 or M4A) and name it.</li>
-        <li><b>Fully Automated Mode</b> (on by default) detects genre, BPM and settings for you — just hit Master. Turn it off for all 32 manual controls.</li>
+        <li><b>Fully Automated Mode</b> is off by default — turn it on and the engine listens to your track first (loudness, punch, brightness, harshness) and picks the chain, loudness target and compression itself. Turn it off for all 32 manual controls.</li>
         <li><b>Keep original beat</b> is on by default so nothing gets generated behind your back — uncheck it to have a beat built for the track.</li>
-        <li>You get a balanced master at streaming loudness with a full report (LUFS, true peak, BPM, FX used).</li>
+        <li>You get a balanced master at the loudness the track can honestly reach, with a full report (LUFS, true peak, BPM, FX used) — and the job tells you which chain the auto engine picked.</li>
       </ol>
       <p><a class="help-try" href="{{ url_for('master_page') }}">Try it →</a></p>
     </div>
@@ -160,9 +160,10 @@
     <div class="tut-body">
       <h3>Make a Video</h3>
       <ol>
-        <li><b>Lyric video</b> — your track with animated lyrics on screen, ready to post.</li>
-        <li><b>Selfie video</b> — your footage synced to your audio.</li>
-        <li><b>Performance cut</b> — an edit-style cut of your clips timed to the track.</li>
+        <li><b>Lyric video</b> — your track with animated lyrics on screen, ready to post. <b>Waveform</b> is the same track as a pulsing visualizer; <b>Minimal</b> is big kinetic type on black.</li>
+        <li><b>Selfie video</b> — your photos, animated with slow Ken Burns motion, synced to your audio. <b>Collage</b> lays them out in a 2×2 grid. <b>Performance cut</b> — an edit-style cut of your clips timed to the track.</li>
+        <li><b>Background themes</b> put a place behind lyric and waveform videos — Studio, City Nights and Sunset Beach are free; Desert Dunes, Mountain Peaks, Club Lights, Northern Lights and Rooftop Rain are ★ Premium (paid plan).</li>
+        <li>The <b>Video Editor</b> on the same page trims, re-colours, speeds up, rotates and adds text to a video you already have — and <b>Join Clips</b> stitches 2–6 clips together with cuts or dissolves.</li>
       </ol>
       <p><a class="help-try" href="{{ url_for('video_page') }}">Try it →</a></p>
     </div>
@@ -178,9 +179,23 @@
       <ol>
         <li><b>Player</b> — your generated tracks always list first, then Music, then Downloads. The Now Playing card gives you big artwork and controls; <b>Search Online</b> finds any song on Spotify, YouTube and SoundCloud.</li>
         <li><b>Files</b> — every generated track, upload and temp file with inline players, downloads and deletes. <b>History</b> keeps every render re-downloadable.</li>
-        <li><b>Tools</b> — trim audio, normalize loudness, karaoke (vocal cut), make ringtones, detect key. <b>Convert</b> turns any audio file into WAV, MP3, OGG, FLAC or M4A.</li>
+        <li><b>Tools</b> — trim audio, normalize loudness, karaoke (vocal cut), make ringtones, detect key.</li>
+        <li><b>Convert</b> — its own page: audio, video and images in, converted out (audio to WAV/MP3/OGG/FLAC/M4A/Opus, video to MP4/WebM/MOV/MKV, images to JPG/PNG/WebP/GIF). No documents or archives.</li>
       </ol>
       <p><a class="help-try" href="{{ url_for('player_page') }}">Try it →</a></p>
+    </div>
+  </div>
+
+  <div class="tut-card">
+    <div class="tut-thumb">🔄</div>
+    <div class="tut-body">
+      <h3>Convert Files</h3>
+      <ol>
+        <li>Drop a file in — audio (WAV, MP3, OGG, FLAC, M4A, AAC, WMA, AIFF), video (MP4, MOV, MKV, WebM, AVI) or image (JPG, PNG, WebP, GIF, BMP, TIFF).</li>
+        <li>Pick the format you want out. Audio alone can't become a video, and documents (PDF, Word) and archives aren't supported.</li>
+        <li>Sign in first — conversion is a paid feature (free plan gets 1 a month, paid plans get more).</li>
+      </ol>
+      <p><a class="help-try" href="{{ url_for('convert_page') }}">Try it →</a></p>
     </div>
   </div>
 </div>
