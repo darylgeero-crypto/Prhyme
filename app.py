@@ -79,6 +79,7 @@ try:
 except ImportError:
     _ADAPTIVE_AVAILABLE = False
 import videofx
+import videothemes
 import audiotools
 import lightbeat  # pure-numpy fast beat renderer (no pygame/ffmpeg/samples)
 import mixgen  # DJ mix generator: beatmatched original mixes + era styles
@@ -6407,7 +6408,8 @@ def run_video_job(job_id, mode, audio_path, media_paths, events, title,
         if mode == "lyric":
             prog(5, "Rendering lyric video…")
             V.render_lyric_video(audio_path, events, out_path, title=title,
-                                 progress_cb=cb)
+                                 progress_cb=cb,
+                                 theme=vopts.get("theme", "studio"))
         elif mode == "selfie":
             prog(5, f"Building video from {len(media_paths)} photos…")
             V.render_selfie_video(media_paths, audio_path, events, out_path,
@@ -6422,7 +6424,8 @@ def run_video_job(job_id, mode, audio_path, media_paths, events, title,
             videofx.render_waveform_video(
                 audio_path, events, out_path, title=title,
                 bg=vopts.get("bg", "rings"), aspect=aspect, progress_cb=cb,
-                fast=vopts.get("fast_preview", False) or _lite)
+                fast=vopts.get("fast_preview", False) or _lite,
+                theme=vopts.get("theme", "studio"))
         elif mode == "collage":
             prog(5, "Building photo collage…")
             videofx.render_collage_video(
@@ -6570,6 +6573,28 @@ def api_video_lyrics():
 
 @app.post("/api/video/render")
 def api_video_render():
+    # Background theme gating FIRST (2026-11-07): the usage check below
+    # consumes the video allowance, so a premium-theme refusal must come
+    # before it — otherwise a free user burns their one video and THEN
+    # gets told no.
+    theme = request.form.get("theme", "studio")
+    if theme not in videothemes.VIDEO_THEMES:
+        theme = "studio"
+    if videothemes.VIDEO_THEMES[theme]["premium"]:
+        # Premium themes are a paid-tier perk: monthly/yearly/lifetime
+        # can render with them; free plan cannot. No new charge flow —
+        # the existing plans cover it.
+        try:
+            import billing_core as _bc
+            from flask import session as _sess
+            _uid = _sess.get("user_id")
+            _tier = _bc.get_user_tier(_bc.get_user(_uid)) if _uid else "free"
+        except Exception:
+            _tier = "free"
+        if _tier == "free":
+            return jsonify({"ok": False,
+                            "error": "★ Premium theme — upgrade to a paid plan to render with it.",
+                            "upgrade_required": True}), 402
     ok, resp = _check_and_log_usage("video")
     if not ok:
         return jsonify(resp), 402
@@ -6637,6 +6662,7 @@ def api_video_render():
         "kb_direction": request.form.get("kb_direction", "auto")
         if request.form.get("kb_direction") in
         ("auto", "in", "out", "left", "right", "up", "down") else "auto",
+        "theme": theme,
     }
     if vopts["out_aspect"] not in videofx.ASPECTS:
         vopts["out_aspect"] = ""
@@ -6656,7 +6682,8 @@ def api_video_fx():
                               "waveform", "collage", "minimal", "canvas", "tiktok"],
                     "aspects": sorted(videofx.ASPECTS.keys()),
                     "grades": sorted(videofx.GRADES.keys()),
-                    "backgrounds": ["rings", "bars", "wave"]})
+                    "backgrounds": ["rings", "bars", "wave"],
+                    "themes": videothemes.theme_list()})
 
 
 # ------------------------------------------------ video editor (2026-10-21)

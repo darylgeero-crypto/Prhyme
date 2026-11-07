@@ -119,6 +119,13 @@
         <input type="text" name="watermark" placeholder="Prhyme™" maxlength="24">
       </label>
     </div>
+    <label class="field" id="themeRow">
+      <span>Background theme — places</span>
+      <select name="theme" id="themeSelect">
+        <option value="studio">Studio</option>
+      </select>
+    </label>
+    <p class="note" id="themeNote">Free themes render for everyone. ★ Premium themes need a paid plan.</p>
     <div class="fxgrid">
       <label class="check"><input type="checkbox" name="subtitles"> Burn subtitles</label>
       <label class="check"><input type="checkbox" name="title_card"> Title card</label>
@@ -266,7 +273,22 @@
     document.getElementById("selfieFields").classList.toggle("hidden",
       !(m === "selfie" || m === "collage"));
     document.getElementById("perfFields").classList.toggle("hidden", m !== "performance");
+    // Background themes only apply where the background is drawn
+    // (lyric + waveform). Selfie/collage/performance use your own
+    // photos/footage; minimal is black type by design.
+    const themed = (m === "lyric" || m === "waveform");
+    document.getElementById("themeRow").classList.toggle("hidden", !themed);
+    document.getElementById("themeNote").classList.toggle("hidden", !themed);
   }));
+
+  // background themes (places) — from the server so premium flags stay in sync
+  fetch("/api/video/fx").then(r => r.json()).then(j => {
+    const sel = document.getElementById("themeSelect");
+    if (!j.ok || !j.themes) return;
+    sel.innerHTML = j.themes.map(t =>
+      '<option value="' + t.name + '">' + escapeHtml(t.label) +
+      (t.premium ? " ★ Premium" : "") + "</option>").join("");
+  }).catch(() => {});
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c =>

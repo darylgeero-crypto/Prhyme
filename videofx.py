@@ -67,10 +67,14 @@ def _pipe_video(out_path, audio_path, n_frames, W, H, frame_fn,
 
 def render_waveform_video(audio_path, events, out_path, title="DJRILL",
                           bg="rings", aspect="16:9", progress_cb=None,
-                          fast=False):
+                          fast=False, theme="studio"):
     """61. Waveform visualizer: scrolling waveform + lyrics.
-    72. bg: rings | bars | wave (audio-reactive background choice)."""
+    72. bg: rings | bars | wave (audio-reactive background choice).
+    Theme (2026-11-07): the place behind the visualizer — same theme
+    table as the lyric video; the static base is built once, each frame
+    copies it and draws the reactive overlay."""
     from PIL import Image, ImageDraw
+    import videothemes as _vt
     W, H = ASPECTS.get(aspect, ASPECTS["16:9"])
     x = V.load_audio_mono(audio_path)
     dur = len(x) / SR
@@ -78,6 +82,7 @@ def render_waveform_video(audio_path, events, out_path, title="DJRILL",
     spec = V.spectrum_frames(x)
     beat = V.beat_envelope(x)
     f_title, f_line, f_small = _fonts()
+    _base = _vt.theme_base(W, H, theme)
 
     # precompute waveform overview
     n_ov = 1200
@@ -94,7 +99,7 @@ def render_waveform_video(audio_path, events, out_path, title="DJRILL",
         ev = (events[ev_idx] if events and
               events[ev_idx]["start"] <= t <= events[ev_idx]["end"] else None)
         pulse = float(beat[fi]) if fi < len(beat) else 0.0
-        img = Image.new("RGB", (W, H), (8, 10, 18))
+        img = _vt.theme_frame(_base, fi, t, pulse, theme, W, H)
         dr = ImageDraw.Draw(img)
         cx, cy = W // 2, H // 2 - 40
         if bg == "rings":

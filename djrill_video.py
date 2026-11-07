@@ -132,8 +132,9 @@ def drawtext_escape(s):
 
 
 def render_lyric_video(audio_path, events, out_path, title="DJRILL",
-                       progress_cb=None):
+                       progress_cb=None, theme="studio"):
     from PIL import Image, ImageDraw, ImageFont
+    import videothemes as _vt
     print("[VIDEO] loading audio...")
     x = load_audio_mono(audio_path)
     dur = len(x) / SR
@@ -144,6 +145,10 @@ def render_lyric_video(audio_path, events, out_path, title="DJRILL",
     f_title = ImageFont.truetype(FONT, 64)
     f_line = ImageFont.truetype(FONT, 54)
     f_small = ImageFont.truetype(FONT_REG, 30)
+    # Background theme (2026-11-07): the static place (sky, skyline,
+    # water) is built once; each frame only copies it and draws the
+    # reactive overlay, so a long track doesn't pay a full redraw.
+    _base = _vt.theme_base(W, H, theme)
 
     cmd = ["ffmpeg", "-y", "-v", "error",
            "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
@@ -160,7 +165,7 @@ def render_lyric_video(audio_path, events, out_path, title="DJRILL",
             ev_idx += 1
         ev = events[ev_idx] if events and events[ev_idx]["start"] <= t <= events[ev_idx]["end"] else None
         pulse = float(beat[fi]) if fi < len(beat) else 0.0
-        img = Image.new("RGB", (W, H), (8, 10, 18))
+        img = _vt.theme_frame(_base, fi, t, pulse, theme, W, H)
         dr = ImageDraw.Draw(img)
         # pulsing ring
         cx, cy = W // 2, 300
