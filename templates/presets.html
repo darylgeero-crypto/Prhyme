@@ -50,7 +50,7 @@ function escapeHtml(s) {
       (j.presets.master || []).map(p =>
         '<div class="histitem"><div class="ht">' + escapeHtml(p.name) + "</div>" +
         '<div class="hm">Chain: ' + escapeHtml(p.chain) + "</div>" +
-        '<div class="hd"><a class="btn small" style="text-decoration:none" href="/master">Use in Master →</a></div></div>').join("");
+        '<div class="hd"><a class="btn small" style="text-decoration:none" href="/master?preset=' + encodeURIComponent(p.name) + '">Use in Master →</a></div></div>').join("");
   } catch (e) {
     document.getElementById("beatPresets").innerHTML = '<div class="err">Load failed</div>';
   }

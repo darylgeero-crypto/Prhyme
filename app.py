@@ -2894,7 +2894,15 @@ def home():
 
 @app.get("/master")
 def master_page():
-    return render_template("master.html", active="master", genres=GENRES)
+    # Real mastering chains for the page's chain select (2026-11-07): the
+    # page used to offer standard/aggressive/vintage/modern, none of which
+    # exist in MASTER_CHAINS, so the server silently fell back to Streaming
+    # for every choice and the control did nothing. resolve_chain fills in
+    # the V8 Reference profile values so the page gets concrete numbers.
+    chains = {name: masterfx.resolve_chain(name)
+              for name in sorted(masterfx.MASTER_CHAINS)}
+    return render_template("master.html", active="master", genres=GENRES,
+                           chains=chains)
 
 
 @app.get("/lyrics")
@@ -5152,7 +5160,7 @@ def samples_page():
 
 @app.get("/presets")
 def presets_page():
-    return render_template("presets.html", active="home")
+    return render_template("presets.html", active="presets")
 
 
 @app.get("/freestyle")

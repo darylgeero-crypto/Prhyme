@@ -17,12 +17,9 @@
   <label>BPM: <input type="number" name="bpm" placeholder="Leave empty for auto-detect"></label> <small style="color:#888;">Leave empty for automatic beat detection</small><br><br>
   
   <h3>Mastering Chain</h3>
-  <label>Chain: 
-    <select name="chain">
-      <option value="standard">Standard</option>
-      <option value="aggressive">Aggressive</option>
-      <option value="vintage">Vintage</option>
-      <option value="modern">Modern</option>
+  <label>Chain:
+    <select name="chain" id="chainSelect">
+      {% for name, c in (chains or {"Streaming": {}}).items() %}<option value="{{ name }}" {% if name=="Streaming" %}selected{% endif %}>{{ name }}</option>{% endfor %}
     </select>
   </label><br><br>
   <label>Output Format:
@@ -449,6 +446,50 @@ document.getElementById('f').addEventListener('submit', async (e) => {
 });
 </script>
 <script>document.getElementById("autoMode").addEventListener("change", function(){document.getElementById("manualOptions").style.display=this.checked?"none":"block";});document.getElementById("manualOptions").style.display="block";</script>
+<script>
+// Mastering chains + preset apply (2026-11-07). The chain select used to
+// offer standard/aggressive/vintage/modern, none of which exist server-side,
+// so every choice silently became Streaming. The select now lists the real
+// chains and picking one fills the level/fade fields from that chain.
+var MASTER_CHAIN_TABLE = {{ (chains or {})|tojson }};
+function applyChain(name) {
+  var c = MASTER_CHAIN_TABLE[name];
+  if (!c) return false;
+  var f = document.getElementById('f');
+  function set(n, v) { if (v === undefined || v === null) return; var el = f.querySelector('[name=' + n + ']'); if (el) el.value = v; }
+  set('target_lufs', c.lufs);
+  set('ceiling_db', c.ceiling);
+  set('fade_in', c.fade_in);
+  set('fade_out', c.fade_out);
+  return true;
+}
+(function () {
+  var sel = document.querySelector('[name=chain]');
+  if (sel) sel.addEventListener('change', function () { applyChain(sel.value); });
+  // Preset handoff from /presets: /master?preset=Club%20Punch applies the
+  // preset's chain + options to this form (master presets used to link here
+  // with nothing attached, so tapping one changed nothing).
+  var q = new URLSearchParams(location.search).get('preset');
+  if (!q) return;
+  fetch('/api/presets').then(function (r) { return r.json(); }).then(function (j) {
+    var p = (j.presets.master || []).find(function (x) { return x.name === q; });
+    var out = document.getElementById('out');
+    if (!p) { if (out) out.textContent = 'Unknown preset: ' + q; return; }
+    var am = document.getElementById('autoMode');
+    if (am) am.checked = false;
+    var mo = document.getElementById('manualOptions');
+    if (mo) mo.style.display = 'block';
+    if (sel) sel.value = p.chain;
+    applyChain(p.chain);
+    var f = document.getElementById('f');
+    var mb = f.querySelector('[name=multiband]');
+    if (mb) mb.checked = !!p.multiband;
+    var ds = f.querySelector('[name=deess]');
+    if (ds) ds.checked = (p.deess || 0) > 0;
+    if (out) out.textContent = 'Preset "' + p.name + '" applied — pick your file and master.';
+  }).catch(function () {});
+})();
+</script>
 <script>
 // On page load: check for active/resumed master jobs and show progress bar
 (async function checkActiveJobs() {
