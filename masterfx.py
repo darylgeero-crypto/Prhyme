@@ -104,7 +104,10 @@ def _peak_control(x, sr, ceiling_db, target_lufs=None):
             makeup_db = min(target_lufs - lufs2, max(headroom_db, 0.0))
             if makeup_db > 0.05:
                 x = x * 10 ** (makeup_db / 20.0)
-                x = lookahead_limit(x, ceiling_db=ceiling_db)
+                # Re-limit at the ceiling MINUS the TP margin: the limiter
+                # caps sample peaks, but inter-sample peaks overshoot
+                # ~0.2 dB, so the raw ceiling leaves TP over by ffmpeg.
+                x = lookahead_limit(x, ceiling_db=ceiling_db - _TP_MARGIN)
     return x
 
 
@@ -177,9 +180,14 @@ def auto_decide(analysis, genre=None):
     lufs = analysis.get("lufs")
     if genre in LOUD_GENRES and crest <= 16.0:
         chain = "Club"
-    elif genre in DYNAMIC_GENRES or crest >= 14.0:
+    elif genre in DYNAMIC_GENRES:
+        # Genuinely dynamic music (classical, jazz, ambient...) keeps its
+        # headroom — Dynamic (-18) is the right call there.
         chain = "Dynamic"
     else:
+        # Peaky or not, a loud/regular genre targets -14 (Streaming).
+        # The compression below tames the crest so the makeup gain can
+        # reach -14 without squashing the body. Perfect = -14.
         chain = "Streaming"
     c = resolve_chain(chain)
     target_crest = CHAIN_TARGET_CREST[chain]
@@ -195,7 +203,7 @@ def auto_decide(analysis, genre=None):
         # bursts, no real transients) this shaves little — the limiter +
         # makeup then do what they can, and the target stays a target,
         # not a promise.
-        comp_ratio = round(min(4.0, 2.0 + excess / 4.0), 1)
+        comp_ratio = round(min(6.0, 2.0 + excess / 3.0), 1)
         comp_threshold_db = round(float(lufs) + 8.0, 1)
     deess = 0.4 if float(analysis.get("sibilance_ratio") or 0.0) > 0.45 else 0.0
     # Dull mix (little high-band energy) gets the polish lift; boomy mixes
