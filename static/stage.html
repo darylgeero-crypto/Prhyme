@@ -246,8 +246,10 @@ var chain1 = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.055, 10, 28, Math.PI
 chain1.position.set(0, 2.28, 0.80); chain1.rotation.z = Math.PI; chain1.rotation.x = -0.5; rok.add(chain1);
 var chain2 = new THREE.Mesh(new THREE.TorusGeometry(0.64, 0.05, 10, 28, Math.PI), studMat);
 chain2.position.set(0, 2.24, 0.86); chain2.rotation.z = Math.PI; chain2.rotation.x = -0.45; rok.add(chain2);
-var pendant = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.46), new THREE.MeshBasicMaterial({ map:rTex, transparent:true }));
-pendant.position.set(0, 1.58, 1.15); pendant.rotation.x = -0.12; rok.add(pendant);
+var pendantBack = new THREE.Mesh(new THREE.CircleGeometry(0.30, 24), goldMat);
+pendantBack.position.set(0, 1.70, 1.10); pendantBack.rotation.x = -0.12; rok.add(pendantBack);
+var pendant = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.56), new THREE.MeshBasicMaterial({ map:rTex, transparent:true }));
+pendant.position.set(0, 1.70, 1.13); pendant.rotation.x = -0.12; rok.add(pendant);
 
 /* 6 tentacles with sticks. Each: yaw group at body, then 2 pitch segments, stick at tip. */
 var tentacles = [];
@@ -285,11 +287,12 @@ for (var ti = 0; ti < 6; ti++) {
   tentacles.push({ yaw:yaw, j1:j1, j2:j2, restYaw:ang, strike:0, strikeT:9, targetYaw:ang, phase: ti * 1.37 });
 }
 /* feet on kick pads (Daryl, 2026-11-19): the kick is played by his feet, not a tentacle.
-   The feet stand out at the kick drum's lower sides so they read on stage, not hidden behind it. */
+   The pads stand in FRONT of the kick drum (like the pads on his poster) so the
+   stomping feet read on stage; the legs pass behind the kick to reach them. */
 var feet = [];
 [-1, 1].forEach(function(sd){
   var hipPos = new THREE.Vector3(sd * 0.45, 0.62, 0.55);
-  var footPos = new THREE.Vector3(sd * 0.86, 0.17, 0.92);
+  var footPos = new THREE.Vector3(sd * 0.78, 0.17, 3.35);
   var legDir = footPos.clone().sub(hipPos);
   var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.10, legDir.length(), 10), bodyMat);
   leg.position.copy(hipPos).add(footPos).multiplyScalar(0.5);
@@ -304,7 +307,7 @@ var feet = [];
   });
   var padMat = new THREE.MeshStandardMaterial({ color:0x241243, roughness:0.5, emissive:0x000000 });
   var pad = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.07, 0.85), padMat);
-  pad.position.set(sd * 0.86, 0.045, 1.02); pad.rotation.y = sd * 0.25; scene.add(pad);
+  pad.position.set(sd * 0.78, 0.045, 3.45); pad.rotation.y = sd * 0.25; scene.add(pad);
   feet.push({ footG:footG, pad:pad, pressT:9 });
 });
 var kickSide = 0;
