@@ -76,7 +76,7 @@ var KIT = [
   { kind:"ride3",    label:"RIDE 3",   angle:144,  ring:5.4, size:0.56, type:"cymbal", color:0x9c8425 },
   { kind:"snare5",   label:"SNARE 5",  angle:-152, ring:5.0, size:0.42, type:"drum",   color:0x686d73 },
   { kind:"snap2",    label:"SNAP 2",   angle:152,  ring:4.8, size:0.30, type:"hand",   color:0x0284c7 },
-  { kind:"xyloHit",  label:"XYLOPHONE", angle:0,   ring:6.6, size:0.55, type:"xylo",   color:0xd4af37 },
+  { kind:"xyloHit",  label:"XYLOPHONE", angle:180, ring:7.3, size:0.55, type:"xylo",   color:0xd4af37 },
   { kind:"snare6",   label:"SNARE 6",  angle:-128, ring:6.4, size:0.44, type:"drum",   color:0x5b6066 },
   { kind:"tapStick", label:"STICK TAP", angle:128, ring:6.4, size:0.40, type:"pad",    color:0x7b2ff7 },
   { kind:"march",    label:"MARCH",    angle:-140, ring:6.5, size:0.46, type:"hand",   color:0x334155 },
@@ -85,9 +85,9 @@ var KIT = [
   { kind:"tapPing",  label:"PING TAP", angle:152,  ring:6.4, size:0.40, type:"pad",    color:0xffd21f },
   { kind:"bongoH",   label:"BONGO H",  angle:-164, ring:6.3, size:0.34, type:"hand",   color:0x9a3412 },
   { kind:"tapRide",  label:"RIDE TAP", angle:164,  ring:6.4, size:0.40, type:"pad",    color:0xff8a65 },
-  { kind:"congaH",   label:"CONGA H",  angle:-180, ring:6.3, size:0.40, type:"hand",   color:0x86198f },
+  { kind:"congaH",   label:"CONGA H",  angle:-172, ring:6.3, size:0.40, type:"hand",   color:0x86198f },
   { kind:"bongoL",   label:"BONGO L",  angle:180,  ring:6.3, size:0.38, type:"hand",   color:0x7c2d12 },
-  { kind:"bucketHit", label:"BUCKET",  angle:-172, ring:5.8, size:0.42, type:"hand",   color:0x0ea5e9 },
+  { kind:"bucketHit", label:"BUCKET",  angle:-172, ring:5.6, size:0.42, type:"hand",   color:0x0ea5e9 },
   { kind:"woodblock", label:"WOOD",    angle:172,  ring:5.8, size:0.30, type:"hand",   color:0x92400e },
   { kind:"congaL",   label:"CONGA L",  angle:-156, ring:7.0, size:0.44, type:"hand",   color:0x701a75 },
   { kind:"djembeH",  label:"DJEMBE H", angle:156,  ring:7.0, size:0.42, type:"hand",   color:0xa16207 },
@@ -165,15 +165,15 @@ KIT.forEach(function(d){
     g.userData.headBaseY = 0.50;
   } else if (d.type === "xylo") {
     /* the xylophone: gold bars on a stand, one shared material so a hit flashes them all */
-    var xstand = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 0.9, 8), new THREE.MeshStandardMaterial({ color:0x555a63, roughness:0.5, metalness:0.7 }));
-    xstand.position.y = 0.45; g.add(xstand);
+    var xstand = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 1.3, 8), new THREE.MeshStandardMaterial({ color:0x555a63, roughness:0.5, metalness:0.7 }));
+    xstand.position.y = 0.65; g.add(xstand);
     var xmat = new THREE.MeshStandardMaterial({ color:d.color, roughness:0.25, metalness:0.9, emissive:0x000000 });
     for (var xb = 0; xb < 5; xb++) {
       var bar = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.05, 0.95 - xb * 0.11), xmat);
-      bar.position.set((xb - 2) * 0.21, 0.95, 0); g.add(bar);
+      bar.position.set((xb - 2) * 0.21, 1.35, 0); g.add(bar);
       if (xb === 2) head = bar;
     }
-    g.userData.headBaseY = 0.95;
+    g.userData.headBaseY = 1.35;
   } else {
     var h = d.type === "hand" ? 0.55 : 0.62;
     var shell2 = new THREE.Mesh(new THREE.CylinderGeometry(d.size, d.size * 0.9, h, 24), new THREE.MeshStandardMaterial({ color:d.color, roughness:0.5, metalness:0.25 }));
@@ -222,7 +222,7 @@ var capDome = new THREE.Mesh(new THREE.SphereGeometry(0.87, 24, 16, 0, Math.PI *
 capDome.position.y = 0.16; capDome.rotation.x = -0.10; headG.add(capDome);
 var capBrim = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.05, 0.52), new THREE.MeshStandardMaterial({ color:0xd95f26, roughness:0.5 }));
 capBrim.position.set(0, 0.36, 0.82); capBrim.rotation.x = 0.18; headG.add(capBrim);
-var studMat = new THREE.MeshStandardMaterial({ color:0xf5f7ff, roughness:0.15, metalness:1.0 });
+var studMat = new THREE.MeshStandardMaterial({ color:0xf5f7ff, roughness:0.25, metalness:0.1, emissive:0x555f7a });
 for (var si = 0; si < 16; si++) {
   var sth = 0.28 + (si % 5) * 0.17, sph = si * 2.39996;
   var stud = new THREE.Mesh(new THREE.OctahedronGeometry(0.038), studMat);
@@ -241,12 +241,13 @@ hpBand.position.y = 0.10; headG.add(hpBand);
   ring.rotation.y = Math.PI / 2; ring.position.set(sd * 0.94, 0.0, 0); headG.add(ring);
 });
 var goldMat = new THREE.MeshStandardMaterial({ color:0xd4af37, roughness:0.3, metalness:0.9 });
-var chain1 = new THREE.Mesh(new THREE.TorusGeometry(0.52, 0.055, 10, 32), goldMat);
-chain1.position.set(0, 2.42, 0.18); chain1.rotation.x = 1.25; rok.add(chain1);
-var chain2 = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.05, 10, 32), studMat);
-chain2.position.set(0, 2.33, 0.22); chain2.rotation.x = 1.15; rok.add(chain2);
+/* chains draped across the chest as open arcs, sitting proud of the body so they read on stage */
+var chain1 = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.055, 10, 28, Math.PI), goldMat);
+chain1.position.set(0, 2.28, 0.80); chain1.rotation.z = Math.PI; chain1.rotation.x = -0.5; rok.add(chain1);
+var chain2 = new THREE.Mesh(new THREE.TorusGeometry(0.64, 0.05, 10, 28, Math.PI), studMat);
+chain2.position.set(0, 2.24, 0.86); chain2.rotation.z = Math.PI; chain2.rotation.x = -0.45; rok.add(chain2);
 var pendant = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.46), new THREE.MeshBasicMaterial({ map:rTex, transparent:true }));
-pendant.position.set(0, 1.74, 1.07); pendant.rotation.x = -0.12; rok.add(pendant);
+pendant.position.set(0, 1.58, 1.15); pendant.rotation.x = -0.12; rok.add(pendant);
 
 /* 6 tentacles with sticks. Each: yaw group at body, then 2 pitch segments, stick at tip. */
 var tentacles = [];
@@ -283,13 +284,18 @@ for (var ti = 0; ti < 6; ti++) {
   tip.position.y = -1.05; stickG.add(tip);
   tentacles.push({ yaw:yaw, j1:j1, j2:j2, restYaw:ang, strike:0, strikeT:9, targetYaw:ang, phase: ti * 1.37 });
 }
-/* feet on kick pads (Daryl, 2026-11-19): the kick is played by his feet, not a tentacle */
+/* feet on kick pads (Daryl, 2026-11-19): the kick is played by his feet, not a tentacle.
+   The feet stand out at the kick drum's lower sides so they read on stage, not hidden behind it. */
 var feet = [];
 [-1, 1].forEach(function(sd){
-  var hip = new THREE.Group(); hip.position.set(sd * 0.45, 0.62, 0.55); rok.add(hip);
-  var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.10, 0.85, 10), bodyMat);
-  leg.position.set(0, -0.28, 0.18); leg.rotation.x = 0.7; hip.add(leg);
-  var footG = new THREE.Group(); footG.position.set(0, -0.44, 0.40); hip.add(footG);
+  var hipPos = new THREE.Vector3(sd * 0.45, 0.62, 0.55);
+  var footPos = new THREE.Vector3(sd * 0.86, 0.17, 0.92);
+  var legDir = footPos.clone().sub(hipPos);
+  var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.10, legDir.length(), 10), bodyMat);
+  leg.position.copy(hipPos).add(footPos).multiplyScalar(0.5);
+  leg.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), legDir.clone().normalize());
+  rok.add(leg);
+  var footG = new THREE.Group(); footG.position.copy(footPos); footG.rotation.y = sd * 0.25; rok.add(footG);
   var foot = new THREE.Mesh(new THREE.SphereGeometry(0.21, 14, 10), bodyMat);
   foot.scale.set(0.85, 0.45, 1.5); foot.position.set(0, 0, 0.10); footG.add(foot);
   [-0.09, 0, 0.09].forEach(function(tx){
@@ -298,7 +304,7 @@ var feet = [];
   });
   var padMat = new THREE.MeshStandardMaterial({ color:0x241243, roughness:0.5, emissive:0x000000 });
   var pad = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.07, 0.85), padMat);
-  pad.position.set(sd * 0.45, 0.045, 1.10); pad.rotation.x = -0.06; scene.add(pad);
+  pad.position.set(sd * 0.86, 0.045, 1.02); pad.rotation.y = sd * 0.25; scene.add(pad);
   feet.push({ footG:footG, pad:pad, pressT:9 });
 });
 var kickSide = 0;
@@ -440,7 +446,7 @@ function animate(){
       f.pressT = Math.min(1, f.pressT + 0.14);
       var pk = f.pressT;
       var dip = pk < 0.3 ? pk / 0.3 : 1 - (pk - 0.3) / 0.7;
-      f.footG.rotation.x = -0.42 * dip;
+      f.footG.rotation.x = 0.32 * dip;
       f.pad.material.emissive.setRGB(dip * 0.55, dip * 0.42, dip * 0.12);
     }
   });
