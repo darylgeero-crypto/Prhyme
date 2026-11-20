@@ -246,10 +246,10 @@ var chain1 = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.055, 10, 28, Math.PI
 chain1.position.set(0, 2.28, 0.80); chain1.rotation.z = Math.PI; chain1.rotation.x = -0.5; rok.add(chain1);
 var chain2 = new THREE.Mesh(new THREE.TorusGeometry(0.64, 0.05, 10, 28, Math.PI), studMat);
 chain2.position.set(0, 2.24, 0.86); chain2.rotation.z = Math.PI; chain2.rotation.x = -0.45; rok.add(chain2);
-var pendantBack = new THREE.Mesh(new THREE.CircleGeometry(0.30, 24), goldMat);
-pendantBack.position.set(0, 1.70, 1.10); pendantBack.rotation.x = -0.12; rok.add(pendantBack);
-var pendant = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.56), new THREE.MeshBasicMaterial({ map:rTex, transparent:true }));
-pendant.position.set(0, 1.70, 1.13); pendant.rotation.x = -0.12; rok.add(pendant);
+var pendantBack = new THREE.Mesh(new THREE.CircleGeometry(0.34, 24), new THREE.MeshBasicMaterial({ color:0xffd24d }));
+pendantBack.position.set(0, 1.84, 1.18); pendantBack.rotation.x = -0.12; rok.add(pendantBack);
+var pendant = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.62), new THREE.MeshBasicMaterial({ map:rTex, transparent:true }));
+pendant.position.set(0, 1.84, 1.21); pendant.rotation.x = -0.12; rok.add(pendant);
 
 /* 6 tentacles with sticks. Each: yaw group at body, then 2 pitch segments, stick at tip. */
 var tentacles = [];
@@ -305,7 +305,7 @@ var feet = [];
     var toe = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 6), bodyMat);
     toe.position.set(tx, -0.03, 0.38); footG.add(toe);
   });
-  var padMat = new THREE.MeshStandardMaterial({ color:0x241243, roughness:0.5, emissive:0x000000 });
+  var padMat = new THREE.MeshStandardMaterial({ color:0x241243, roughness:0.5, emissive:0x2a1040 });
   var pad = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.07, 0.85), padMat);
   pad.position.set(sd * 0.78, 0.045, 3.45); pad.rotation.y = sd * 0.25; scene.add(pad);
   feet.push({ footG:footG, pad:pad, pressT:9 });
